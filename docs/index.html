@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ระบบยืม-คืนอุปกรณ์</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-mark sm">+</span> <span id="brand-name">ยืม-คืนอุปกรณ์</span></div>
+      <nav id="nav"></nav>
+      <div class="user-box">
+        <div id="mode-name" class="user-name"></div>
+        <div id="mode-desc" class="muted small"></div>
+        <div class="user-actions"><button class="link" id="btn-admin"></button></div>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <button class="btn icon menu-toggle" id="menu-toggle" aria-label="เมนู">☰</button>
+        <h2 id="page-title"></h2>
+      </header>
+      <div id="page" class="page"></div>
+    </main>
+  </div>
+
+  <dialog id="modal">
+    <form method="dialog" class="modal-head">
+      <h3 id="modal-title"></h3>
+      <button class="btn icon" value="close" aria-label="ปิด">✕</button>
+    </form>
+    <div id="modal-body" class="modal-body"></div>
+  </dialog>
+
+  <div id="loading" class="loading" hidden>กำลังบันทึก...</div>
+  <div id="toast" class="toast" hidden></div>
+  <div id="print-area"></div>
+
+  <script src="config.js"></script>
+  <script src="core.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

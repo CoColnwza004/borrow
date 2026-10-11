@@ -546,8 +546,10 @@ async function renderBorrow(page) {
       </div>`;
     }).join('') || '<div class="empty">ยังไม่ได้เลือกอุปกรณ์</div>';
     $$('[data-qty]').forEach((inp) => inp.addEventListener('change', () => {
-      state.cart[inp.dataset.qty].qty = Math.max(1, Number(inp.value) || 1);
-      drawCart();
+      const qty = Math.max(1, Number(inp.value) || 1);
+      if (state.cart[inp.dataset.qty].qty === qty) return;
+      state.cart[inp.dataset.qty].qty = qty;
+      setTimeout(drawCart); // วาดใหม่หลัง event จบ ไม่ให้ชนกับ blur ของช่องที่กำลังแก้
     }));
     $$('[data-remove]').forEach((b) => b.addEventListener('click', () => {
       state.cart.splice(Number(b.dataset.remove), 1);
