@@ -313,20 +313,25 @@ async function route() {
   if (key !== lastRoute) window.scrollTo(0, 0);
   lastRoute = key;
   render();
-  // โหมด Google Sheets: ดึงข้อมูลล่าสุดเบื้องหลัง แล้ววาดใหม่ถ้ามีคนอื่นแก้ไข (ยกเว้นกำลังกรอกฟอร์ม)
-  if (!DEMO && !$('#modal').open) {
-    try {
-      await store.load();
-      const snap = JSON.stringify(state.db);
-      if (snap !== lastSnapshot) {
-        lastSnapshot = snap;
-        if (!$('#modal').open && currentRoute() === key) {
-          if (key === 'request') redrawPickList?.(); else render();
-        }
-      }
-    } catch (e) { toast(e.message, true); }
-  }
+  await syncFromSheet();
 }
+
+// โหมด Google Sheets: ดึงข้อมูลล่าสุดเบื้องหลัง แล้ววาดใหม่ถ้ามีการแก้ไข (จากเครื่องอื่นหรือแก้ในชีตโดยตรง)
+// หน้าฟอร์มเบิก/ยืม วาดเฉพาะรายการพัสดุใหม่ ข้อมูลที่กรอกไว้ไม่หาย
+async function syncFromSheet() {
+  if (DEMO || $('#modal').open) return;
+  const key = currentRoute();
+  try {
+    await store.load();
+    const snap = JSON.stringify(state.db);
+    if (snap === lastSnapshot) return;
+    lastSnapshot = snap;
+    if ($('#modal').open || currentRoute() !== key) return;
+    if (key === 'request') redrawPickList?.(); else render();
+  } catch (e) { toast(e.message, true); }
+}
+// กลับมาที่แท็บ / แอปบนมือถือ → ดึงยอดล่าสุด
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncFromSheet(); });
 window.addEventListener('hashchange', route);
 
 // วาดหน้าปัจจุบันใหม่หลังบันทึกข้อมูล

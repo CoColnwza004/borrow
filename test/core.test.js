@@ -172,3 +172,23 @@ test('Apps Script AllInOne.gs: up to date and works as the only file', () => {
   assert.equal(res.ok, true);
   assert.equal(res.state.items.find((i) => i.id === 2).available_qty, 720);
 });
+
+test('core: stock edited directly in the sheet (available_qty only) keeps working', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const nb = db.items.find((i) => i.code === 'EQ-005');
+  const id = Core.run(db, 'createRequest', { ...person, type: 'borrow', due_date: DUE, items: [{ item_id: nb.id, qty: 2 }] }, user);
+  // เจ้าหน้าที่แก้ในชีต: กระดาษจาก 120 เป็น 200, โน้ตบุ๊กคงเหลือจาก 4 เป็น 10 (ไม่ได้แตะ total_qty) และพิมพ์เป็นข้อความ
+  const raw = JSON.parse(JSON.stringify(db));
+  raw.items.find((i) => i.code === 'OF-001').available_qty = '200';
+  raw.items.find((i) => i.code === 'EQ-005').available_qty = '10';
+  const loaded = Core.normalize(raw);
+  const paper = loaded.items.find((i) => i.code === 'OF-001');
+  const nb2 = loaded.items.find((i) => i.code === 'EQ-005');
+  assert.equal(paper.total_qty, 200);
+  assert.equal(nb2.total_qty, 12); // 10 ในคลัง + 2 ที่ยืมออกไป
+  Core.run(loaded, 'createRequest', { ...person, type: 'withdraw', items: [{ item_id: paper.id, qty: 150 }] }, user);
+  assert.equal(paper.available_qty, 50);
+  Core.run(loaded, 'returnItems', { id, items: [{ item_id: nb2.id, returned_qty: 2 }] }, admin);
+  assert.equal(nb2.available_qty, 12);
+  assert.equal(nb2.total_qty, 12);
+});

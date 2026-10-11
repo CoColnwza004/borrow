@@ -182,6 +182,18 @@ var BorrowCore = (function () {
     // ชีตเวอร์ชันก่อนไม่มีคอลัมน์ kind / type
     db.items.forEach(function (i) { if (!KINDS[i.kind]) i.kind = 'both'; });
     db.requests.forEach(function (r) { if (!TYPES[r.type]) r.type = 'borrow'; });
+    // จำนวนทั้งหมด = คงเหลือ + ที่ถูกยืมออกไปและยังไม่คืน คำนวณใหม่ทุกครั้ง
+    // เพื่อให้แก้ "คงเหลือ" (available_qty) ในชีตได้โดยตรงคอลัมน์เดียว
+    var lent = {};
+    var open = {};
+    db.requests.forEach(function (r) { if (r.status === 'borrowed') open[r.id] = true; });
+    db.request_items.forEach(function (l) {
+      if (open[l.request_id]) lent[l.item_id] = (lent[l.item_id] || 0) + Math.max(0, l.qty - l.returned_qty - l.lost_qty);
+    });
+    db.items.forEach(function (i) {
+      if (i.available_qty < 0) i.available_qty = 0;
+      i.total_qty = i.available_qty + (lent[i.id] || 0);
+    });
     return db;
   }
 
