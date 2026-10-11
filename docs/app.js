@@ -268,7 +268,19 @@ function renderNav() {
   const cur = currentRoute();
   const a = ([k, label, n]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur ? 'active' : ''}">${label}${n ? `<span class="badge">${n}</span>` : ''}</a>`;
   $('#nav-links').innerHTML = links.map(a).join('') + (isAdmin() ? '<span class="divider"></span>' + admin.map(a).join('') : '');
+  fitNav();
 }
+
+// ย่อเมนูเป็นปุ่ม ☰ เฉพาะเมื่อลิงก์ไม่พอดีกับความกว้างจอ (มือถือ, iPad แนวตั้งในโหมดเจ้าหน้าที่)
+function fitNav() {
+  const nav = $('#nav-bar');
+  const links = $('#nav-links');
+  nav.classList.remove('compact');
+  const compact = links.scrollWidth > links.clientWidth + 1;
+  nav.classList.toggle('compact', compact);
+  if (!compact) setMenu(false);
+}
+window.addEventListener('resize', fitNav);
 
 function setMenu(open) {
   $('#nav-bar').classList.toggle('open', open);
@@ -529,7 +541,7 @@ function showSuccess(id) {
       </div>
       <div class="actions">
         <button class="btn lg" id="pdf-skip">ไม่ใช่ตอนนี้</button>
-        <button class="btn primary lg" id="pdf-save" disabled>ดาวน์โหลด PDF</button>
+        <button class="btn primary lg" id="pdf-save" disabled>${PdfDoc.isIOS ? 'บันทึก PDF' : 'ดาวน์โหลด PDF'}</button>
       </div>
     </div>`);
   let blob = null;
@@ -537,7 +549,9 @@ function showSuccess(id) {
   PdfDoc.build(r, CONFIG.HOSPITAL_NAME).then((b) => {
     blob = b;
     $('#pdf-q', body).innerHTML = `อนุญาตให้บันทึก <b>${esc(fileName)}</b> ลงในเครื่องนี้หรือไม่?`;
-    $('#pdf-sub', body).textContent = 'ใช้พิมพ์และลงลายมือชื่อ' + (w ? 'ผู้เบิก' : 'ผู้ยืม') + 'และเจ้าหน้าที่พัสดุ · ดาวน์โหลดซ้ำได้จากหน้าประวัติ';
+    $('#pdf-sub', body).textContent = PdfDoc.isIOS
+      ? 'แตะ "บันทึก PDF" แล้วเลือก "บันทึกไปยังไฟล์" หรือ "พิมพ์" · บันทึกซ้ำได้จากหน้าประวัติ'
+      : 'ใช้พิมพ์และลงลายมือชื่อ' + (w ? 'ผู้เบิก' : 'ผู้ยืม') + 'และเจ้าหน้าที่พัสดุ · ดาวน์โหลดซ้ำได้จากหน้าประวัติ';
     $('#pdf-save', body).disabled = false;
   }).catch((e) => {
     $('#pdf-q', body).textContent = 'สร้างไฟล์ PDF ไม่สำเร็จ';

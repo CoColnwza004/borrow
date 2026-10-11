@@ -9,6 +9,8 @@ const PdfDoc = (() => {
   const LIB_URL = 'vendor/html2pdf.bundle.min.js';
   const MIN_ROWS = 8; // เติมแถวว่างให้ตารางดูเป็นแบบฟอร์ม
   let libPromise = null;
+  // iPadOS แสดงตัวเองเป็น Mac จึงต้องดูจากจอสัมผัสด้วย
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const thaiDate = (s) => (s ? new Date(s.slice(0, 10) + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : '-');
@@ -92,6 +94,20 @@ const PdfDoc = (() => {
   // ต้องเรียกจาก click ของผู้ใช้โดยตรง (เตรียม blob ไว้ก่อน) เพื่อให้เบราว์เซอร์ยอมเปิดหน้าต่างบันทึกไฟล์
   // คืนค่า false ถ้าผู้ใช้กดยกเลิก
   async function save(blob, filename) {
+    // iPhone / iPad: เปิดเมนูแชร์ของระบบ เลือก "บันทึกไปยังไฟล์" / พิมพ์ / AirDrop ได้
+    // (การดาวน์โหลดไฟล์ blob บน iOS ไม่เสถียร โดยเฉพาะเมื่อเปิดจากไอคอนบนหน้าจอโฮม)
+    if (isIOS && typeof navigator.canShare === 'function') {
+      const file = new File([blob], filename, { type: 'application/pdf' });
+      if (navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: filename });
+          return true;
+        } catch (e) {
+          if (e.name === 'AbortError') return false;
+          // แชร์ไม่ได้ ใช้การดาวน์โหลดปกติแทน
+        }
+      }
+    }
     if (typeof window.showSaveFilePicker === 'function') {
       try {
         const handle = await window.showSaveFilePicker({
@@ -116,5 +132,5 @@ const PdfDoc = (() => {
     return true;
   }
 
-  return { build, save, fileName: (r) => `${r.request_no}.pdf` };
+  return { build, save, isIOS, fileName: (r) => `${r.request_no}.pdf` };
 })();
