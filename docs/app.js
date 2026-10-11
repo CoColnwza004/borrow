@@ -84,6 +84,7 @@ const store = {
   async load() {
     if (DEMO) {
       demoDb = demoLoad();
+      if (BorrowCore.autoReturnDue(demoDb, new Date())) demoSave(demoDb);
       state.db = demoView(0);
     } else {
       state.db = BorrowCore.normalize((await remote('load')).state);
@@ -94,6 +95,7 @@ const store = {
     try {
       if (DEMO) {
         const db = structuredClone(demoDb); // ถ้า error กลางทาง ข้อมูลเดิมไม่เสีย
+        BorrowCore.autoReturnDue(db, new Date());
         const result = BorrowCore.run(db, action, payload, { isAdmin: state.pin === DEMO_PIN });
         demoDb = db;
         demoSave(db);
@@ -181,6 +183,7 @@ function options(list, selected, blank) {
 }
 function statusPill(r) {
   if (r.is_overdue) return '<span class="pill overdue">เกินกำหนดคืน</span>';
+  if (r.status === 'returned' && r.note.includes(BorrowCore.AUTO_RETURN_NOTE)) return '<span class="pill returned">คืนอัตโนมัติ</span>';
   return `<span class="pill ${r.status}">${STATUS[r.status]}</span>`;
 }
 const typePill = (t) => `<span class="pill ${t}">${TYPES[t]}</span>`;
@@ -416,7 +419,8 @@ function renderRequestForm(page) {
           <label class="field">แผนก <span class="req">*</span>
             <select name="department" required>${deptOptions(lsGet('last-dept'))}</select></label>
           <label class="field" id="rf-due">วันคืน <span class="req">*</span>
-            <input type="date" name="due_date" min="${today()}" value="${addDays(7)}"></label>
+            <span class="hint">(ถึงวันนี้ระบบคืนเข้าสต็อกอัตโนมัติ)</span>
+            <input type="date" name="due_date" min="${addDays(1)}" value="${addDays(7)}"></label>
           <label class="field" id="rf-note">หมายเหตุ <span class="hint">(ไม่บังคับ)</span>
             <input name="note" placeholder="เช่น ใช้ทดแทนชั่วคราวระหว่างรอของ"></label>
         </div>
@@ -573,7 +577,7 @@ function renderRequestForm(page) {
     const data = formData(form);
     if (!data.borrower_name.trim()) { form.borrower_name.focus(); throw new Error('กรุณากรอกชื่อ-นามสกุล'); }
     if (!data.department) { form.department.focus(); throw new Error('กรุณาเลือกแผนก'); }
-    if (type === 'borrow' && (!data.due_date || data.due_date < today())) { form.due_date.focus(); throw new Error('กรุณาเลือกวันคืน (ตั้งแต่วันนี้เป็นต้นไป)'); }
+    if (type === 'borrow' && (!data.due_date || data.due_date <= today())) { form.due_date.focus(); throw new Error('กรุณาเลือกวันคืน (ตั้งแต่วันพรุ่งนี้เป็นต้นไป)'); }
     const items = Object.entries(state.picks).map(([item_id, qty]) => ({ item_id: Number(item_id), qty }));
     if (!items.length) throw new Error('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
     const btn = $('#rf-submit');

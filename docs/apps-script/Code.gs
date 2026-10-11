@@ -33,6 +33,30 @@ function setup() {
     throw new Error('มีรายการเบิก/ยืมในชีตแล้ว ไม่ได้เขียนทับ (ถ้าต้องการเริ่มใหม่ให้ลบแท็บ "' + SHEET_NAMES.requests + '" ก่อน)');
   }
   saveDb_(BorrowCore.seed(new Date(), SEED_DATA));
+  installDailyTrigger();
+}
+
+/**
+ * ตั้งเวลาให้ระบบคืนพัสดุที่ถึงวันคืนเข้าสต็อกอัตโนมัติทุกวัน (ประมาณ 00:00–01:00 ตามเขตเวลาของโปรเจกต์)
+ * setup() เรียกให้แล้ว ถ้าติดตั้งไว้ก่อนหน้านี้ ให้รันฟังก์ชันนี้ 1 ครั้ง (รันซ้ำได้ ไม่สร้างซ้อน)
+ */
+function installDailyTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'autoReturnDaily') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('autoReturnDaily').timeBased().everyDays(1).atHour(0).nearMinute(5).create();
+}
+
+/** ทำงานอัตโนมัติทุกวันจาก installDailyTrigger() */
+function autoReturnDaily() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var db = loadDb_();
+    if (BorrowCore.autoReturnDue(db, new Date())) saveDb_(db);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function doGet() {
@@ -56,10 +80,12 @@ function handle_(body) {
     var db = loadDb_();
     var isAdmin = String(body.pin || '') === ADMIN_PIN;
     var result = null;
+    // เผื่อ trigger รายวันยังไม่ได้ติดตั้ง/ยังไม่ทำงาน: ตรวจใบยืมที่ถึงวันคืนทุกครั้งที่มีคนใช้เว็บ
+    var autoReturned = BorrowCore.autoReturnDue(db, new Date());
     if (body.action !== 'load') {
       result = BorrowCore.run(db, body.action, body.payload, { isAdmin: isAdmin });
-      saveDb_(db);
     }
+    if (body.action !== 'load' || autoReturned) saveDb_(db);
     // ประวัติการเบิก-ยืมส่งให้เฉพาะเจ้าหน้าที่ (มี PIN) ผู้ใช้ทั่วไปได้เฉพาะสต็อกและใบที่เพิ่งส่ง
     var state = isAdmin ? db : BorrowCore.publicView(db, body.action === 'createRequest' ? result : 0);
     return json_({ ok: true, result: result, state: state });

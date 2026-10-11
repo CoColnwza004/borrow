@@ -64,7 +64,8 @@ test('core: validation for type, department, due date, kind and stock', () => {
   assert.throws(() => Core.run(db, 'createRequest', { ...w, items: [{ item_id: proj.id, qty: 1 }] }, user), /ยืมได้อย่างเดียว/);
   const b = { ...person, type: 'borrow', items: [{ item_id: proj.id, qty: 1 }] };
   assert.throws(() => Core.run(db, 'createRequest', b, user), /วันคืน/);
-  assert.throws(() => Core.run(db, 'createRequest', { ...b, due_date: '2000-01-01' }, user), /ก่อนวันนี้/);
+  assert.throws(() => Core.run(db, 'createRequest', { ...b, due_date: '2000-01-01' }, user), /วันพรุ่งนี้/);
+  assert.throws(() => Core.run(db, 'createRequest', { ...b, due_date: Core.ymd(new Date()) }, user), /วันพรุ่งนี้/);
   assert.throws(() => Core.run(db, 'createRequest', { ...b, due_date: DUE, items: [{ item_id: paper.id, qty: 1 }] }, user), /เบิกได้อย่างเดียว/);
   assert.equal(db.requests.length, 0);
   assert.equal(paper.available_qty, 120);
@@ -99,14 +100,25 @@ function mockAppsScript() {
     sheets[name] = sh;
     return sh;
   };
+  const triggers = [];
+  const ScriptApp = {
+    getProjectTriggers: () => triggers.slice(),
+    deleteTrigger: (t) => triggers.splice(triggers.indexOf(t), 1),
+    newTrigger: (fn) => {
+      const b = { timeBased: () => b, everyDays: () => b, atHour: () => b, nearMinute: () => b,
+        create: () => { const t = { getHandlerFunction: () => fn }; triggers.push(t); return t; } };
+      return b;
+    },
+  };
   const ss = { getSheetByName: (n) => sheets[n] || null, insertSheet: mkSheet, getSpreadsheetTimeZone: () => 'Asia/Bangkok' };
   const ctx = vm.createContext({
     SpreadsheetApp: { getActiveSpreadsheet: () => ss },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    ScriptApp,
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: (s) => ({ body: s, setMimeType() { return this; } }) },
     Utilities: { formatDate: (d) => d.toISOString().slice(0, 10) },
   });
-  return { sheets, ctx };
+  return { sheets, ctx, triggers };
 }
 
 test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () => {
@@ -222,4 +234,54 @@ test('core: monthly summary of withdrawals and borrows', () => {
   assert.equal(sum.requests.length, 3);
   assert.equal(Core.monthlySummary(db, '2026-11', '2026-11-02').totals.withdraw_qty, 50);
   assert.equal(Core.monthlySummary(db, '2026-09', '2026-11-02').requests.length, 0);
+});
+
+test('core: borrowed items go back to stock automatically on the due date', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const nb = db.items.find((i) => i.code === 'EQ-005');
+  const proj = db.items.find((i) => i.code === 'EQ-006');
+  const at = (d) => ({ isAdmin: true, now: new Date(d + 'T09:00:00') });
+  const id = Core.run(db, 'createRequest', { ...person, type: 'borrow', due_date: '2026-10-15',
+    items: [{ item_id: nb.id, qty: 3 }, { item_id: proj.id, qty: 2 }] }, at('2026-10-10'));
+  // คืนบางส่วนก่อนกำหนด + แจ้งหาย 1
+  Core.run(db, 'returnItems', { id, items: [{ item_id: nb.id, returned_qty: 1, lost_qty: 1 }] }, at('2026-10-12'));
+  assert.equal(nb.available_qty, 4);
+  assert.equal(Core.autoReturnDue(db, new Date('2026-10-14T23:59:00')), 0);
+  assert.equal(db.requests[0].status, 'borrowed');
+  assert.equal(Core.autoReturnDue(db, new Date('2026-10-15T00:05:00')), 1);
+  const r = db.requests[0];
+  assert.equal(r.status, 'returned');
+  assert.match(r.note, /คืนอัตโนมัติ/);
+  assert.equal(nb.available_qty, 5); // ค้าง 1 คืนอัตโนมัติ (ที่หายไม่คืน)
+  assert.equal(proj.available_qty, 3);
+  const auto = db.movements.filter((m) => m.note === Core.AUTO_RETURN_NOTE);
+  assert.deepEqual(auto.map((m) => [m.item_id, m.qty, m.type]), [[nb.id, 1, 'return'], [proj.id, 2, 'return']]);
+  assert.equal(Core.autoReturnDue(db, new Date('2026-10-20T00:05:00')), 0); // ไม่คืนซ้ำ
+  assert.equal(nb.available_qty, 5);
+});
+
+test('Apps Script: daily trigger and page loads apply automatic returns', () => {
+  const { sheets, ctx, triggers } = mockAppsScript();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
+  ctx.setup();
+  ctx.setup(); // รันซ้ำ trigger ไม่ซ้อน
+  assert.deepEqual(triggers.map((t) => t.getHandlerFunction()), ['autoReturnDaily']);
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  const b = post({ action: 'createRequest', payload: { borrower_name: 'ก', department: 'ICU', type: 'borrow', due_date: DUE, items: [{ item_id: 4, qty: 5 }] } });
+  assert.equal(b.ok, true);
+  const qty = () => Number(sheets['อุปกรณ์'].data.find((row) => row[0] === '4')[6]);
+  assert.equal(qty(), 55);
+  // จำลองว่าถึงวันคืนแล้ว: แก้วันคืนในชีตเป็นเมื่อวาน
+  const req = sheets['คำขอยืม'];
+  const dueCol = req.data[0].indexOf('due_date');
+  req.data[1][dueCol] = '2020-01-01';
+  ctx.autoReturnDaily();
+  assert.equal(qty(), 60);
+  assert.equal(req.data[1][req.data[0].indexOf('status')], 'returned');
+  // ใบที่สอง: ไม่มี trigger ทำงาน แต่มีคนเปิดเว็บ (load) ก็คืนให้เช่นกัน
+  post({ action: 'createRequest', payload: { borrower_name: 'ข', department: 'ER', type: 'borrow', due_date: DUE, items: [{ item_id: 4, qty: 2 }] } });
+  assert.equal(qty(), 58);
+  req.data[2][dueCol] = '2020-01-01';
+  JSON.parse(ctx.doGet().body);
+  assert.equal(qty(), 60);
 });

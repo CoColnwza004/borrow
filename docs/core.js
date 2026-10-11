@@ -109,7 +109,8 @@ var BorrowCore = (function () {
       var due = '';
       if (type === 'borrow') {
         if (!isDate(p.due_date)) fail('กรุณาระบุวันคืน');
-        if (p.due_date < today) fail('วันคืนต้องไม่ก่อนวันนี้');
+        // ถึงวันคืนระบบจะคืนเข้าสต็อกอัตโนมัติ จึงต้องคืนวันพรุ่งนี้เป็นอย่างเร็ว
+        if (p.due_date <= today) fail('วันคืนต้องเป็นวันพรุ่งนี้หรือหลังจากนั้น');
         due = p.due_date;
       }
       if (!p.items || !p.items.length) fail('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
@@ -268,6 +269,31 @@ var BorrowCore = (function () {
     return actions[action](db, payload || {}, { now: ctx.now || new Date() });
   }
 
+  var AUTO_RETURN_NOTE = 'คืนอัตโนมัติเมื่อถึงวันคืน';
+
+  // ถึงวันคืน (ตั้งแต่ 00:00 ของวันคืน) → คืนพัสดุที่ยังค้างเข้าสต็อกอัตโนมัติ ไม่ว่าคืนของจริงแล้วหรือยัง
+  // คืนค่าจำนวนใบยืมที่ถูกปิด (0 = ไม่มีอะไรเปลี่ยน)
+  function autoReturnDue(db, now) {
+    now = now || new Date();
+    var today = ymd(now);
+    var ctx = { now: now };
+    var closed = 0;
+    db.requests.forEach(function (r) {
+      if (r.status !== 'borrowed' || !isDate(r.due_date) || r.due_date > today) return;
+      lines(db, r.id).forEach(function (l) {
+        var out = l.qty - l.returned_qty - l.lost_qty;
+        if (out <= 0) return;
+        moveStock(db, ctx, { item_id: l.item_id, type: 'return', available_delta: out, total_delta: 0, qty: out, request_no: r.request_no, note: AUTO_RETURN_NOTE });
+        l.returned_qty += out;
+      });
+      r.status = 'returned';
+      r.returned_at = stamp(now);
+      r.note = r.note ? r.note + ' · ' + AUTO_RETURN_NOTE : AUTO_RETURN_NOTE;
+      closed++;
+    });
+    return closed;
+  }
+
   // ข้อมูลที่ส่งให้ผู้ใช้ทั่วไป (ไม่มี PIN): สต็อก แผนก หมวดหมู่ และเฉพาะใบที่เพิ่งส่ง (ใช้ทำ PDF)
   // ประวัติการเบิก-ยืมทั้งหมด (ชื่อผู้ขอ ฯลฯ) ส่งให้เฉพาะเจ้าหน้าที่
   function publicView(db, keepRequestId) {
@@ -340,7 +366,7 @@ var BorrowCore = (function () {
     return db;
   }
 
-  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, run: run, seed: seed, normalize: normalize, emptyDb: emptyDb, ymd: ymd };
+  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;
