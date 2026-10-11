@@ -28,7 +28,9 @@
   --r-md: 14px;
   --r-sm: 10px;
   --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
-  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Sukhumvit Set', 'Noto Sans Thai', 'Helvetica Neue', sans-serif;
+  /* Noto Sans Thai (Google Fonts มีทั้งไทย อังกฤษ ตัวเลข) ขึ้นก่อน เพื่อให้คอม มือถือ และ iPad แสดงฟอนต์เดียวกัน
+     ฟอนต์ระบบด้านหลังใช้ชั่วคราวระหว่างโหลด หรือถ้าโหลด Google Fonts ไม่ได้ */
+  --font: 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
   color-scheme: light;
 }
 
@@ -77,6 +79,8 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 [hidden] { display: none !important; }
+/* ปุ่ม/ช่องกรอกใช้ฟอนต์เดียวกับหน้าเว็บ (ค่าเริ่มต้นของเบราว์เซอร์เป็นฟอนต์ระบบ) */
+button, input, select, textarea { font-family: inherit; }
 a { color: var(--accent); text-decoration: none; }
 @media (hover: hover) { a:hover { text-decoration: underline; } }
 h1, h2, h3, h4 { margin: 0; line-height: 1.15; letter-spacing: -0.02em; font-weight: 600; }
