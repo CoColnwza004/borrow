@@ -31,6 +31,19 @@
 
 ตอนนี้เว็บใช้งานได้แล้วใน **โหมดทดลอง** ข้อมูลเก็บในเบราว์เซอร์แต่ละเครื่อง และ PIN เจ้าหน้าที่คือ `1234`
 
+### ทางเลือก: เผยแพร่ด้วย Netlify (ฟรี) แทน GitHub Pages
+repo มีไฟล์ [`netlify.toml`](netlify.toml) อยู่แล้ว (เผยแพร่โฟลเดอร์ `docs/` ไม่ต้อง build และใส่ส่วนหัวความปลอดภัยให้ เช่น CSP ที่อนุญาตเฉพาะสคริปต์ของเว็บเอง + Google Apps Script)
+1. เข้า https://app.netlify.com → **Sign up / Log in with GitHub**
+2. **Add new site → Import an existing project → GitHub** → อนุญาต Netlify (เลือก *Only select repositories* → `borrow` ได้)
+3. เลือก repo `borrow` และ **Branch to deploy** = branch ที่มีโค้ดนี้
+   ช่อง Base directory เว้นว่าง, Build command เว้นว่าง, Publish directory = `docs` (อ่านจาก netlify.toml ให้อัตโนมัติ) → **Deploy**
+4. **Site configuration → Change site name** เช่น `pakkred-supply` → เว็บจะอยู่ที่ `https://pakkred-supply.netlify.app`
+5. ทุกครั้งที่ push เข้า branch นั้น Netlify จะอัปเดตเว็บให้เอง (ประมาณ 1 นาที)
+
+- Netlify ดึงโค้ดจาก repo แบบ **private** ได้ (GitHub Pages แบบฟรีทำไม่ได้) ถ้าเปลี่ยน repo เป็น private ให้ปิด GitHub Pages ด้วย
+  และคัดลอก `AllInOne.gs` จากหน้าไฟล์บน GitHub (กด Raw ขณะล็อกอิน) แทนลิงก์ raw สาธารณะ
+- ใช้ Netlify แล้วไม่ต้องใช้ GitHub Pages (ปิดได้ที่ Settings → Pages) จะได้มีเว็บเดียว
+
 ### ขั้นที่ 2: เชื่อม Google Sheets เพื่อให้ทุกเครื่องใช้ข้อมูลพัสดุ/สต็อกชุดเดียวกัน (ประมาณ 10 นาที)
 
 **Google Sheet มาจากไหน?** สร้างใหม่เองด้วยบัญชี Google (Gmail หรือบัญชี Google Workspace ของโรงพยาบาล) ไม่ต้องมีชีตเดิม
