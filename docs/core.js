@@ -1,16 +1,20 @@
 /*
- * BorrowCore — กฎการยืม-คืนและการตัดสต็อก
+ * BorrowCore — กฎการเบิก/ยืม-คืนพัสดุและการตัดสต็อก
  * ไฟล์เดียวกันนี้ใช้ทั้งในเบราว์เซอร์ (โหมดทดลอง) และใน Google Apps Script (คัดลอกไปเป็น Core.gs)
  * ข้อมูลทั้งหมดอยู่ในอ็อบเจกต์ db = { items, requests, request_items, movements, departments, categories }
  */
 var BorrowCore = (function () {
-  var STATUS = { pending: 'รออนุมัติ', borrowed: 'กำลังยืม', returned: 'คืนแล้ว', rejected: 'ไม่อนุมัติ', cancelled: 'ยกเลิก' };
-  var MOVE = { receive: 'รับเข้า', borrow: 'ยืมออก', return: 'รับคืน', adjust: 'ปรับปรุงยอด', lost: 'ชำรุด/สูญหาย' };
+  var STATUS = { issued: 'เบิกแล้ว', pending: 'รออนุมัติ', borrowed: 'กำลังยืม', returned: 'คืนแล้ว', rejected: 'ไม่อนุมัติ', cancelled: 'ยกเลิก' };
+  var MOVE = { receive: 'รับเข้า', withdraw: 'เบิกจ่าย', borrow: 'ยืมออก', return: 'รับคืน', adjust: 'ปรับปรุงยอด', lost: 'ชำรุด/สูญหาย' };
+  // ประเภทคำขอ: เบิก = ของออกจากคลังถาวร ไม่ต้องคืน / ยืม = ต้องคืนตามกำหนด
+  var TYPES = { withdraw: 'เบิก', borrow: 'ยืม' };
+  // พัสดุแต่ละรายการให้ใช้กับคำขอประเภทใดได้บ้าง
+  var KINDS = { withdraw: 'เบิกได้อย่างเดียว', borrow: 'ยืมได้อย่างเดียว', both: 'เบิกและยืมได้' };
 
   var TABLES = {
-    items: ['id', 'code', 'name', 'category', 'unit', 'total_qty', 'available_qty', 'min_qty', 'location', 'active'],
+    items: ['id', 'code', 'name', 'category', 'unit', 'total_qty', 'available_qty', 'min_qty', 'location', 'active', 'kind'],
     requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'borrow_date', 'due_date',
-      'status', 'created_at', 'approved_at', 'returned_at', 'note'],
+      'status', 'created_at', 'approved_at', 'returned_at', 'note', 'type'],
     request_items: ['request_id', 'item_id', 'qty', 'returned_qty', 'lost_qty'],
     movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'total_after', 'request_no', 'note'],
     departments: ['name'],
@@ -52,11 +56,16 @@ var BorrowCore = (function () {
           return o;
         });
     });
+    // ชีตเวอร์ชันก่อนไม่มีคอลัมน์ kind / type
+    db.items.forEach(function (i) { if (!KINDS[i.kind]) i.kind = 'both'; });
+    db.requests.forEach(function (r) { if (!TYPES[r.type]) r.type = 'borrow'; });
     return db;
   }
 
+  function allows(item, type) { return item.kind === 'both' || item.kind === type; }
+
   function moveStock(db, ctx, o) {
-    var item = byId(db.items, o.item_id) || fail('ไม่พบรายการอุปกรณ์');
+    var item = byId(db.items, o.item_id) || fail('ไม่พบรายการพัสดุ');
     var available = item.available_qty + o.available_delta;
     var total = item.total_qty + o.total_delta;
     if (available < 0) fail('"' + item.name + '" คงเหลือไม่พอ (คงเหลือ ' + item.available_qty + ' ' + item.unit + ')');
@@ -78,41 +87,58 @@ var BorrowCore = (function () {
   var actions = {
     checkPin: function () { return true; },
 
+    // ส่งฟอร์มเบิก/ยืม: ตัดสต็อกทันที ไม่ต้องรออนุมัติ
     createRequest: function (db, p, ctx) {
-      var name = req(p.borrower_name, 'ชื่อผู้ยืม');
-      var dept = req(p.department, 'หน่วยงาน');
-      if (!isDate(p.borrow_date) || !isDate(p.due_date)) fail('กรุณาระบุวันที่ยืมและกำหนดคืนให้ถูกต้อง');
-      if (p.due_date < p.borrow_date) fail('วันกำหนดคืนต้องไม่ก่อนวันที่ยืม');
-      if (!p.items || !p.items.length) fail('กรุณาเลือกอุปกรณ์อย่างน้อย 1 รายการ');
+      var type = TYPES[p.type] ? p.type : fail('กรุณาเลือกประเภท เบิก หรือ ยืม');
+      var name = req(p.borrower_name, 'ชื่อผู้' + TYPES[type]);
+      var dept = req(p.department, 'แผนก');
+      if (!find(db.departments, function (d) { return d.name === dept; })) fail('กรุณาเลือกแผนกจากรายการ');
+      var today = ymd(ctx.now);
+      var due = '';
+      if (type === 'borrow') {
+        if (!isDate(p.due_date)) fail('กรุณาระบุวันคืน');
+        if (p.due_date < today) fail('วันคืนต้องไม่ก่อนวันนี้');
+        due = p.due_date;
+      }
+      if (!p.items || !p.items.length) fail('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
       var merged = {};
       p.items.forEach(function (l) {
-        var id = int(l.item_id, 'รหัสอุปกรณ์', 1);
+        var id = int(l.item_id, 'รหัสพัสดุ', 1);
         merged[id] = (merged[id] || 0) + int(l.qty, 'จำนวน', 1);
       });
       Object.keys(merged).forEach(function (id) {
         var item = byId(db.items, id);
-        if (!item || !item.active) fail('มีอุปกรณ์ที่ไม่พบหรือถูกปิดใช้งาน');
+        if (!item || !item.active) fail('มีพัสดุที่ไม่พบหรือถูกปิดใช้งาน');
+        if (!allows(item, type)) fail('"' + item.name + '" ' + KINDS[item.kind]);
         if (merged[id] > item.available_qty) {
           fail('"' + item.name + '" คงเหลือไม่พอ (ขอ ' + merged[id] + ', คงเหลือ ' + item.available_qty + ' ' + item.unit + ')');
         }
       });
-      var prefix = 'BR' + ymd(ctx.now).slice(2, 7).replace('-', '') + '-';
+      // เลขที่เอกสาร เช่น WD6910-0001 (ปี พ.ศ. 2 หลัก + เดือน + ลำดับในเดือน)
+      var be = String(ctx.now.getFullYear() + 543).slice(2) + pad(ctx.now.getMonth() + 1);
+      var prefix = (type === 'withdraw' ? 'WD' : 'BR') + be + '-';
       var seq = 0;
       db.requests.forEach(function (r) {
         if (r.request_no.indexOf(prefix) === 0) seq = Math.max(seq, Number(r.request_no.slice(prefix.length)));
       });
       var r = {
         id: nextId(db.requests), request_no: prefix + ('000' + (seq + 1)).slice(-4), borrower_name: name, phone: str(p.phone),
-        department: dept, purpose: str(p.purpose), borrow_date: p.borrow_date, due_date: p.due_date, status: 'pending',
-        created_at: stamp(ctx.now), approved_at: '', returned_at: '', note: str(p.note),
+        department: dept, purpose: str(p.purpose), borrow_date: today, due_date: due,
+        status: type === 'withdraw' ? 'issued' : 'borrowed', created_at: stamp(ctx.now), approved_at: stamp(ctx.now),
+        returned_at: '', note: str(p.note), type: type,
       };
       db.requests.push(r);
       Object.keys(merged).forEach(function (id) {
-        db.request_items.push({ request_id: r.id, item_id: Number(id), qty: merged[id], returned_qty: 0, lost_qty: 0 });
+        var q = merged[id];
+        db.request_items.push({ request_id: r.id, item_id: Number(id), qty: q, returned_qty: 0, lost_qty: 0 });
+        moveStock(db, ctx, type === 'withdraw'
+          ? { item_id: id, type: 'withdraw', available_delta: -q, total_delta: -q, qty: -q, request_no: r.request_no }
+          : { item_id: id, type: 'borrow', available_delta: -q, total_delta: 0, qty: -q, request_no: r.request_no });
       });
       return r.id;
     },
 
+    // approve / reject / cancelRequest ใช้กับคำขอ "รออนุมัติ" ที่ค้างจากระบบเวอร์ชันก่อน
     cancelRequest: function (db, p) {
       var r = byId(db.requests, p.id) || fail('ไม่พบคำขอยืม');
       if (r.status !== 'pending') fail('ยกเลิกได้เฉพาะคำขอที่รออนุมัติ');
@@ -146,7 +172,7 @@ var BorrowCore = (function () {
       if (r.status !== 'borrowed') fail('คำขอนี้ไม่อยู่ในสถานะกำลังยืม');
       var touched = false;
       (p.items || []).forEach(function (x) {
-        var l = find(lines(db, r.id), function (l) { return l.item_id === Number(x.item_id); }) || fail('มีอุปกรณ์ที่ไม่อยู่ในคำขอนี้');
+        var l = find(lines(db, r.id), function (l) { return l.item_id === Number(x.item_id); }) || fail('มีพัสดุที่ไม่อยู่ในคำขอนี้');
         var ret = int(x.returned_qty || 0, 'จำนวนที่คืน');
         var lost = int(x.lost_qty || 0, 'จำนวนชำรุด/สูญหาย');
         if (ret + lost === 0) return;
@@ -165,16 +191,17 @@ var BorrowCore = (function () {
     },
 
     saveItem: function (db, p, ctx) {
-      var code = req(p.code, 'รหัสอุปกรณ์');
+      var code = req(p.code, 'รหัสพัสดุ');
       var dup = find(db.items, function (i) { return i.code === code && i.id !== Number(p.id || 0); });
-      if (dup) fail('รหัสอุปกรณ์นี้มีอยู่แล้ว');
+      if (dup) fail('รหัสพัสดุนี้มีอยู่แล้ว');
       var fields = {
-        code: code, name: req(p.name, 'ชื่ออุปกรณ์'), category: str(p.category), unit: str(p.unit) || 'ชิ้น',
+        code: code, name: req(p.name, 'ชื่อพัสดุ'), category: str(p.category), unit: str(p.unit) || 'ชิ้น',
         min_qty: int(p.min_qty || 0, 'จุดสั่งซื้อขั้นต่ำ'), location: str(p.location), active: p.active === false ? 0 : 1,
+        kind: KINDS[p.kind] ? p.kind : 'both',
       };
       var item;
       if (p.id) {
-        item = byId(db.items, p.id) || fail('ไม่พบรายการอุปกรณ์');
+        item = byId(db.items, p.id) || fail('ไม่พบรายการพัสดุ');
         Object.keys(fields).forEach(function (k) { item[k] = fields[k]; });
       } else {
         item = fields;
@@ -190,7 +217,7 @@ var BorrowCore = (function () {
 
     // type: receive (รับเข้า) | lost (ตัดชำรุด) | adjust (ระบุยอดที่นับได้จริง)
     stock: function (db, p, ctx) {
-      var item = byId(db.items, p.item_id) || fail('ไม่พบรายการอุปกรณ์');
+      var item = byId(db.items, p.item_id) || fail('ไม่พบรายการพัสดุ');
       var q;
       if (p.type === 'receive') {
         q = int(p.qty, 'จำนวน', 1);
@@ -231,29 +258,35 @@ var BorrowCore = (function () {
 
   function seed(now) {
     var db = emptyDb();
-    ['คลังพัสดุกลาง', 'หอผู้ป่วยอายุรกรรมชาย', 'หอผู้ป่วยศัลยกรรมหญิง', 'ห้องฉุกเฉิน (ER)', 'หอผู้ป่วยวิกฤต (ICU)', 'แผนกผู้ป่วยนอก (OPD)']
+    ['งานพัสดุ', 'งานธุรการ', 'งานการเงินและบัญชี', 'งานบุคคล', 'งานเทคโนโลยีสารสนเทศ', 'ห้องฉุกเฉิน (ER)',
+      'แผนกผู้ป่วยนอก (OPD)', 'หอผู้ป่วยใน (IPD)', 'หอผู้ป่วยวิกฤต (ICU)']
       .forEach(function (n) { db.departments.push({ name: n }); });
-    ['ครุภัณฑ์การแพทย์', 'อุปกรณ์ช่วยเคลื่อนย้าย', 'อุปกรณ์ช่วยหายใจ', 'อุปกรณ์ติดตามสัญญาณชีพ', 'อื่น ๆ']
+    ['วัสดุสำนักงาน', 'วัสดุการแพทย์', 'วัสดุทำความสะอาด', 'วัสดุคอมพิวเตอร์', 'ครุภัณฑ์การแพทย์', 'ครุภัณฑ์สำนักงาน']
       .forEach(function (n) { db.categories.push({ name: n }); });
     var ctx = { now: now || new Date(), isAdmin: true };
     [
-      ['EQ-001', 'เครื่องวัดความดันโลหิตแบบดิจิทัล', 'อุปกรณ์ติดตามสัญญาณชีพ', 'เครื่อง', 15, 3, 'คลัง A ชั้น 1'],
-      ['EQ-002', 'เครื่องวัดออกซิเจนปลายนิ้ว (Pulse Oximeter)', 'อุปกรณ์ติดตามสัญญาณชีพ', 'เครื่อง', 20, 5, 'คลัง A ชั้น 1'],
-      ['EQ-003', 'เครื่องให้สารละลายทางหลอดเลือด (Infusion Pump)', 'ครุภัณฑ์การแพทย์', 'เครื่อง', 10, 2, 'คลัง A ชั้น 2'],
-      ['EQ-004', 'เครื่องดูดเสมหะ (Suction)', 'ครุภัณฑ์การแพทย์', 'เครื่อง', 6, 2, 'คลัง A ชั้น 2'],
-      ['EQ-005', 'รถเข็นนั่ง (Wheelchair)', 'อุปกรณ์ช่วยเคลื่อนย้าย', 'คัน', 12, 3, 'คลัง B'],
-      ['EQ-006', 'เปลนอนเคลื่อนย้ายผู้ป่วย (Stretcher)', 'อุปกรณ์ช่วยเคลื่อนย้าย', 'เตียง', 5, 1, 'คลัง B'],
-      ['EQ-007', 'ถังออกซิเจนพร้อมเกจ์', 'อุปกรณ์ช่วยหายใจ', 'ถัง', 18, 4, 'ห้องเก็บก๊าซ'],
-      ['EQ-008', 'เครื่องผลิตออกซิเจน (Oxygen Concentrator)', 'อุปกรณ์ช่วยหายใจ', 'เครื่อง', 4, 1, 'คลัง A ชั้น 2'],
-      ['EQ-009', 'เครื่องติดตามสัญญาณชีพ (Patient Monitor)', 'อุปกรณ์ติดตามสัญญาณชีพ', 'เครื่อง', 8, 2, 'คลัง A ชั้น 2'],
-      ['EQ-010', 'ที่นอนลมป้องกันแผลกดทับ', 'อื่น ๆ', 'ชุด', 10, 2, 'คลัง B'],
+      ['OF-001', 'กระดาษ A4 80 แกรม', 'วัสดุสำนักงาน', 'รีม', 120, 20, 'คลังพัสดุ ชั้น 1', 'withdraw'],
+      ['OF-002', 'ปากกาลูกลื่น สีน้ำเงิน', 'วัสดุสำนักงาน', 'ด้าม', 300, 50, 'คลังพัสดุ ชั้น 1', 'withdraw'],
+      ['OF-003', 'แฟ้มเอกสาร สันกว้าง 3 นิ้ว', 'วัสดุสำนักงาน', 'แฟ้ม', 60, 10, 'คลังพัสดุ ชั้น 1', 'withdraw'],
+      ['MD-001', 'ถุงมือยางทางการแพทย์ ไซซ์ M', 'วัสดุการแพทย์', 'กล่อง', 80, 15, 'คลังพัสดุ ชั้น 2', 'withdraw'],
+      ['MD-002', 'หน้ากากอนามัย', 'วัสดุการแพทย์', 'กล่อง', 150, 30, 'คลังพัสดุ ชั้น 2', 'withdraw'],
+      ['MD-003', 'แอลกอฮอล์ 70% 450 มล.', 'วัสดุการแพทย์', 'ขวด', 90, 20, 'คลังพัสดุ ชั้น 2', 'withdraw'],
+      ['CL-001', 'น้ำยาทำความสะอาดพื้น 3.8 ลิตร', 'วัสดุทำความสะอาด', 'แกลลอน', 25, 5, 'คลังพัสดุ ชั้น 1', 'withdraw'],
+      ['IT-001', 'หมึกพิมพ์เลเซอร์ HP 79A', 'วัสดุคอมพิวเตอร์', 'ตลับ', 12, 3, 'ห้อง IT', 'withdraw'],
+      ['EQ-001', 'เครื่องวัดความดันโลหิตแบบดิจิทัล', 'ครุภัณฑ์การแพทย์', 'เครื่อง', 15, 3, 'คลังครุภัณฑ์', 'borrow'],
+      ['EQ-002', 'เครื่องวัดออกซิเจนปลายนิ้ว (Pulse Oximeter)', 'ครุภัณฑ์การแพทย์', 'เครื่อง', 20, 5, 'คลังครุภัณฑ์', 'borrow'],
+      ['EQ-003', 'รถเข็นนั่ง (Wheelchair)', 'ครุภัณฑ์การแพทย์', 'คัน', 12, 3, 'คลังครุภัณฑ์', 'borrow'],
+      ['EQ-004', 'เครื่องผลิตออกซิเจน (Oxygen Concentrator)', 'ครุภัณฑ์การแพทย์', 'เครื่อง', 4, 1, 'คลังครุภัณฑ์', 'borrow'],
+      ['EQ-005', 'โน้ตบุ๊กสำหรับประชุม', 'ครุภัณฑ์สำนักงาน', 'เครื่อง', 6, 1, 'ห้อง IT', 'borrow'],
+      ['EQ-006', 'เครื่องโปรเจกเตอร์', 'ครุภัณฑ์สำนักงาน', 'เครื่อง', 3, 1, 'ห้อง IT', 'borrow'],
+      ['EQ-007', 'ไมโครโฟนไร้สาย', 'ครุภัณฑ์สำนักงาน', 'ชุด', 4, 1, 'ห้อง IT', 'borrow'],
     ].forEach(function (x) {
-      run(db, 'saveItem', { code: x[0], name: x[1], category: x[2], unit: x[3], initial_qty: x[4], min_qty: x[5], location: x[6] }, ctx);
+      run(db, 'saveItem', { code: x[0], name: x[1], category: x[2], unit: x[3], initial_qty: x[4], min_qty: x[5], location: x[6], kind: x[7] }, ctx);
     });
     return db;
   }
 
-  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, run: run, seed: seed, normalize: normalize, emptyDb: emptyDb, ymd: ymd };
+  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, run: run, seed: seed, normalize: normalize, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;
