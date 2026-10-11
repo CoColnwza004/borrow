@@ -1,0 +1,17 @@
+# Netlify: เผยแพร่โฟลเดอร์ docs/ ตรง ๆ ไม่มีขั้นตอน build
+[build]
+  publish = "docs"
+  command = ""
+
+# ส่วนหัวความปลอดภัยทุกหน้า
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # อนุญาตเฉพาะสคริปต์ของเว็บนี้เอง, ฟอนต์จาก Google Fonts และเรียกข้อมูลจาก Google Apps Script เท่านั้น
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
+    Strict-Transport-Security = "max-age=31536000"
+
