@@ -2,9 +2,10 @@
  * ตัวเชื่อม Google Sheets สำหรับระบบเบิก-ยืมพัสดุ
  * วิธีติดตั้งอยู่ใน README.md หัวข้อ "ขั้นที่ 2: เชื่อม Google Sheets"
  *
- * ไฟล์ในโปรเจกต์ Apps Script ต้องมี 2 ไฟล์:
- *   Core.gs  = คัดลอกเนื้อหาทั้งหมดจาก docs/core.js
- *   Code.gs  = ไฟล์นี้
+ * ไฟล์ในโปรเจกต์ Apps Script ต้องมี 3 ไฟล์:
+ *   Core.gs      = คัดลอกเนื้อหาทั้งหมดจาก docs/core.js
+ *   SeedData.gs  = คัดลอกเนื้อหาทั้งหมดจาก docs/seed-data.js (รายการพัสดุ/ยอดคงเหลือ และรายชื่อแผนกตั้งต้น)
+ *   Code.gs      = ไฟล์นี้
  */
 
 // *** เปลี่ยนรหัส PIN สำหรับเจ้าหน้าที่พัสดุ (ใช้รับคืน / จัดการสต็อก) ***
@@ -20,15 +21,17 @@ var SHEET_NAMES = {
   categories: 'หมวดหมู่',
 };
 
-/** รันฟังก์ชันนี้ 1 ครั้งจากหน้า Apps Script เพื่อสร้างชีตและข้อมูลตัวอย่าง */
+/**
+ * รันจากหน้า Apps Script เพื่อสร้างแท็บและใส่รายการพัสดุ/แผนกจาก SeedData
+ * รันซ้ำได้จนกว่าจะเริ่มมีการเบิก/ยืมจริง (จะเขียนทับรายการพัสดุ แผนก และประวัติสต็อกทั้งหมด)
+ */
 function setup() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var hasData = Object.keys(SHEET_NAMES).some(function (t) {
-    var sh = ss.getSheetByName(SHEET_NAMES[t]);
-    return sh && sh.getLastRow() > 1;
-  });
-  if (hasData) throw new Error('มีข้อมูลอยู่แล้ว ไม่ได้สร้างซ้ำ (ถ้าต้องการเริ่มใหม่ให้ลบชีตเดิมก่อน)');
-  saveDb_(BorrowCore.seed(new Date()));
+  if (typeof SEED_DATA === 'undefined') throw new Error('ไม่พบไฟล์ SeedData กรุณาคัดลอก docs/seed-data.js มาเป็นไฟล์ SeedData ก่อน');
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.requests);
+  if (sh && sh.getLastRow() > 1) {
+    throw new Error('มีรายการเบิก/ยืมในชีตแล้ว ไม่ได้เขียนทับ (ถ้าต้องการเริ่มใหม่ให้ลบแท็บ "' + SHEET_NAMES.requests + '" ก่อน)');
+  }
+  saveDb_(BorrowCore.seed(new Date(), SEED_DATA));
 }
 
 function doGet() {

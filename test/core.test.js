@@ -10,9 +10,19 @@ const user = { isAdmin: false };
 
 const DUE = '2099-12-31';
 const person = { borrower_name: 'สมชาย ใจดี', department: 'งานธุรการ' };
+// ข้อมูลเล็ก ๆ สำหรับทดสอบกฎ (แยกจากข้อมูลจริงใน docs/seed-data.js)
+const FIXTURE = {
+  departments: [['งานธุรการ', ''], ['ICU', 'งานการพยาบาลผู้ป่วยหนัก']],
+  categories: ['ทั่วไป'],
+  items: [
+    ['OF-001', 'กระดาษ A4', 'ทั่วไป', 'รีม', 120, 20, 'คลัง', 'withdraw'],
+    ['EQ-005', 'โน้ตบุ๊ก', 'ทั่วไป', 'เครื่อง', 6, 1, 'คลัง', 'borrow'],
+    ['EQ-006', 'โปรเจกเตอร์', 'ทั่วไป', 'เครื่อง', 3, 1, 'คลัง', 'borrow'],
+  ],
+};
 
 test('core: withdraw deducts available and total immediately', () => {
-  const db = Core.seed(new Date());
+  const db = Core.seed(new Date(), FIXTURE);
   const paper = db.items.find((i) => i.code === 'OF-001');
   const id = Core.run(db, 'createRequest', { ...person, type: 'withdraw', items: [{ item_id: paper.id, qty: 5 }] }, user);
   const r = db.requests.find((x) => x.id === id);
@@ -27,7 +37,7 @@ test('core: withdraw deducts available and total immediately', () => {
 });
 
 test('core: borrow deducts available only, return puts it back', () => {
-  const db = Core.seed(new Date());
+  const db = Core.seed(new Date(), FIXTURE);
   const nb = db.items.find((i) => i.code === 'EQ-005');
   const id = Core.run(db, 'createRequest', { ...person, type: 'borrow', due_date: DUE, items: [{ item_id: nb.id, qty: 2 }] }, user);
   const r = db.requests.find((x) => x.id === id);
@@ -43,7 +53,7 @@ test('core: borrow deducts available only, return puts it back', () => {
 });
 
 test('core: validation for type, department, due date, kind and stock', () => {
-  const db = Core.seed(new Date());
+  const db = Core.seed(new Date(), FIXTURE);
   const paper = db.items.find((i) => i.code === 'OF-001');
   const proj = db.items.find((i) => i.code === 'EQ-006');
   const w = { ...person, type: 'withdraw', items: [{ item_id: paper.id, qty: 1 }] };
@@ -98,24 +108,48 @@ test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () =
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/core.js'), 'utf8'), ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/Code.gs'), 'utf8'), ctx);
+  assert.throws(() => ctx.setup(), /SeedData/);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/seed-data.js'), 'utf8'), ctx);
   ctx.setup();
-  assert.equal(sheets['อุปกรณ์'].data.length, 16);
-  assert.throws(() => ctx.setup(), /มีข้อมูลอยู่แล้ว/);
+  assert.equal(sheets['อุปกรณ์'].data.length, 287);
+  assert.equal(sheets['หน่วยงาน'].data.length, 23);
+  ctx.setup(); // ยังไม่มีการเบิก/ยืม รันซ้ำได้
 
   const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
-  const create = post({ action: 'createRequest', payload: { ...person, type: 'withdraw', items: [{ item_id: 1, qty: 2 }] } });
+  const icu = { borrower_name: 'สมชาย ใจดี', department: 'ICU' };
+  const create = post({ action: 'createRequest', payload: { ...icu, type: 'withdraw', items: [{ item_id: 2, qty: 2 }] } });
   assert.equal(create.ok, true);
-  const borrow = post({ action: 'createRequest', payload: { ...person, type: 'borrow', due_date: DUE, items: [{ item_id: 9, qty: 1 }] } });
+  assert.throws(() => ctx.setup(), /มีรายการเบิก\/ยืม/);
+  const borrow = post({ action: 'createRequest', payload: { ...icu, type: 'borrow', due_date: DUE, items: [{ item_id: 4, qty: 1 }] } });
   assert.equal(borrow.ok, true);
-  const bad = post({ action: 'returnItems', payload: { id: borrow.result, items: [{ item_id: 9, returned_qty: 1 }] }, pin: 'wrong' });
+  const bad = post({ action: 'returnItems', payload: { id: borrow.result, items: [{ item_id: 4, returned_qty: 1 }] }, pin: 'wrong' });
   assert.equal(bad.ok, false);
   // reload from "sheet" text values
   const loaded = JSON.parse(ctx.doGet().body).state;
-  assert.equal(loaded.items.find((i) => i.id === 1).available_qty, 118);
-  assert.equal(loaded.items.find((i) => i.id === 1).kind, 'withdraw');
-  assert.equal(loaded.items.find((i) => i.id === 9).available_qty, 14);
+  assert.equal(loaded.items.find((i) => i.id === 2).available_qty, 723);
+  assert.equal(loaded.items.find((i) => i.id === 2).kind, 'both');
+  assert.equal(loaded.items.find((i) => i.id === 4).available_qty, 59);
+  assert.equal(loaded.departments.find((d) => d.name === 'ICU').full_name, 'งานการพยาบาลผู้ป่วยหนัก');
   assert.deepEqual(loaded.requests.map((r) => [r.type, r.status]), [['withdraw', 'issued'], ['borrow', 'borrowed']]);
-  const ret = post({ action: 'returnItems', payload: { id: borrow.result, items: [{ item_id: 9, returned_qty: 1 }] }, pin: '1234' });
+  const ret = post({ action: 'returnItems', payload: { id: borrow.result, items: [{ item_id: 4, returned_qty: 1 }] }, pin: '1234' });
   assert.equal(ret.ok, true);
-  assert.equal(ret.state.items.find((i) => i.id === 9).available_qty, 15);
+  assert.equal(ret.state.items.find((i) => i.id === 4).available_qty, 60);
+});
+
+test('seed data: stock NSO list and departments', () => {
+  const SEED = require('../docs/seed-data.js');
+  const db = Core.seed(new Date(), SEED);
+  assert.equal(db.items.length, 286);
+  assert.equal(db.departments.length, 22);
+  assert.equal(new Set(db.items.map((i) => i.code)).size, 286);
+  assert.equal(new Set(db.items.map((i) => i.name)).size, 286);
+  assert.equal(db.items.reduce((s, i) => s + i.available_qty, 0), 21015);
+  const byName = (n) => db.items.find((i) => i.name === n);
+  assert.equal(byName('350 ml water humidifier').available_qty, 725);
+  assert.equal(byName('BP print (ม้วน)').available_qty, 555);
+  assert.equal(byName('เอี๊ยมพลาสติก แขนยาวผูกหลัง').available_qty, 0);
+  assert.equal(byName('เอี๊ยมพลาสติก แขนยาวผูกหลัง').min_qty, 250); // ใช้ 1500 ใน 6 เดือน
+  assert.ok(byName('น้ำยาไฮโดรเจนเปอร์ออกไซด์'));
+  assert.ok(db.items.every((i) => !/ า| [\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/.test(i.name)), 'Thai vowels repaired');
+  assert.deepEqual(db.departments[0], { name: 'ICU', full_name: 'งานการพยาบาลผู้ป่วยหนัก' });
 });

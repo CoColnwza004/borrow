@@ -4,7 +4,7 @@
 const CONFIG = window.APP_CONFIG || {};
 const API_URL = (CONFIG.API_URL || '').trim();
 const DEMO = !API_URL;
-const DEMO_KEY = 'supply-demo-db-v2';
+const DEMO_KEY = 'supply-demo-db-v3';
 const DEMO_PIN = '1234';
 const { STATUS, MOVE, TYPES, KINDS } = BorrowCore;
 
@@ -123,6 +123,7 @@ function requestView(r) {
     is_overdue: r.status === 'borrowed' && !!r.due_date && r.due_date < today(),
     days_overdue: Math.round((new Date(today()) - new Date(r.due_date)) / 86400000),
     item_summary: lines.map((l) => `${l.name} ×${l.qty}`).join(', '),
+    department_full: deptFull(r.department),
   };
 }
 function requestsView() {
@@ -155,6 +156,15 @@ const safe = (fn) => async (...args) => {
 };
 const formData = (form) => Object.fromEntries(new FormData(form).entries());
 
+// ชื่อเต็มของแผนก เช่น "งานการพยาบาลผู้ป่วยหนัก (ICU)" ใช้ในเอกสาร PDF
+function deptFull(name) {
+  const d = state.db.departments.find((x) => x.name === name);
+  return d && d.full_name && d.full_name !== name ? `${d.full_name} (${name})` : name;
+}
+function deptOptions(selected) {
+  return '<option value="">เลือกแผนก</option>' + state.db.departments.map((d) =>
+    `<option value="${esc(d.name)}" ${d.name === selected ? 'selected' : ''}>${esc(d.name)}${d.full_name && d.full_name !== d.name ? ' — ' + esc(d.full_name) : ''}</option>`).join('');
+}
 function options(list, selected, blank) {
   return (blank ? `<option value="">${blank}</option>` : '') +
     list.map((x) => `<option ${x.name === selected ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
@@ -329,14 +339,14 @@ function renderHome(page) {
       <a class="choice withdraw" href="#/request?type=withdraw">
         <span class="choice-icon">${ICON.withdraw}</span>
         <h2>เบิกพัสดุ</h2>
-        <p>วัสดุสิ้นเปลือง เช่น กระดาษ ปากกา ถุงมือ — เบิกไปใช้แล้วไม่ต้องคืน</p>
+        <p>เวชภัณฑ์และวัสดุสิ้นเปลือง เบิกไปใช้ในหน่วยงานแล้วไม่ต้องนำมาคืน</p>
         <span class="cta">เริ่มเบิกพัสดุ</span>
         <span class="ghost">${ICON.withdraw}</span>
       </a>
       <a class="choice borrow" href="#/request?type=borrow">
         <span class="choice-icon">${ICON.borrow}</span>
         <h2>ยืมพัสดุ</h2>
-        <p>ครุภัณฑ์และอุปกรณ์ เช่น โน้ตบุ๊ก โปรเจกเตอร์ รถเข็น — ต้องคืนตามวันที่กำหนด</p>
+        <p>ยืมพัสดุไปใช้ก่อนชั่วคราว แล้วนำมาคืนคลังภายในวันที่กำหนด</p>
         <span class="cta">เริ่มยืมพัสดุ</span>
         <span class="ghost">${ICON.borrow}</span>
       </a>
@@ -374,11 +384,11 @@ function renderRequestForm(page) {
           <label class="field">ชื่อ-นามสกุล <span class="req">*</span>
             <input name="borrower_name" required autocomplete="name" placeholder="เช่น สมชาย ใจดี" value="${esc(lsGet('last-name'))}"></label>
           <label class="field">แผนก <span class="req">*</span>
-            <select name="department" required>${options(state.db.departments, lsGet('last-dept'), 'เลือกแผนก')}</select></label>
+            <select name="department" required>${deptOptions(lsGet('last-dept'))}</select></label>
           <label class="field" id="rf-due">วันคืน <span class="req">*</span>
             <input type="date" name="due_date" min="${today()}" value="${addDays(7)}"></label>
           <label class="field" id="rf-note">หมายเหตุ <span class="hint">(ไม่บังคับ)</span>
-            <input name="note" placeholder="เช่น ใช้ในการประชุมประจำเดือน"></label>
+            <input name="note" placeholder="เช่น ใช้ทดแทนชั่วคราวระหว่างรอของ"></label>
         </div>
       </section>
       <section class="group">
@@ -401,8 +411,8 @@ function renderRequestForm(page) {
     const w = type === 'withdraw';
     $('#rf-title').textContent = w ? 'เบิกพัสดุ' : 'ยืมพัสดุ';
     $('#rf-lead').textContent = w
-      ? 'สำหรับวัสดุสิ้นเปลืองที่ใช้แล้วหมดไป ไม่ต้องนำมาคืน'
-      : 'สำหรับครุภัณฑ์และอุปกรณ์ที่ต้องนำมาคืนภายในวันที่กำหนด';
+      ? 'สำหรับเวชภัณฑ์และวัสดุสิ้นเปลืองที่ใช้แล้วหมดไป ไม่ต้องนำมาคืน'
+      : 'ยืมพัสดุไปใช้ชั่วคราว และนำมาคืนคลังภายในวันที่กำหนด';
     $$('#rf-type button').forEach((b) => {
       b.classList.toggle('active', b.dataset.type === type);
       b.setAttribute('aria-selected', String(b.dataset.type === type));
@@ -784,7 +794,7 @@ function showRequest(id) {
     <div style="display:flex;gap:6px">${typePill(r.type)}${statusPill(r)}</div>
     <dl class="info">
       <dt>ชื่อ</dt><dd>${esc(r.borrower_name)} ${r.phone ? `(โทร ${esc(r.phone)})` : ''}</dd>
-      <dt>แผนก</dt><dd>${esc(r.department)}</dd>
+      <dt>แผนก</dt><dd>${esc(r.department_full)}</dd>
       <dt>วันที่${w ? 'เบิก' : 'ยืม'}</dt><dd>${fmtDateTime(r.created_at)}</dd>
       ${w ? '' : `<dt>กำหนดคืน</dt><dd>${fmtDate(r.due_date)}${r.is_overdue ? ` <span class="pill overdue">เกิน ${r.days_overdue} วัน</span>` : ''}</dd>`}
       ${r.purpose ? `<dt>วัตถุประสงค์</dt><dd>${esc(r.purpose)}</dd>` : ''}
@@ -934,11 +944,15 @@ function renderMovements(page) {
 
 // ===================== Settings =====================
 function renderSettings(page) {
+  const isDept = (table) => table === 'departments';
   const card = (table, title) => `
     <section class="card">
       <div class="card-head"><h3>${title}</h3></div>
-      <form class="toolbar" data-add="${table}" style="padding:4px 24px 12px"><input name="name" placeholder="เพิ่มใหม่..." required style="flex:1"><button class="btn primary">เพิ่ม</button></form>
-      <div class="table-wrap"><table><tbody>${state.db[table].map((x) => `<tr><td>${esc(x.name)}</td>
+      <form class="toolbar" data-add="${table}" style="padding:4px 24px 12px">
+        <input name="name" placeholder="${isDept(table) ? 'ชื่อย่อ เช่น ICU' : 'เพิ่มใหม่...'}" required style="flex:1;min-width:120px">
+        ${isDept(table) ? '<input name="full_name" placeholder="ชื่อเต็ม (ถ้ามี)" style="flex:2;min-width:160px">' : ''}
+        <button class="btn primary">เพิ่ม</button></form>
+      <div class="table-wrap"><table><tbody>${state.db[table].map((x) => `<tr><td>${esc(x.name)}${x.full_name ? `<div class="muted small">${esc(x.full_name)}</div>` : ''}</td>
         <td class="num"><button class="link" data-remove-${table}="${esc(x.name)}">ลบ</button></td></tr>`).join('') ||
         '<tr><td class="empty">ยังไม่มีข้อมูล</td></tr>'}</tbody></table></div>
     </section>`;
@@ -953,7 +967,7 @@ function renderSettings(page) {
 
   $$('[data-add]').forEach((f) => f.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
-    await store.act('addMaster', { table: f.dataset.add, name: f.name.value });
+    await store.act('addMaster', { table: f.dataset.add, name: f.name.value, full_name: f.full_name?.value });
     toast('เพิ่มเรียบร้อย');
     refresh();
   })));

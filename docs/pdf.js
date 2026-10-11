@@ -37,9 +37,10 @@ const PdfDoc = (() => {
       <td class="c">${i + 1}</td><td>${esc(l.code)}</td><td>${esc(l.name)}</td>
       <td class="r">${Number(l.qty).toLocaleString('th-TH')}</td><td class="c">${esc(l.unit)}</td><td></td></tr>`);
     for (let i = rows.length; i < MIN_ROWS; i++) rows.push('<tr class="blank"><td></td><td></td><td></td><td></td><td></td><td></td></tr>');
+    const dept = esc(r.department_full || r.department);
     const statement = withdraw
-      ? `ข้าพเจ้าขอเบิกพัสดุตามรายการต่อไปนี้ เพื่อใช้ในงานของ${esc(r.department)}`
-      : `ข้าพเจ้าขอยืมพัสดุตามรายการต่อไปนี้ เพื่อใช้ในงานของ${esc(r.department)} และจะส่งคืนภายในวันที่ <b>${thaiDate(r.due_date)}</b>
+      ? `ข้าพเจ้าขอเบิกพัสดุตามรายการต่อไปนี้ เพื่อใช้ใน${dept}`
+      : `ข้าพเจ้าขอยืมพัสดุตามรายการต่อไปนี้ เพื่อใช้ใน${dept} และจะส่งคืนภายในวันที่ <b>${thaiDate(r.due_date)}</b>
          ในสภาพเรียบร้อย หากชำรุดหรือสูญหาย ข้าพเจ้ายินดีรับผิดชอบตามระเบียบ`;
     const sign = (role, name) => `<div class="pdf-sign-box">
       <div>ลงชื่อ .......................................... ${role}</div>
@@ -52,7 +53,7 @@ const PdfDoc = (() => {
         <div class="pdf-meta"><div>เลขที่ <b>${esc(r.request_no)}</b></div><div>วันที่ ${thaiDate(r.borrow_date || r.created_at)}</div></div>
       </div>
       <table class="pdf-info">
-        <tr><th>ชื่อ${who}</th><td>${esc(r.borrower_name)}</td><th>แผนก</th><td>${esc(r.department)}</td></tr>
+        <tr><th>ชื่อ${who}</th><td>${esc(r.borrower_name)}</td><th>แผนก</th><td>${dept}</td></tr>
         ${withdraw ? '' : `<tr><th>วันที่ยืม</th><td>${thaiDate(r.borrow_date)}</td><th>กำหนดคืน</th><td><b>${thaiDate(r.due_date)}</b></td></tr>`}
         ${r.note || r.purpose ? `<tr><th>หมายเหตุ</th><td colspan="3">${esc([r.purpose, r.note].filter(Boolean).join(' · '))}</td></tr>` : ''}
       </table>

@@ -17,7 +17,7 @@ var BorrowCore = (function () {
       'status', 'created_at', 'approved_at', 'returned_at', 'note', 'type'],
     request_items: ['request_id', 'item_id', 'qty', 'returned_qty', 'lost_qty'],
     movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'total_after', 'request_no', 'note'],
-    departments: ['name'],
+    departments: ['name', 'full_name'],
     categories: ['name'],
   };
   var NUMERIC = ['id', 'total_qty', 'available_qty', 'min_qty', 'active', 'request_id', 'item_id', 'qty', 'returned_qty', 'lost_qty',
@@ -238,7 +238,7 @@ var BorrowCore = (function () {
       var table = p.table === 'categories' ? db.categories : db.departments;
       var name = req(p.name, 'ชื่อ');
       if (find(table, function (r) { return r.name === name; })) fail('มีชื่อนี้อยู่แล้ว');
-      table.push({ name: name });
+      table.push(p.table === 'categories' ? { name: name } : { name: name, full_name: str(p.full_name) });
       return name;
     },
 
@@ -256,31 +256,14 @@ var BorrowCore = (function () {
     return actions[action](db, payload || {}, { now: ctx.now || new Date() });
   }
 
-  function seed(now) {
+  // สร้างฐานข้อมูลตั้งต้นจาก SEED_DATA (ไฟล์ seed-data.js / SeedData.gs)
+  function seed(now, data) {
+    if (!data) data = typeof SEED_DATA !== 'undefined' ? SEED_DATA : { departments: [], categories: [], items: [] };
     var db = emptyDb();
-    ['งานพัสดุ', 'งานธุรการ', 'งานการเงินและบัญชี', 'งานบุคคล', 'งานเทคโนโลยีสารสนเทศ', 'ห้องฉุกเฉิน (ER)',
-      'แผนกผู้ป่วยนอก (OPD)', 'หอผู้ป่วยใน (IPD)', 'หอผู้ป่วยวิกฤต (ICU)']
-      .forEach(function (n) { db.departments.push({ name: n }); });
-    ['วัสดุสำนักงาน', 'วัสดุการแพทย์', 'วัสดุทำความสะอาด', 'วัสดุคอมพิวเตอร์', 'ครุภัณฑ์การแพทย์', 'ครุภัณฑ์สำนักงาน']
-      .forEach(function (n) { db.categories.push({ name: n }); });
+    data.departments.forEach(function (d) { db.departments.push({ name: d[0], full_name: d[1] || '' }); });
+    data.categories.forEach(function (n) { db.categories.push({ name: n }); });
     var ctx = { now: now || new Date(), isAdmin: true };
-    [
-      ['OF-001', 'กระดาษ A4 80 แกรม', 'วัสดุสำนักงาน', 'รีม', 120, 20, 'คลังพัสดุ ชั้น 1', 'withdraw'],
-      ['OF-002', 'ปากกาลูกลื่น สีน้ำเงิน', 'วัสดุสำนักงาน', 'ด้าม', 300, 50, 'คลังพัสดุ ชั้น 1', 'withdraw'],
-      ['OF-003', 'แฟ้มเอกสาร สันกว้าง 3 นิ้ว', 'วัสดุสำนักงาน', 'แฟ้ม', 60, 10, 'คลังพัสดุ ชั้น 1', 'withdraw'],
-      ['MD-001', 'ถุงมือยางทางการแพทย์ ไซซ์ M', 'วัสดุการแพทย์', 'กล่อง', 80, 15, 'คลังพัสดุ ชั้น 2', 'withdraw'],
-      ['MD-002', 'หน้ากากอนามัย', 'วัสดุการแพทย์', 'กล่อง', 150, 30, 'คลังพัสดุ ชั้น 2', 'withdraw'],
-      ['MD-003', 'แอลกอฮอล์ 70% 450 มล.', 'วัสดุการแพทย์', 'ขวด', 90, 20, 'คลังพัสดุ ชั้น 2', 'withdraw'],
-      ['CL-001', 'น้ำยาทำความสะอาดพื้น 3.8 ลิตร', 'วัสดุทำความสะอาด', 'แกลลอน', 25, 5, 'คลังพัสดุ ชั้น 1', 'withdraw'],
-      ['IT-001', 'หมึกพิมพ์เลเซอร์ HP 79A', 'วัสดุคอมพิวเตอร์', 'ตลับ', 12, 3, 'ห้อง IT', 'withdraw'],
-      ['EQ-001', 'เครื่องวัดความดันโลหิตแบบดิจิทัล', 'ครุภัณฑ์การแพทย์', 'เครื่อง', 15, 3, 'คลังครุภัณฑ์', 'borrow'],
-      ['EQ-002', 'เครื่องวัดออกซิเจนปลายนิ้ว (Pulse Oximeter)', 'ครุภัณฑ์การแพทย์', 'เครื่อง', 20, 5, 'คลังครุภัณฑ์', 'borrow'],
-      ['EQ-003', 'รถเข็นนั่ง (Wheelchair)', 'ครุภัณฑ์การแพทย์', 'คัน', 12, 3, 'คลังครุภัณฑ์', 'borrow'],
-      ['EQ-004', 'เครื่องผลิตออกซิเจน (Oxygen Concentrator)', 'ครุภัณฑ์การแพทย์', 'เครื่อง', 4, 1, 'คลังครุภัณฑ์', 'borrow'],
-      ['EQ-005', 'โน้ตบุ๊กสำหรับประชุม', 'ครุภัณฑ์สำนักงาน', 'เครื่อง', 6, 1, 'ห้อง IT', 'borrow'],
-      ['EQ-006', 'เครื่องโปรเจกเตอร์', 'ครุภัณฑ์สำนักงาน', 'เครื่อง', 3, 1, 'ห้อง IT', 'borrow'],
-      ['EQ-007', 'ไมโครโฟนไร้สาย', 'ครุภัณฑ์สำนักงาน', 'ชุด', 4, 1, 'ห้อง IT', 'borrow'],
-    ].forEach(function (x) {
+    data.items.forEach(function (x) {
       run(db, 'saveItem', { code: x[0], name: x[1], category: x[2], unit: x[3], initial_qty: x[4], min_qty: x[5], location: x[6], kind: x[7] }, ctx);
     });
     return db;
