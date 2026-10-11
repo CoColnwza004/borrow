@@ -4,5 +4,5 @@
 // - HOSPITAL_NAME = ชื่อหน่วยงาน แสดงบนหน้าแรกและหัวกระดาษใบเบิก/ใบยืม (PDF)
 window.APP_CONFIG = {
   API_URL: 'https://script.google.com/macros/s/AKfycbwQ-8uov6vswFmpdK_0ABRTia5vQQclwU-f2SnpYGckQOAFWeBji0qdP_GLmTfaKzNURA/exec',
-  HOSPITAL_NAME: 'โรงพยาบาล',
+  HOSPITAL_NAME: 'โรงพยาบาลปากเกร็ด',
 };
