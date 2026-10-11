@@ -81,7 +81,7 @@ test('core: legacy rows without type/kind still load', () => {
   assert.equal(db.requests[0].status, 'borrowed');
 });
 
-test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () => {
+function mockAppsScript() {
   const sheets = {};
   const mkSheet = (name) => {
     const sh = {
@@ -106,6 +106,11 @@ test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () =
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: (s) => ({ body: s, setMimeType() { return this; } }) },
     Utilities: { formatDate: (d) => d.toISOString().slice(0, 10) },
   });
+  return { sheets, ctx };
+}
+
+test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () => {
+  const { sheets, ctx } = mockAppsScript();
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/core.js'), 'utf8'), ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/Code.gs'), 'utf8'), ctx);
   assert.throws(() => ctx.setup(), /SeedData/);
@@ -152,4 +157,18 @@ test('seed data: stock NSO list and departments', () => {
   assert.ok(byName('น้ำยาไฮโดรเจนเปอร์ออกไซด์'));
   assert.ok(db.items.every((i) => !/ า| [\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/.test(i.name)), 'Thai vowels repaired');
   assert.deepEqual(db.departments[0], { name: 'ICU', full_name: 'งานการพยาบาลผู้ป่วยหนัก' });
+});
+
+test('Apps Script AllInOne.gs: up to date and works as the only file', () => {
+  const { build } = require('../scripts/build-gs.js');
+  const file = fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8');
+  assert.equal(file, build(), 'AllInOne.gs ไม่ตรงกับไฟล์ต้นฉบับ — รัน npm run build:gs');
+  const { sheets, ctx } = mockAppsScript();
+  vm.runInContext(file, ctx);
+  ctx.setup();
+  assert.equal(sheets['อุปกรณ์'].data.length, 287);
+  const res = JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify({ action: 'createRequest',
+    payload: { borrower_name: 'ทดสอบ', department: 'ER', type: 'withdraw', items: [{ item_id: 2, qty: 5 }] } }) } }).body);
+  assert.equal(res.ok, true);
+  assert.equal(res.state.items.find((i) => i.id === 2).available_qty, 720);
 });
