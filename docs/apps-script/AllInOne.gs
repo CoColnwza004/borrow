@@ -64,12 +64,15 @@ function handle_(body) {
   lock.waitLock(20000);
   try {
     var db = loadDb_();
+    var isAdmin = String(body.pin || '') === ADMIN_PIN;
     var result = null;
     if (body.action !== 'load') {
-      result = BorrowCore.run(db, body.action, body.payload, { isAdmin: String(body.pin || '') === ADMIN_PIN });
+      result = BorrowCore.run(db, body.action, body.payload, { isAdmin: isAdmin });
       saveDb_(db);
     }
-    return json_({ ok: true, result: result, state: db });
+    // ประวัติการเบิก-ยืมส่งให้เฉพาะเจ้าหน้าที่ (มี PIN) ผู้ใช้ทั่วไปได้เฉพาะสต็อกและใบที่เพิ่งส่ง
+    var state = isAdmin ? db : BorrowCore.publicView(db, body.action === 'createRequest' ? result : 0);
+    return json_({ ok: true, result: result, state: state });
   } catch (err) {
     return json_({ ok: false, error: err.message });
   } finally {
@@ -391,6 +394,65 @@ var BorrowCore = (function () {
     return actions[action](db, payload || {}, { now: ctx.now || new Date() });
   }
 
+  // ข้อมูลที่ส่งให้ผู้ใช้ทั่วไป (ไม่มี PIN): สต็อก แผนก หมวดหมู่ และเฉพาะใบที่เพิ่งส่ง (ใช้ทำ PDF)
+  // ประวัติการเบิก-ยืมทั้งหมด (ชื่อผู้ขอ ฯลฯ) ส่งให้เฉพาะเจ้าหน้าที่
+  function publicView(db, keepRequestId) {
+    var keep = Number(keepRequestId || 0);
+    return {
+      items: db.items, departments: db.departments, categories: db.categories,
+      requests: db.requests.filter(function (r) { return r.id === keep; }),
+      request_items: db.request_items.filter(function (l) { return l.request_id === keep; }),
+      movements: [],
+    };
+  }
+
+  // สรุปรายเดือน month = 'YYYY-MM' (นับใบที่ทำรายการในเดือนนั้น ไม่นับที่ยกเลิก/ไม่อนุมัติ/รออนุมัติ)
+  function monthlySummary(db, month, today) {
+    var COUNTED = { issued: 1, borrowed: 1, returned: 1 };
+    var reqs = db.requests.filter(function (r) { return COUNTED[r.status] && r.created_at.slice(0, 7) === month; })
+      .sort(function (a, b) { return a.id - b.id; });
+    var t = { withdraw_docs: 0, withdraw_qty: 0, borrow_docs: 0, borrow_qty: 0, returned_qty: 0, lost_qty: 0, outstanding_qty: 0, overdue_docs: 0 };
+    var withdrawn = {}, borrowed = {}, depts = {};
+    function itemRow(map, id) {
+      if (!map[id]) {
+        var it = byId(db.items, id) || { code: '', name: '(ลบแล้ว)', unit: '' };
+        map[id] = { item_id: id, code: it.code, name: it.name, unit: it.unit, qty: 0, times: 0, returned: 0, lost: 0, outstanding: 0 };
+      }
+      return map[id];
+    }
+    reqs.forEach(function (r) {
+      var w = r.type === 'withdraw';
+      var d = depts[r.department] || (depts[r.department] = { name: r.department, withdraw_docs: 0, withdraw_qty: 0, borrow_docs: 0, borrow_qty: 0 });
+      var lines = db.request_items.filter(function (l) { return l.request_id === r.id; });
+      var qty = lines.reduce(function (s, l) { return s + l.qty; }, 0);
+      if (w) { t.withdraw_docs++; t.withdraw_qty += qty; d.withdraw_docs++; d.withdraw_qty += qty; }
+      else {
+        t.borrow_docs++; t.borrow_qty += qty; d.borrow_docs++; d.borrow_qty += qty;
+        if (r.status === 'borrowed' && r.due_date && today && r.due_date < today) t.overdue_docs++;
+      }
+      lines.forEach(function (l) {
+        var row = itemRow(w ? withdrawn : borrowed, l.item_id);
+        row.qty += l.qty;
+        row.times++;
+        if (!w) {
+          var out = r.status === 'borrowed' ? l.qty - l.returned_qty - l.lost_qty : 0;
+          row.returned += l.returned_qty; row.lost += l.lost_qty; row.outstanding += out;
+          t.returned_qty += l.returned_qty; t.lost_qty += l.lost_qty; t.outstanding_qty += out;
+        }
+      });
+    });
+    function values(map) { return Object.keys(map).map(function (k) { return map[k]; }); }
+    var byQty = function (a, b) { return b.qty - a.qty || a.code.localeCompare(b.code); };
+    return {
+      month: month, totals: t, requests: reqs,
+      withdrawn: values(withdrawn).sort(byQty),
+      borrowed: values(borrowed).sort(byQty),
+      departments: values(depts).sort(function (a, b) {
+        return (b.withdraw_qty + b.borrow_qty) - (a.withdraw_qty + a.borrow_qty) || a.name.localeCompare(b.name);
+      }),
+    };
+  }
+
   // สร้างฐานข้อมูลตั้งต้นจาก SEED_DATA (ไฟล์ seed-data.js / SeedData.gs)
   function seed(now, data) {
     if (!data) data = typeof SEED_DATA !== 'undefined' ? SEED_DATA : { departments: [], categories: [], items: [] };
@@ -404,7 +466,7 @@ var BorrowCore = (function () {
     return db;
   }
 
-  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, run: run, seed: seed, normalize: normalize, emptyDb: emptyDb, ymd: ymd };
+  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, run: run, seed: seed, normalize: normalize, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

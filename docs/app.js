@@ -76,18 +76,28 @@ function demoSave(db) {
   lsSet(DEMO_KEY, JSON.stringify(db));
 }
 
+// โหมดทดลอง: demoDb = ข้อมูลเต็ม ส่วน state.db = สิ่งที่ผู้ใช้คนนี้เห็น (เหมือนที่ Apps Script ส่งมา)
+let demoDb = null;
+const demoView = (keep) => structuredClone(state.pin === DEMO_PIN ? demoDb : BorrowCore.publicView(demoDb, keep));
+
 const store = {
   async load() {
-    state.db = DEMO ? demoLoad() : BorrowCore.normalize((await remote('load')).state);
+    if (DEMO) {
+      demoDb = demoLoad();
+      state.db = demoView(0);
+    } else {
+      state.db = BorrowCore.normalize((await remote('load')).state);
+    }
   },
   async act(action, payload) {
     $('#loading').hidden = false;
     try {
       if (DEMO) {
-        const db = structuredClone(state.db); // ถ้า error กลางทาง ข้อมูลเดิมไม่เสีย
+        const db = structuredClone(demoDb); // ถ้า error กลางทาง ข้อมูลเดิมไม่เสีย
         const result = BorrowCore.run(db, action, payload, { isAdmin: state.pin === DEMO_PIN });
-        state.db = db;
+        demoDb = db;
         demoSave(db);
+        state.db = demoView(action === 'createRequest' ? result : 0);
         return result;
       }
       const data = await remote(action, payload);
@@ -210,12 +220,13 @@ function renderMode() {
   btn.title = isAdmin() ? 'ออกจากโหมดเจ้าหน้าที่' : 'เข้าสู่โหมดเจ้าหน้าที่พัสดุ';
 }
 
-$('#btn-admin').addEventListener('click', () => {
+$('#btn-admin').addEventListener('click', safe(async () => {
   if (isAdmin()) {
     state.pin = '';
     sessionStorage.removeItem('pin');
     renderMode();
-    route();
+    await store.load();
+    refresh();
     toast('ออกจากโหมดเจ้าหน้าที่แล้ว');
     return;
   }
@@ -241,14 +252,14 @@ $('#btn-admin').addEventListener('click', () => {
     route();
     toast('เข้าสู่โหมดเจ้าหน้าที่แล้ว');
   }));
-});
+}));
 
 // ===================== Routing =====================
 const ROUTES = {
   home: { title: 'หน้าแรก', render: renderHome },
   request: { title: 'เบิก / ยืม', render: renderRequestForm },
   items: { title: 'พัสดุคงเหลือ', render: renderItems },
-  requests: { title: 'ประวัติเบิก-ยืม', render: renderRequests },
+  requests: { title: 'ประวัติเบิก-ยืม', render: renderRequests, admin: true },
   dashboard: { title: 'ภาพรวม', render: renderDashboard, admin: true },
   movements: { title: 'ประวัติสต็อก', render: renderMovements, admin: true },
   settings: { title: 'ตั้งค่า', render: renderSettings, admin: true },
@@ -263,8 +274,8 @@ const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
 function renderNav() {
   const reqs = requestsView();
   const overdue = reqs.filter((r) => r.is_overdue).length;
-  const links = [['home', 'หน้าแรก'], ['request', 'เบิก / ยืม'], ['items', 'พัสดุคงเหลือ'], ['requests', 'ประวัติ', overdue]];
-  const admin = [['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['settings', 'ตั้งค่า']];
+  const links = [['home', 'หน้าแรก'], ['request', 'เบิก / ยืม'], ['items', 'พัสดุคงเหลือ']];
+  const admin = [['requests', 'ประวัติเบิก-ยืม', overdue], ['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['settings', 'ตั้งค่า']];
   const cur = currentRoute();
   const a = ([k, label, n]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur ? 'active' : ''}">${label}${n ? `<span class="badge">${n}</span>` : ''}</a>`;
   $('#nav-links').innerHTML = links.map(a).join('') + (isAdmin() ? '<span class="divider"></span>' + admin.map(a).join('') : '');
@@ -288,6 +299,9 @@ function setMenu(open) {
 }
 $('#menu-toggle').addEventListener('click', () => setMenu(!$('#nav-bar').classList.contains('open')));
 $('#nav-links').addEventListener('click', (e) => { if (e.target.closest('a')) setMenu(false); });
+
+// ปุ่ม "สรุปรายเดือน" ในหน้าภาพรวม / ประวัติ
+document.addEventListener('click', (e) => { if (e.target.closest('[data-monthly]') && isAdmin()) showMonthlyReport(); });
 
 function render() {
   const key = currentRoute();
@@ -343,9 +357,8 @@ function refresh() {
 // ===================== Home =====================
 function renderHome(page) {
   const items = state.db.items.filter((i) => i.active);
-  const reqs = requestsView();
-  const borrowing = reqs.filter((r) => r.status === 'borrowed');
-  const overdue = borrowing.filter((r) => r.is_overdue);
+  const ready = items.filter((i) => i.available_qty > 0);
+  const low = items.filter(isLow);
   page.insertAdjacentHTML('beforeend', `
     <section class="hero">
       <p class="eyebrow">${esc(CONFIG.HOSPITAL_NAME || 'ระบบพัสดุ')}</p>
@@ -370,8 +383,8 @@ function renderHome(page) {
     </div>
     <div class="stat-strip">
       <a href="#/items"><span class="v">${fmtNum(items.length)}</span><span class="l">รายการพัสดุ</span></a>
-      <a href="#/requests?tab=borrowed"><span class="v">${fmtNum(borrowing.length)}</span><span class="l">กำลังถูกยืม</span></a>
-      <a href="#/requests?tab=overdue" class="${overdue.length ? 'warn' : ''}"><span class="v">${fmtNum(overdue.length)}</span><span class="l">เกินกำหนดคืน</span></a>
+      <a href="#/items"><span class="v">${fmtNum(ready.length)}</span><span class="l">มีของพร้อมเบิก/ยืม</span></a>
+      <a href="#/items?low=1" class="${low.length ? 'warn' : ''}"><span class="v">${fmtNum(low.length)}</span><span class="l">หมด / ใกล้หมด</span></a>
     </div>`);
 }
 
@@ -409,11 +422,20 @@ function renderRequestForm(page) {
         </div>
       </section>
       <section class="group">
-        <div class="group-head">
-          <h2><span class="step">2</span>เลือกพัสดุ</h2>
-          <div class="search">${ICON.search}<input type="search" id="rf-q" placeholder="ค้นหาชื่อหรือรหัสพัสดุ"></div>
+        <div class="group-head"><h2><span class="step">2</span>เลือกพัสดุ</h2></div>
+        <div class="pick-tools">
+          <div class="search">${ICON.search}<input type="search" id="rf-q" autocomplete="off" placeholder="ค้นหา เช่น airway, ถุงมือ, NSO-010"></div>
+          <div class="pick-filter">
+            <div class="segmented" id="rf-show">
+              <button type="button" data-show="ready">มีของ</button>
+              <button type="button" data-show="all">ทั้งหมด</button>
+              <button type="button" data-show="picked">ที่เลือก<span class="seg-count" id="rf-picked-n"></span></button>
+            </div>
+            <span class="muted small" id="rf-shown"></span>
+          </div>
+          <div class="az" id="rf-az"></div>
         </div>
-        <ul class="list" id="rf-list"></ul>
+        <div id="rf-list"></div>
       </section>
       <div class="checkout">
         <div class="sum"><strong id="rf-count"></strong><span id="rf-detail"></span></div>
@@ -454,27 +476,66 @@ function renderRequestForm(page) {
     $('#rf-submit').textContent = `ยืนยันการ${verb}`;
   }
 
+  // ค้นหาแบบไม่สนตัวพิมพ์เล็ก/ใหญ่ ช่องว่าง และวงเล็บ: "airway100" เจอ "Airway 100mm"
+  const norm = (v) => String(v).toLowerCase().replace(/[\s\-_.,()/*"]/g, '');
+  // หัวข้อกลุ่มตามตัวอักษรแรก (ภาษาไทยข้ามสระหน้า เ แ โ ใ ไ)
+  const groupKey = (name) => {
+    const c = name.trim().replace(/^[เแโใไ]/, '').charAt(0);
+    if (/[a-z]/i.test(c)) return c.toUpperCase();
+    if (/[\u0E01-\u0E2E]/.test(c)) return c;
+    return '#';
+  };
+  let show = 'ready';
+  const stockBadge = (i) => i.available_qty === 0 ? '<span class="stock out">หมด</span>'
+    : `<span class="stock ${isLow(i) ? 'low' : 'ok'}">${isLow(i) ? 'เหลือน้อย' : 'เหลือ'} ${fmtNum(i.available_qty)} ${esc(i.unit)}</span>`;
+
   function drawList() {
-    const q = $('#rf-q').value.trim().toLowerCase();
-    const items = allowed().filter((i) => !q || [i.name, i.code, i.category].some((s) => s.toLowerCase().includes(q)));
-    $('#rf-list').innerHTML = items.map((i) => {
+    const q = norm($('#rf-q').value.trim());
+    const all = allowed();
+    let items = all;
+    if (show === 'ready') items = items.filter((i) => i.available_qty > 0 || state.picks[i.id]);
+    if (show === 'picked') items = items.filter((i) => state.picks[i.id]);
+    if (q) items = items.filter((i) => norm(i.name + ' ' + i.code).includes(q));
+    const pickedN = Object.keys(state.picks).length;
+    $$('#rf-show button').forEach((b) => b.classList.toggle('active', b.dataset.show === show));
+    $('#rf-picked-n').textContent = pickedN ? ` ${pickedN}` : '';
+    $('#rf-shown').textContent = `${fmtNum(items.length)} / ${fmtNum(all.length)} รายการ`;
+
+    const groups = new Map();
+    for (const i of items) {
+      const k = groupKey(i.name);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(i);
+    }
+    const keys = [...groups.keys()];
+    const row = (i) => {
       const n = state.picks[i.id] || 0;
       const out = i.available_qty === 0;
       return `<li class="pick ${out ? 'out' : ''} ${n ? 'selected' : ''}">
-        <span class="pick-icon ${i.kind === 'borrow' ? 'borrow' : ''}">${i.kind === 'borrow' ? ICON.borrow : ICON.box}</span>
         <div class="pick-body">
           <div class="pick-name">${esc(i.name)}</div>
-          <div class="pick-meta">${esc(i.code)} · ${out ? '<span class="error">หมด</span>' :
-            `คงเหลือ <span class="${isLow(i) ? 'low' : ''}">${fmtNum(i.available_qty)}</span> ${esc(i.unit)}`}</div>
+          <div class="pick-meta"><span class="code">${esc(i.code)}</span>${stockBadge(i)}</div>
         </div>
         ${n ? `<div class="stepper">
             <button type="button" data-dec="${i.id}" aria-label="ลด">−</button>
             <input type="number" inputmode="numeric" min="0" max="${i.available_qty}" value="${n}" data-qty="${i.id}" aria-label="จำนวน">
             <button type="button" data-inc="${i.id}" aria-label="เพิ่ม" ${n >= i.available_qty ? 'disabled' : ''}>+</button>
           </div>`
-          : `<button type="button" class="btn add-btn" data-inc="${i.id}" ${out ? 'disabled' : ''}>${out ? 'หมด' : 'เลือก'}</button>`}
+          : `<button type="button" class="btn add-btn" data-inc="${i.id}" ${out ? 'disabled' : ''}>${out ? 'หมด' : '+ เลือก'}</button>`}
       </li>`;
-    }).join('') || `<li class="empty">${q ? 'ไม่พบพัสดุที่ค้นหา' : 'ยังไม่มีพัสดุสำหรับประเภทนี้'}</li>`;
+    };
+    // แสดงหัวข้อ A B C … ก ข ค เฉพาะตอนดูรายการยาว ๆ
+    const grouped = !q && show !== 'picked' && keys.length > 3;
+    $('#rf-az').innerHTML = grouped ? keys.map((k, idx) => `<button type="button" data-jump="${idx}">${esc(k)}</button>`).join('') : '';
+    $('#rf-az').hidden = !grouped;
+    $('#rf-list').innerHTML = items.length
+      ? (grouped
+        ? keys.map((k, idx) => `<div class="pick-group" data-group="${idx}"><div class="pick-letter">${esc(k)}</div>
+            <ul class="list">${groups.get(k).map(row).join('')}</ul></div>`).join('')
+        : `<ul class="list">${items.map(row).join('')}</ul>`)
+      : `<div class="empty">${show === 'picked' ? 'ยังไม่ได้เลือกพัสดุ'
+        : q ? `ไม่พบ "${esc($('#rf-q').value.trim())}"${show === 'ready' ? ' ในรายการที่มีของ — ลองกด "ทั้งหมด"' : ''}`
+        : 'ยังไม่มีพัสดุสำหรับประเภทนี้'}</div>`;
     drawSummary();
   }
   redrawPickList = drawList;
@@ -496,6 +557,15 @@ function renderRequestForm(page) {
     if (inp) setQty(inp.dataset.qty, inp.value);
   });
   $('#rf-q').addEventListener('input', drawList);
+  $$('#rf-show button').forEach((b) => b.addEventListener('click', () => { show = b.dataset.show; drawList(); }));
+  // กดตัวอักษร → เลื่อนไปที่กลุ่มนั้น (เผื่อความสูงแถบเมนูและแถบค้นหาที่ติดอยู่ด้านบน)
+  $('#rf-az').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-jump]');
+    const g = b && $(`[data-group="${b.dataset.jump}"]`);
+    if (!g) return;
+    const offset = $('#nav-bar').offsetHeight + $('.pick-tools').offsetHeight + 8;
+    window.scrollTo({ top: g.getBoundingClientRect().top + window.scrollY - offset, behavior: 'smooth' });
+  });
   $$('#rf-type button').forEach((b) => b.addEventListener('click', () => { type = b.dataset.type; applyType(); }));
 
   form.addEventListener('submit', safe(async (e) => {
@@ -555,12 +625,12 @@ function showSuccess(id) {
     blob = b;
     $('#pdf-q', body).innerHTML = `อนุญาตให้บันทึก <b>${esc(fileName)}</b> ลงในเครื่องนี้หรือไม่?`;
     $('#pdf-sub', body).textContent = PdfDoc.isIOS
-      ? 'แตะ "บันทึก PDF" แล้วเลือก "บันทึกไปยังไฟล์" หรือ "พิมพ์" · บันทึกซ้ำได้จากหน้าประวัติ'
-      : 'ใช้พิมพ์และลงลายมือชื่อ' + (w ? 'ผู้เบิก' : 'ผู้ยืม') + 'และเจ้าหน้าที่พัสดุ · ดาวน์โหลดซ้ำได้จากหน้าประวัติ';
+      ? 'แตะ "บันทึก PDF" แล้วเลือก "บันทึกไปยังไฟล์" หรือ "พิมพ์" · ควรเก็บไฟล์ไว้ (เจ้าหน้าที่ออกให้ใหม่ได้)'
+      : 'ใช้พิมพ์และลงลายมือชื่อ' + (w ? 'ผู้เบิก' : 'ผู้ยืม') + 'และเจ้าหน้าที่พัสดุ · ควรเก็บไฟล์ไว้ (เจ้าหน้าที่ออกให้ใหม่ได้)';
     $('#pdf-save', body).disabled = false;
   }).catch((e) => {
     $('#pdf-q', body).textContent = 'สร้างไฟล์ PDF ไม่สำเร็จ';
-    $('#pdf-sub', body).textContent = e.message + ' — ลองดาวน์โหลดอีกครั้งจากหน้าประวัติ';
+    $('#pdf-sub', body).textContent = e.message + ' — แจ้งเจ้าหน้าที่พัสดุให้ออกเอกสารจากหน้าประวัติ';
   });
   $('#pdf-skip', body).addEventListener('click', closeModal);
   $('#pdf-save', body).addEventListener('click', safe(async () => {
@@ -676,7 +746,7 @@ function showItem(id) {
       <dt>หมวดหมู่</dt><dd>${esc(i.category || '-')}</dd>
       <dt>ประเภท</dt><dd>${KINDS[i.kind]}</dd>
       <dt>คงเหลือในคลัง</dt><dd>${fmtNum(i.available_qty)} ${esc(i.unit)} ${isLow(i) ? '<span class="pill low">ต่ำกว่าจุดขั้นต่ำ</span>' : ''}</dd>
-      <dt>ถูกยืมอยู่</dt><dd>${fmtNum(i.borrowed_qty)} ${esc(i.unit)}</dd>
+      ${isAdmin() ? `<dt>ถูกยืมอยู่</dt><dd>${fmtNum(i.borrowed_qty)} ${esc(i.unit)}</dd>` : ''}
       <dt>จุดสั่งซื้อขั้นต่ำ</dt><dd>${fmtNum(i.min_qty)} ${esc(i.unit)}</dd>
       <dt>สถานที่เก็บ</dt><dd>${esc(i.location || '-')}</dd>
     </dl>
@@ -768,6 +838,7 @@ function renderRequests(page) {
       <div class="segmented" id="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}</div>
       <div class="search">${ICON.search}<input type="search" id="r-q" placeholder="ค้นหาเลขที่ ชื่อ แผนก หรือพัสดุ"></div>
       <button class="btn" id="r-export">ส่งออก CSV</button>
+      <button class="btn primary" data-monthly>${ICON.doc} สรุปรายเดือน (PDF)</button>
     </div>
     <section class="card"><ul class="rows" id="req-body"></ul></section>`);
 
@@ -872,6 +943,61 @@ function showRequest(id) {
   }));
 }
 
+// ===================== สรุปรายเดือน (เจ้าหน้าที่) =====================
+function showMonthlyReport() {
+  const months = [...new Set([today().slice(0, 7), ...state.db.requests.map((r) => r.created_at.slice(0, 7))])].filter(Boolean).sort().reverse();
+  const body = openModal('สรุปรายเดือน (PDF)', `
+    <label class="field">เลือกเดือน
+      <select id="mr-month">${months.map((m) => `<option value="${m}">${esc(PdfDoc.monthName(m))}</option>`).join('')}</select></label>
+    <div id="mr-preview"></div>
+    <div class="actions"><button class="btn primary lg" id="mr-pdf">${ICON.doc} สร้าง PDF</button></div>`);
+  let sum;
+  const preview = () => {
+    sum = BorrowCore.monthlySummary(state.db, $('#mr-month', body).value, today());
+    const t = sum.totals;
+    const top = (rows) => rows.slice(0, 5).map((x) => `<li>${esc(x.name)} <b>${fmtNum(x.qty)}</b> ${esc(x.unit)}</li>`).join('') || '<li class="muted">ไม่มี</li>';
+    $('#mr-preview', body).innerHTML = `
+      <div class="stats">
+        <div class="card stat"><span class="label">ใบเบิก</span><span class="value">${fmtNum(t.withdraw_docs)}</span><span class="sub">${fmtNum(t.withdraw_qty)} หน่วย</span></div>
+        <div class="card stat"><span class="label">ใบยืม</span><span class="value">${fmtNum(t.borrow_docs)}</span><span class="sub">${fmtNum(t.borrow_qty)} หน่วย</span></div>
+        <div class="card stat ${t.outstanding_qty ? 'warn' : ''}"><span class="label">ยังไม่คืน</span><span class="value">${fmtNum(t.outstanding_qty)}</span><span class="sub">เกินกำหนด ${fmtNum(t.overdue_docs)} ใบ</span></div>
+      </div>
+      <div class="grid-2" style="margin-top:14px">
+        <div><h4>เบิกมากที่สุด</h4><ol class="top-list">${top(sum.withdrawn)}</ol></div>
+        <div><h4>ยืมมากที่สุด</h4><ol class="top-list">${top(sum.borrowed)}</ol></div>
+      </div>
+      <p class="muted small">PDF มี: ยอดรวม · พัสดุที่ถูกเบิก · พัสดุที่ถูกยืม/คืน · สรุปตามแผนก · รายการเอกสารทั้งหมด ${fmtNum(sum.requests.length)} ใบ</p>`;
+    const btn = $('#mr-pdf', body);
+    btn.innerHTML = `${ICON.doc} สร้าง PDF`;
+    btn.classList.add('primary');
+    btn.onclick = safe(build);
+  };
+  // สร้างก่อน แล้วให้กดบันทึกอีกครั้ง (เบราว์เซอร์ต้องการการกดจากผู้ใช้ตอนเปิดหน้าต่างบันทึก)
+  async function build() {
+    const btn = $('#mr-pdf', body);
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> กำลังสร้าง PDF';
+    try {
+      const d = new Date();
+      const blob = await PdfDoc.buildReport(sum, CONFIG.HOSPITAL_NAME, {
+        generatedAt: `${today()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+        deptFull,
+        lines: (r) => requestView(r).items,
+      });
+      const name = PdfDoc.reportFileName(sum.month);
+      btn.innerHTML = `${ICON.doc} บันทึก ${esc(name)}`;
+      btn.onclick = safe(async () => { if (await PdfDoc.save(blob, name)) toast('บันทึกไฟล์แล้ว'); });
+    } catch (e) {
+      btn.innerHTML = `${ICON.doc} สร้าง PDF`;
+      throw e;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  $('#mr-month', body).addEventListener('change', preview);
+  preview();
+}
+
 // ===================== Dashboard (เจ้าหน้าที่) =====================
 function renderDashboard(page) {
   const items = itemsView().filter((i) => i.active);
@@ -883,7 +1009,10 @@ function renderDashboard(page) {
   const withdrawnThisMonth = reqs.filter((r) => r.type === 'withdraw' && r.created_at.startsWith(month)).length;
   const recent = state.db.movements.slice().sort((a, b) => b.id - a.id).slice(0, 10);
   page.insertAdjacentHTML('beforeend', `
-    <div class="page-head"><h1>ภาพรวม</h1><p class="lead">สรุปสต็อกและการเบิก-ยืม</p></div>
+    <div class="page-head-row">
+      <div class="page-head"><h1>ภาพรวม</h1><p class="lead">สรุปสต็อกและการเบิก-ยืม</p></div>
+      <button class="btn primary" data-monthly>${ICON.doc} สรุปรายเดือน (PDF)</button>
+    </div>
     <div class="stats">
       <a class="card stat" href="#/items"><span class="label">พัสดุในระบบ</span><span class="value">${fmtNum(items.length)}</span><span class="sub">รายการ</span></a>
       <a class="card stat" href="#/requests?tab=withdraw"><span class="label">เบิกเดือนนี้</span><span class="value">${fmtNum(withdrawnThisMonth)}</span><span class="sub">ใบเบิก</span></a>
@@ -1012,7 +1141,10 @@ function renderSettings(page) {
   renderMode();
   $('#page').innerHTML = '<div class="empty"><span class="spinner"></span> กำลังโหลดข้อมูล...</div>';
   try {
-    await store.load();
+    if (state.pin) {
+      try { await store.act('checkPin'); } catch { state.pin = ''; sessionStorage.removeItem('pin'); renderMode(); }
+    }
+    if (!state.pin) await store.load();
     lastSnapshot = JSON.stringify(state.db);
     lastRoute = currentRoute();
     render();

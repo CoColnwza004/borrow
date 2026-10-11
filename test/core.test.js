@@ -129,8 +129,17 @@ test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () =
   assert.equal(borrow.ok, true);
   const bad = post({ action: 'returnItems', payload: { id: borrow.result, items: [{ item_id: 4, returned_qty: 1 }] }, pin: 'wrong' });
   assert.equal(bad.ok, false);
-  // reload from "sheet" text values
-  const loaded = JSON.parse(ctx.doGet().body).state;
+  // ผู้ใช้ทั่วไป (ไม่มี PIN) ไม่เห็นประวัติ เห็นเฉพาะใบที่ตัวเองเพิ่งส่ง
+  assert.deepEqual(create.state.requests.map((r) => r.id), [create.result]);
+  assert.equal(create.state.request_items.length, 1);
+  assert.equal(create.state.movements.length, 0);
+  const pub = JSON.parse(ctx.doGet().body).state;
+  assert.equal(pub.requests.length, 0);
+  assert.equal(pub.items.length, 286);
+  assert.equal(pub.departments.length, 22);
+  assert.equal(post({ action: 'load', pin: 'wrong' }).state.requests.length, 0);
+  // reload from "sheet" text values (เจ้าหน้าที่เห็นครบ)
+  const loaded = post({ action: 'load', pin: '1234' }).state;
   assert.equal(loaded.items.find((i) => i.id === 2).available_qty, 723);
   assert.equal(loaded.items.find((i) => i.id === 2).kind, 'both');
   assert.equal(loaded.items.find((i) => i.id === 4).available_qty, 59);
@@ -191,4 +200,26 @@ test('core: stock edited directly in the sheet (available_qty only) keeps workin
   Core.run(loaded, 'returnItems', { id, items: [{ item_id: nb2.id, returned_qty: 2 }] }, admin);
   assert.equal(nb2.available_qty, 12);
   assert.equal(nb2.total_qty, 12);
+});
+
+test('core: monthly summary of withdrawals and borrows', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const ctxAt = (d) => ({ isAdmin: true, now: new Date(d) });
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const nb = db.items.find((i) => i.code === 'EQ-005');
+  const proj = db.items.find((i) => i.code === 'EQ-006');
+  const icu = { borrower_name: 'ก', department: 'ICU' };
+  Core.run(db, 'createRequest', { ...icu, type: 'withdraw', items: [{ item_id: paper.id, qty: 5 }] }, ctxAt('2026-10-02T09:00:00'));
+  Core.run(db, 'createRequest', { ...person, type: 'withdraw', items: [{ item_id: paper.id, qty: 3 }] }, ctxAt('2026-10-05T09:00:00'));
+  const b1 = Core.run(db, 'createRequest', { ...icu, type: 'borrow', due_date: '2026-10-10', items: [{ item_id: nb.id, qty: 2 }, { item_id: proj.id, qty: 1 }] }, ctxAt('2026-10-06T09:00:00'));
+  Core.run(db, 'returnItems', { id: b1, items: [{ item_id: nb.id, returned_qty: 1, lost_qty: 0 }, { item_id: proj.id, returned_qty: 1 }] }, ctxAt('2026-10-08T09:00:00'));
+  Core.run(db, 'createRequest', { ...person, type: 'withdraw', items: [{ item_id: paper.id, qty: 50 }] }, ctxAt('2026-11-01T09:00:00'));
+  const sum = Core.monthlySummary(db, '2026-10', '2026-10-20');
+  assert.deepEqual(sum.totals, { withdraw_docs: 2, withdraw_qty: 8, borrow_docs: 1, borrow_qty: 3, returned_qty: 2, lost_qty: 0, outstanding_qty: 1, overdue_docs: 1 });
+  assert.deepEqual(sum.withdrawn.map((r) => [r.code, r.qty, r.times]), [['OF-001', 8, 2]]);
+  assert.deepEqual(sum.borrowed.map((r) => [r.code, r.qty, r.returned, r.outstanding]), [['EQ-005', 2, 1, 1], ['EQ-006', 1, 1, 0]]);
+  assert.deepEqual(sum.departments.map((d) => [d.name, d.withdraw_qty, d.borrow_qty]), [['ICU', 5, 3], ['งานธุรการ', 3, 0]]);
+  assert.equal(sum.requests.length, 3);
+  assert.equal(Core.monthlySummary(db, '2026-11', '2026-11-02').totals.withdraw_qty, 50);
+  assert.equal(Core.monthlySummary(db, '2026-09', '2026-11-02').requests.length, 0);
 });

@@ -54,12 +54,15 @@ function handle_(body) {
   lock.waitLock(20000);
   try {
     var db = loadDb_();
+    var isAdmin = String(body.pin || '') === ADMIN_PIN;
     var result = null;
     if (body.action !== 'load') {
-      result = BorrowCore.run(db, body.action, body.payload, { isAdmin: String(body.pin || '') === ADMIN_PIN });
+      result = BorrowCore.run(db, body.action, body.payload, { isAdmin: isAdmin });
       saveDb_(db);
     }
-    return json_({ ok: true, result: result, state: db });
+    // ประวัติการเบิก-ยืมส่งให้เฉพาะเจ้าหน้าที่ (มี PIN) ผู้ใช้ทั่วไปได้เฉพาะสต็อกและใบที่เพิ่งส่ง
+    var state = isAdmin ? db : BorrowCore.publicView(db, body.action === 'createRequest' ? result : 0);
+    return json_({ ok: true, result: result, state: state });
   } catch (err) {
     return json_({ ok: false, error: err.message });
   } finally {
