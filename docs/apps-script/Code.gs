@@ -20,7 +20,9 @@ var SHEET_NAMES = {
   movements: 'ประวัติสต็อก',
   departments: 'หน่วยงาน',
   categories: 'หมวดหมู่',
-  on_loan: 'พัสดุที่ถูกยืมอยู่', // สร้างใหม่ทุกครั้ง ไว้ดูอย่างเดียว ระบบไม่อ่านกลับ
+  // 2 แท็บนี้สร้างใหม่ทุกครั้ง ไว้ดูอย่างเดียว ระบบไม่อ่านกลับ (สร้างครั้งแรกจะย้ายไปไว้หน้าสุด)
+  log: 'รายการเบิก-ยืม',
+  on_loan: 'พัสดุที่ถูกยืมอยู่',
 };
 
 /**
@@ -129,7 +131,12 @@ function saveDb_(db) {
   var data = BorrowCore.sheetData(db);
   Object.keys(data).forEach(function (t) {
     var d = data[t];
-    var sh = ss.getSheetByName(SHEET_NAMES[t]) || ss.insertSheet(SHEET_NAMES[t]);
+    var sh = ss.getSheetByName(SHEET_NAMES[t]);
+    if (!sh) {
+      sh = ss.insertSheet(SHEET_NAMES[t]);
+      var front = { log: 1, on_loan: 2 };
+      if (front[t]) { ss.setActiveSheet(sh); ss.moveActiveSheet(front[t]); }
+    }
     var rows = [d.header].concat(d.rows);
     var n = d.header.length;
     sh.clearContents();

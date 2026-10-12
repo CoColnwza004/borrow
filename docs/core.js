@@ -302,9 +302,14 @@ var BorrowCore = (function () {
     var reqOf = function (id) { return byId(db.requests, id) || { request_no: '', status: '' }; };
     var outstanding = function (l) { return reqOf(l.request_id).status === 'borrowed' ? l.qty - l.returned_qty - l.lost_qty : 0; };
     var lent = {};
-    db.request_items.forEach(function (l) { lent[l.item_id] = (lent[l.item_id] || 0) + outstanding(l); });
+    var withdrawn = {};
+    db.request_items.forEach(function (l) {
+      lent[l.item_id] = (lent[l.item_id] || 0) + outstanding(l);
+      var r = reqOf(l.request_id);
+      if (r.type === 'withdraw' && r.status === 'issued') withdrawn[l.item_id] = (withdrawn[l.item_id] || 0) + l.qty;
+    });
     var extra = {
-      items: [['ถูกยืมอยู่', function (i) { return lent[i.id] || 0; }]],
+      items: [['ถูกยืมอยู่', function (i) { return lent[i.id] || 0; }], ['เบิกไปแล้วรวม', function (i) { return withdrawn[i.id] || 0; }]],
       requests: [
         ['ประเภท', function (r) { return TYPES[r.type] || ''; }],
         ['สถานะ', function (r) { return STATUS[r.status] || r.status; }],
@@ -337,6 +342,11 @@ var BorrowCore = (function () {
         }),
       };
     });
+    // วันที่แบบไทยสำหรับคนอ่าน เช่น 12/10/2569 09:15
+    var thaiStamp = function (v) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}))?/.exec(v || '');
+      return m ? Number(m[3]) + '/' + Number(m[2]) + '/' + (Number(m[1]) + 543) + (m[4] ? ' ' + m[4] : '') : '';
+    };
     var loans = [];
     db.requests.filter(function (r) { return r.status === 'borrowed'; })
       .sort(function (a, b) { return a.due_date.localeCompare(b.due_date) || a.id - b.id; })
@@ -345,9 +355,24 @@ var BorrowCore = (function () {
           var q = l.qty - l.returned_qty - l.lost_qty;
           if (q <= 0) return;
           var it = itemOf(l.item_id);
-          loans.push([r.request_no, r.created_at, r.borrower_name, r.department, it.code, it.name, q, it.unit, r.due_date]);
+          loans.push([r.request_no, thaiStamp(r.created_at), r.borrower_name, r.department, it.code, it.name, q, it.unit, thaiStamp(r.due_date)]);
         });
       });
+    // แท็บ log: 1 แถวต่อพัสดุ 1 รายการ ล่าสุดอยู่บน อ่านง่าย ใช้กรอง/Pivot ในชีตได้
+    var log = [];
+    db.requests.slice().sort(function (a, b) { return b.id - a.id; }).forEach(function (r) {
+      lines(db, r.id).forEach(function (l) {
+        var it = itemOf(l.item_id);
+        var w = r.type === 'withdraw';
+        log.push([thaiStamp(r.created_at), r.request_no, TYPES[r.type] || '', r.borrower_name, r.department,
+          it.code, it.name, l.qty, it.unit, STATUS[r.status] || r.status,
+          w ? '' : thaiStamp(r.due_date), w ? '' : l.returned_qty, w ? '' : outstanding(l)]);
+      });
+    });
+    out.log = {
+      header: ['วันที่', 'เลขที่', 'ประเภท', 'ผู้เบิก/ผู้ยืม', 'แผนก', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'จำนวน', 'หน่วย', 'สถานะ', 'กำหนดคืน', 'คืนแล้ว', 'ยังไม่คืน'],
+      extra: 13, rows: log,
+    };
     out.on_loan = {
       header: ['เลขที่', 'วันที่ยืม', 'ผู้ยืม', 'แผนก', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'จำนวนที่ยังไม่คืน', 'หน่วย', 'กำหนดคืน'],
       extra: 9, rows: loans,
