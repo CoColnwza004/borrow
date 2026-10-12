@@ -309,7 +309,6 @@ document.addEventListener('click', (e) => { if (e.target.closest('[data-monthly]
 function render() {
   const key = currentRoute();
   document.title = `${ROUTES[key].title} · ระบบเบิก-ยืมพัสดุ`;
-  document.body.classList.toggle('home', key === 'home');
   renderNav();
   const page = $('#page');
   // เล่น animation ใหม่ทุกครั้งที่เปลี่ยนหน้า
@@ -321,7 +320,6 @@ function render() {
     page.insertAdjacentHTML('beforeend', '<div class="banner">โหมดทดลอง — ข้อมูลเก็บเฉพาะในเบราว์เซอร์เครื่องนี้ เชื่อม Google Sheets ตามคู่มือใน README เพื่อใช้ร่วมกันทุกเครื่อง</div>');
   }
   ROUTES[key].render(page);
-  placeHospital();
 }
 
 let lastSnapshot = '';
@@ -392,14 +390,6 @@ function renderHome(page) {
       <a href="#/items?low=1" class="${low.length ? 'warn' : ''}"><span class="v">${fmtNum(low.length)}</span><span class="l">หมด / ใกล้หมด</span></a>
     </div>`);
 }
-
-// วางภาพโรงพยาบาลพื้นหลังให้ยอดตึกโผล่ใต้หัวเรื่องพอดี (ความสูงหัวเรื่องต่างกันตามขนาดจอ/ฟอนต์)
-function placeHospital() {
-  const hero = document.body.classList.contains('home') && $('.hero');
-  if (hero) document.body.style.setProperty('--hero-bottom', `${Math.round(hero.getBoundingClientRect().bottom + window.scrollY)}px`);
-}
-window.addEventListener('resize', placeHospital);
-document.fonts?.ready.then(placeHospital);
 
 // ===================== Request form (เบิก / ยืม) =====================
 let redrawPickList = null;
