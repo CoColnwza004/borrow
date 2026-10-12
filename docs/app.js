@@ -915,7 +915,7 @@ function renderItems(page) {
   const draw = () => {
     $$('#f-kind button').forEach((b) => b.classList.toggle('active', b.dataset.kind === kind));
     $('#items-grid').innerHTML = filtered().map((i) => `
-      <div class="item-card" data-item="${i.id}">
+      <div class="item-card${i.available_qty === 0 ? ' out' : ''}" data-item="${i.id}">
         <div class="top">
           <span class="pick-icon ${i.kind === 'borrow' ? 'borrow' : ''}">${i.kind === 'borrow' ? ICON.borrow : ICON.box}</span>
           <div style="flex:1;min-width:0"><div class="name">${esc(i.name)}</div><div class="code">${esc(i.code)} · ${esc(i.category || 'ไม่ระบุหมวด')}</div></div>
