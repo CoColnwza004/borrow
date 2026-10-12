@@ -285,3 +285,33 @@ test('Apps Script: daily trigger and page loads apply automatic returns', () => 
   JSON.parse(ctx.doGet().body);
   assert.equal(qty(), 60);
 });
+
+test('Apps Script: sheet shows item names and quantities taken, and old sheets upgrade', () => {
+  const { sheets, ctx } = mockAppsScript();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
+  ctx.setup();
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  assert.equal(post({ action: 'createRequest', payload: { borrower_name: 'ก', department: 'ICU', type: 'withdraw', items: [{ item_id: 2, qty: 5 }] } }).ok, true);
+  assert.equal(post({ action: 'createRequest', payload: { borrower_name: 'ข', department: 'ER', type: 'borrow', due_date: DUE, items: [{ item_id: 4, qty: 3 }] } }).ok, true);
+
+  const rows = (name) => {
+    const [head, ...data] = sheets[name].data;
+    return data.map((r) => Object.fromEntries(head.map((h, i) => [h, r[i]])));
+  };
+  const items = Object.fromEntries(rows('อุปกรณ์').map((i) => [i.id, i]));
+  const lines = rows('รายการในคำขอ');
+  assert.deepEqual(lines.map((l) => [l.type, l.department, l.item_code, l.item_name, l.qty, l.unit]), [
+    ['withdraw', 'ICU', items[2].code, items[2].name, '5', items[2].unit],
+    ['borrow', 'ER', items[4].code, items[4].name, '3', items[4].unit],
+  ]);
+  assert.ok(lines.every((l) => /^\S+-\d{4}$/.test(l.request_no)));
+  const moves = rows('ประวัติสต็อก').slice(-2);
+  assert.deepEqual(moves.map((m) => [m.item_name, m.qty]), [[items[2].name, '-5'], [items[4].name, '-3']]);
+
+  // ชีตจากเวอร์ชันก่อน (ไม่มีคอลัมน์ชื่อ) ยังโหลดได้ และได้ชื่อพัสดุหลังบันทึกครั้งถัดไป
+  sheets['รายการในคำขอ'].data = [['request_id', 'item_id', 'qty', 'returned_qty', 'lost_qty'], ['1', '2', '5', '0', '0'], ['2', '4', '3', '0', '0']];
+  const loaded = JSON.parse(ctx.doGet().body);
+  assert.equal(loaded.ok, true);
+  assert.equal(post({ action: 'checkPin', pin: '1234' }).ok, true);
+  assert.deepEqual(rows('รายการในคำขอ').map((l) => l.item_name), [items[2].name, items[4].name]);
+});

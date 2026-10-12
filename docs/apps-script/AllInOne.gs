@@ -135,6 +135,7 @@ function loadDb_() {
 
 function saveDb_(db) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  BorrowCore.decorate(db); // ใส่ชื่อพัสดุ/จำนวนในแท็บรายการในคำขอและประวัติสต็อก
   Object.keys(BorrowCore.TABLES).forEach(function (t) {
     var cols = BorrowCore.TABLES[t];
     var sh = ss.getSheetByName(SHEET_NAMES[t]) || ss.insertSheet(SHEET_NAMES[t]);
@@ -167,8 +168,9 @@ var BorrowCore = (function () {
     items: ['id', 'code', 'name', 'category', 'unit', 'total_qty', 'available_qty', 'min_qty', 'location', 'active', 'kind'],
     requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'borrow_date', 'due_date',
       'status', 'created_at', 'approved_at', 'returned_at', 'note', 'type'],
-    request_items: ['request_id', 'item_id', 'qty', 'returned_qty', 'lost_qty'],
-    movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'total_after', 'request_no', 'note'],
+    // item_code / item_name / unit / request_no / type / department เติมให้อัตโนมัติ (decorate) เพื่อให้อ่านในชีตได้ทันที
+    request_items: ['request_id', 'request_no', 'type', 'department', 'item_id', 'item_code', 'item_name', 'unit', 'qty', 'returned_qty', 'lost_qty'],
+    movements: ['id', 'created_at', 'item_id', 'item_code', 'item_name', 'type', 'qty', 'available_after', 'total_after', 'request_no', 'note'],
     departments: ['name', 'full_name'],
     categories: ['name'],
   };
@@ -222,6 +224,27 @@ var BorrowCore = (function () {
     db.items.forEach(function (i) {
       if (i.available_qty < 0) i.available_qty = 0;
       i.total_qty = i.available_qty + (lent[i.id] || 0);
+    });
+    return decorate(db);
+  }
+
+  // เติมชื่อพัสดุ รหัส หน่วย และข้อมูลใบเบิก/ยืม ลงในรายการในคำขอและประวัติสต็อก
+  // ให้คนเปิด Google Sheet เห็นว่าของอะไรถูกเบิก/ยืมไปเท่าไร โดยไม่ต้องเทียบเลข id เอง
+  // (ชื่อจะอัปเดตตามถ้าแก้ชื่อพัสดุภายหลัง) Code.gs เรียกก่อนบันทึกลงชีตทุกครั้ง
+  function decorate(db) {
+    var items = {};
+    db.items.forEach(function (i) { items[i.id] = i; });
+    var reqs = {};
+    db.requests.forEach(function (r) { reqs[r.id] = r; });
+    db.request_items.forEach(function (l) {
+      var i = items[l.item_id];
+      if (i) { l.item_code = i.code; l.item_name = i.name; l.unit = i.unit; }
+      var r = reqs[l.request_id];
+      if (r) { l.request_no = r.request_no; l.type = r.type; l.department = r.department; }
+    });
+    db.movements.forEach(function (m) {
+      var i = items[m.item_id];
+      if (i) { m.item_code = i.code; m.item_name = i.name; }
     });
     return db;
   }
@@ -518,7 +541,7 @@ var BorrowCore = (function () {
     return db;
   }
 
-  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, emptyDb: emptyDb, ymd: ymd };
+  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, decorate: decorate, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

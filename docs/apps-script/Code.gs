@@ -125,6 +125,7 @@ function loadDb_() {
 
 function saveDb_(db) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  BorrowCore.decorate(db); // ใส่ชื่อพัสดุ/จำนวนในแท็บรายการในคำขอและประวัติสต็อก
   Object.keys(BorrowCore.TABLES).forEach(function (t) {
     var cols = BorrowCore.TABLES[t];
     var sh = ss.getSheetByName(SHEET_NAMES[t]) || ss.insertSheet(SHEET_NAMES[t]);
