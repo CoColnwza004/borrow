@@ -181,6 +181,36 @@ svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
 }
 
 /* ============ Hero / home ============ */
+/* ภาพโรงพยาบาลพื้นหลังหน้าแรก ค่อย ๆ จางขึ้นมา (app.js ใส่ class "home" ที่ body เฉพาะหน้าแรก) */
+body.home::before {
+  /* --hero-bottom มาจาก app.js (ตำแหน่งล่างสุดของหัวเรื่อง) วางให้ยอดตึก+กากบาทโผล่เหนือการ์ดพอดีทุกขนาดจอ
+     0.49 = ตำแหน่งยอดตึกในภาพ hospital.svg (490/1000) */
+  --bg-h: 820px; --reveal: 140px;
+  content: ''; position: absolute; z-index: -1; pointer-events: none;
+  left: 0; right: 0; height: var(--bg-h);
+  top: calc(var(--hero-bottom, 520px) - var(--reveal) - 0.49 * var(--bg-h));
+  background: url('hospital.svg') center bottom / auto 100% no-repeat;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
+  opacity: 0; animation: hospital-in 2.4s 0.15s var(--ease) forwards;
+}
+@keyframes hospital-in { from { opacity: 0; transform: translateY(40px) scale(1.04); } to { opacity: 0.85; transform: none; } }
+@keyframes hospital-in-dark { from { opacity: 0; transform: translateY(40px) scale(1.04); } to { opacity: 0.55; transform: none; } }
+@media (prefers-color-scheme: dark) {
+  body.home::before { filter: brightness(0.45) saturate(0.85); animation-name: hospital-in-dark; }
+}
+/* เว้นที่ใต้หัวเรื่องให้เห็นตึกและป้ายกากบาท ก่อนถึงการ์ดเบิก/ยืม */
+body.home .hero { padding-bottom: 150px; }
+@media (max-width: 600px) {
+  body.home::before { --bg-h: 620px; --reveal: 112px; }
+  body.home .hero { padding-bottom: 120px; }
+}
+/* ฝ้าขาวจาง ๆ หลังข้อความหัวเรื่อง ให้อ่านง่ายเมื่อมีภาพด้านหลัง */
+body.home .hero { position: relative; }
+body.home .hero::before {
+  content: ''; position: absolute; inset: 0 -6% 140px; z-index: -1; pointer-events: none;
+  background: radial-gradient(ellipse at center, var(--bg) 30%, transparent 70%); opacity: 0.85;
+}
 .hero { text-align: center; padding: 32px 0 12px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
 .hero h1 { font-size: clamp(40px, 7vw, 72px); line-height: 1.05; letter-spacing: -0.035em; font-weight: 700; }
 .hero .lead { max-width: 560px; }

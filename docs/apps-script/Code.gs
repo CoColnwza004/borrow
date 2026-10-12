@@ -20,6 +20,7 @@ var SHEET_NAMES = {
   movements: 'ประวัติสต็อก',
   departments: 'หน่วยงาน',
   categories: 'หมวดหมู่',
+  on_loan: 'พัสดุที่ถูกยืมอยู่', // สร้างใหม่ทุกครั้ง ไว้ดูอย่างเดียว ระบบไม่อ่านกลับ
 };
 
 /**
@@ -125,15 +126,19 @@ function loadDb_() {
 
 function saveDb_(db) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  Object.keys(BorrowCore.TABLES).forEach(function (t) {
-    var cols = BorrowCore.TABLES[t];
+  var data = BorrowCore.sheetData(db);
+  Object.keys(data).forEach(function (t) {
+    var d = data[t];
     var sh = ss.getSheetByName(SHEET_NAMES[t]) || ss.insertSheet(SHEET_NAMES[t]);
-    var rows = [cols].concat(db[t].map(function (r) { return cols.map(function (c) { return r[c] === undefined ? '' : r[c]; }); }));
+    var rows = [d.header].concat(d.rows);
+    var n = d.header.length;
     sh.clearContents();
-    var range = sh.getRange(1, 1, rows.length, cols.length);
+    var range = sh.getRange(1, 1, rows.length, n);
     range.setNumberFormat('@'); // เก็บเป็นข้อความ ป้องกัน Sheets แปลงวันที่/รหัสเอง
     range.setValues(rows.map(function (r) { return r.map(String); }));
     sh.setFrozenRows(1);
-    sh.getRange(1, 1, 1, cols.length).setFontWeight('bold');
+    sh.getRange(1, 1, 1, n).setFontWeight('bold').setBackground(null);
+    // คอลัมน์ภาษาไทยที่ระบบเขียนให้อัตโนมัติ (แก้ในชีตไม่มีผล) ทำหัวคอลัมน์สีฟ้าอ่อนไว้
+    if (d.extra) sh.getRange(1, n - d.extra + 1, 1, d.extra).setBackground('#e8f0fe');
   });
 }
