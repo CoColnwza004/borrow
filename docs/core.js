@@ -15,9 +15,8 @@ var BorrowCore = (function () {
     items: ['id', 'code', 'name', 'category', 'unit', 'total_qty', 'available_qty', 'min_qty', 'location', 'active', 'kind'],
     requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'borrow_date', 'due_date',
       'status', 'created_at', 'approved_at', 'returned_at', 'note', 'type'],
-    // item_code / item_name / unit / request_no / type / department เติมให้อัตโนมัติ (decorate) เพื่อให้อ่านในชีตได้ทันที
-    request_items: ['request_id', 'request_no', 'type', 'department', 'item_id', 'item_code', 'item_name', 'unit', 'qty', 'returned_qty', 'lost_qty'],
-    movements: ['id', 'created_at', 'item_id', 'item_code', 'item_name', 'type', 'qty', 'available_after', 'total_after', 'request_no', 'note'],
+    request_items: ['request_id', 'item_id', 'qty', 'returned_qty', 'lost_qty'],
+    movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'total_after', 'request_no', 'note'],
     departments: ['name', 'full_name'],
     categories: ['name'],
   };
@@ -71,27 +70,6 @@ var BorrowCore = (function () {
     db.items.forEach(function (i) {
       if (i.available_qty < 0) i.available_qty = 0;
       i.total_qty = i.available_qty + (lent[i.id] || 0);
-    });
-    return decorate(db);
-  }
-
-  // เติมชื่อพัสดุ รหัส หน่วย และข้อมูลใบเบิก/ยืม ลงในรายการในคำขอและประวัติสต็อก
-  // ให้คนเปิด Google Sheet เห็นว่าของอะไรถูกเบิก/ยืมไปเท่าไร โดยไม่ต้องเทียบเลข id เอง
-  // (ชื่อจะอัปเดตตามถ้าแก้ชื่อพัสดุภายหลัง) Code.gs เรียกก่อนบันทึกลงชีตทุกครั้ง
-  function decorate(db) {
-    var items = {};
-    db.items.forEach(function (i) { items[i.id] = i; });
-    var reqs = {};
-    db.requests.forEach(function (r) { reqs[r.id] = r; });
-    db.request_items.forEach(function (l) {
-      var i = items[l.item_id];
-      if (i) { l.item_code = i.code; l.item_name = i.name; l.unit = i.unit; }
-      var r = reqs[l.request_id];
-      if (r) { l.request_no = r.request_no; l.type = r.type; l.department = r.department; }
-    });
-    db.movements.forEach(function (m) {
-      var i = items[m.item_id];
-      if (i) { m.item_code = i.code; m.item_name = i.name; }
     });
     return db;
   }
@@ -149,15 +127,15 @@ var BorrowCore = (function () {
           fail('"' + item.name + '" คงเหลือไม่พอ (ขอ ' + merged[id] + ', คงเหลือ ' + item.available_qty + ' ' + item.unit + ')');
         }
       });
-      // เลขที่เอกสาร เช่น WD6910-0001 (ปี พ.ศ. 2 หลัก + เดือน + ลำดับในเดือน)
-      var be = String(ctx.now.getFullYear() + 543).slice(2) + pad(ctx.now.getMonth() + 1);
+      // เลขที่เอกสาร เช่น WD69-001 = ประเภท + ปี พ.ศ. 2 หลัก + ลำดับในปีนั้น (เกิน 999 เป็น 4 หลักอัตโนมัติ)
+      var be = String(ctx.now.getFullYear() + 543).slice(2);
       var prefix = (type === 'withdraw' ? 'WD' : 'BR') + be + '-';
       var seq = 0;
       db.requests.forEach(function (r) {
         if (r.request_no.indexOf(prefix) === 0) seq = Math.max(seq, Number(r.request_no.slice(prefix.length)));
       });
       var r = {
-        id: nextId(db.requests), request_no: prefix + ('000' + (seq + 1)).slice(-4), borrower_name: name, phone: str(p.phone),
+        id: nextId(db.requests), request_no: prefix + (seq + 1 < 1000 ? ('00' + (seq + 1)).slice(-3) : String(seq + 1)), borrower_name: name, phone: str(p.phone),
         department: dept, purpose: str(p.purpose), borrow_date: today, due_date: due,
         status: type === 'withdraw' ? 'issued' : 'borrowed', created_at: stamp(ctx.now), approved_at: stamp(ctx.now),
         returned_at: '', note: str(p.note), type: type,
@@ -316,6 +294,92 @@ var BorrowCore = (function () {
     return closed;
   }
 
+  // ---------- ตารางสำหรับเขียนลง Google Sheets ----------
+  // คอลัมน์ตาม TABLES (ระบบอ่านกลับ) + คอลัมน์ภาษาไทยต่อท้ายให้คนอ่านง่าย (ระบบไม่อ่านกลับ เขียนใหม่ทุกครั้ง)
+  // และแท็บ on_loan = รายการพัสดุที่ถูกยืมอยู่ตอนนี้
+  function sheetData(db) {
+    var itemOf = function (id) { return byId(db.items, id) || { code: '', name: '(ลบแล้ว)', unit: '' }; };
+    var reqOf = function (id) { return byId(db.requests, id) || { request_no: '', status: '' }; };
+    var outstanding = function (l) { return reqOf(l.request_id).status === 'borrowed' ? l.qty - l.returned_qty - l.lost_qty : 0; };
+    var lent = {};
+    var withdrawn = {};
+    db.request_items.forEach(function (l) {
+      lent[l.item_id] = (lent[l.item_id] || 0) + outstanding(l);
+      var r = reqOf(l.request_id);
+      if (r.type === 'withdraw' && r.status === 'issued') withdrawn[l.item_id] = (withdrawn[l.item_id] || 0) + l.qty;
+    });
+    var extra = {
+      items: [['ถูกยืมอยู่', function (i) { return lent[i.id] || 0; }], ['เบิกไปแล้วรวม', function (i) { return withdrawn[i.id] || 0; }]],
+      requests: [
+        ['ประเภท', function (r) { return TYPES[r.type] || ''; }],
+        ['สถานะ', function (r) { return STATUS[r.status] || r.status; }],
+        ['รายการพัสดุ', function (r) {
+          return lines(db, r.id).map(function (l) { var it = itemOf(l.item_id); return it.name + ' ×' + l.qty + ' ' + it.unit; }).join(', ');
+        }],
+      ],
+      request_items: [
+        ['เลขที่', function (l) { return reqOf(l.request_id).request_no; }],
+        ['รหัสพัสดุ', function (l) { return itemOf(l.item_id).code; }],
+        ['ชื่อพัสดุ', function (l) { return itemOf(l.item_id).name; }],
+        ['หน่วย', function (l) { return itemOf(l.item_id).unit; }],
+        ['ค้างคืน', outstanding],
+      ],
+      movements: [
+        ['รายการ', function (m) { return MOVE[m.type] || m.type; }],
+        ['รหัสพัสดุ', function (m) { return itemOf(m.item_id).code; }],
+        ['ชื่อพัสดุ', function (m) { return itemOf(m.item_id).name; }],
+      ],
+    };
+    var out = {};
+    Object.keys(TABLES).forEach(function (t) {
+      var cols = TABLES[t];
+      var ex = extra[t] || [];
+      out[t] = {
+        header: cols.concat(ex.map(function (e) { return e[0]; })),
+        extra: ex.length,
+        rows: db[t].map(function (r) {
+          return cols.map(function (c) { return r[c] === undefined ? '' : r[c]; }).concat(ex.map(function (e) { return e[1](r); }));
+        }),
+      };
+    });
+    // วันที่แบบไทยสำหรับคนอ่าน เช่น 12/10/2569 09:15
+    var thaiStamp = function (v) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}))?/.exec(v || '');
+      return m ? Number(m[3]) + '/' + Number(m[2]) + '/' + (Number(m[1]) + 543) + (m[4] ? ' ' + m[4] : '') : '';
+    };
+    var loans = [];
+    db.requests.filter(function (r) { return r.status === 'borrowed'; })
+      .sort(function (a, b) { return a.due_date.localeCompare(b.due_date) || a.id - b.id; })
+      .forEach(function (r) {
+        lines(db, r.id).forEach(function (l) {
+          var q = l.qty - l.returned_qty - l.lost_qty;
+          if (q <= 0) return;
+          var it = itemOf(l.item_id);
+          loans.push([r.request_no, thaiStamp(r.created_at), r.borrower_name, r.department, it.code, it.name, q, it.unit, thaiStamp(r.due_date)]);
+        });
+      });
+    // แท็บ log: 1 แถวต่อพัสดุ 1 รายการ ล่าสุดอยู่บน อ่านง่าย ใช้กรอง/Pivot ในชีตได้
+    var log = [];
+    db.requests.slice().sort(function (a, b) { return b.id - a.id; }).forEach(function (r) {
+      lines(db, r.id).forEach(function (l) {
+        var it = itemOf(l.item_id);
+        var w = r.type === 'withdraw';
+        log.push([thaiStamp(r.created_at), r.request_no, TYPES[r.type] || '', r.borrower_name, r.department,
+          it.code, it.name, l.qty, it.unit, STATUS[r.status] || r.status,
+          w ? '' : thaiStamp(r.due_date), w ? '' : l.returned_qty, w ? '' : outstanding(l)]);
+      });
+    });
+    out.log = {
+      header: ['วันที่', 'เลขที่', 'ประเภท', 'ผู้เบิก/ผู้ยืม', 'แผนก', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'จำนวน', 'หน่วย', 'สถานะ', 'กำหนดคืน', 'คืนแล้ว', 'ยังไม่คืน'],
+      extra: 13, rows: log,
+    };
+    out.on_loan = {
+      header: ['เลขที่', 'วันที่ยืม', 'ผู้ยืม', 'แผนก', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'จำนวนที่ยังไม่คืน', 'หน่วย', 'กำหนดคืน'],
+      extra: 9, rows: loans,
+    };
+    return out;
+  }
+
   // ข้อมูลที่ส่งให้ผู้ใช้ทั่วไป (ไม่มี PIN): สต็อก แผนก หมวดหมู่ และเฉพาะใบที่เพิ่งส่ง (ใช้ทำ PDF)
   // ประวัติการเบิก-ยืมทั้งหมด (ชื่อผู้ขอ ฯลฯ) ส่งให้เฉพาะเจ้าหน้าที่
   function publicView(db, keepRequestId) {
@@ -388,7 +452,7 @@ var BorrowCore = (function () {
     return db;
   }
 
-  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, decorate: decorate, emptyDb: emptyDb, ymd: ymd };
+  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

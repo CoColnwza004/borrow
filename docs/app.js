@@ -23,6 +23,9 @@ const today = () => BorrowCore.ymd(new Date());
 const fmtNum = (n) => Number(n || 0).toLocaleString('th-TH');
 const lsGet = (k) => { try { return localStorage.getItem(k) || ''; } catch { return ''; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
+const motionOK = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
+// เด้งเบา ๆ เมื่อค่าเปลี่ยน (เช่น จำนวนในแถบยืนยัน)
+const bump = (el) => { if (!el || !motionOK()) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); };
 
 function addDays(n) {
   const d = new Date();
@@ -40,6 +43,16 @@ function fmtDateTime(s) {
   return isNaN(d) ? s : d.toLocaleString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+// ไอคอนปุ่มจำนวน (คมชัด อยู่กึ่งกลางพอดี)
+const IC = {
+  minus: '<svg viewBox="0 0 24 24"><path d="M5 11h14v2H5z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><path d="M9 3h6l1 2h4v2H4V5h4l1-2ZM6 9h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 9Z"/></svg>',
+};
+const TOAST_IC = {
+  ok: '<svg viewBox="0 0 24 24"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z"/></svg>',
+  err: '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 15h-2v-2h2v2Zm0-4h-2V7h2v6Z"/></svg>',
+};
 const ICON = {
   box: '<svg viewBox="0 0 24 24"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Zm0 2.3L18.7 8 12 11.7 5.3 8 12 4.3ZM5 9.7l6 3.3v6.6l-6-3.3V9.7Zm8 9.9V13l6-3.3v6.6l-6 3.3Z"/></svg>',
   withdraw: '<svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2Zm7-3 6-6-1.4-1.4-3.6 3.6V3h-2v10.2L7.4 9.6 6 11l6 6Z"/></svg>',
@@ -147,13 +160,23 @@ const isLow = (i) => i.available_qty <= i.min_qty;
 let toastTimer;
 function toast(msg, isError = false) {
   const el = $('#toast');
-  el.textContent = msg;
+  el.innerHTML = `${isError ? TOAST_IC.err : TOAST_IC.ok}<span>${esc(msg)}</span>`;
   el.className = 'toast' + (isError ? ' error' : '');
+  el.hidden = true;
+  void el.offsetWidth; // เล่นอนิเมชันเข้าใหม่ทุกครั้ง
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, isError ? 5000 : 2600);
+  toastTimer = setTimeout(() => {
+    el.classList.add('out');
+    toastTimer = setTimeout(() => { el.hidden = true; }, 200);
+  }, isError ? 5000 : 2600);
 }
+const modal = $('#modal');
+let closeTimer;
+const modalOpen = () => modal.open && !modal.classList.contains('closing');
 function openModal(title, html, { wide = false } = {}) {
+  modal.classList.remove('closing');
+  clearTimeout(closeTimer);
   $('#modal-title').textContent = title;
   $('#modal').classList.toggle('wide', wide);
   const body = $('#modal-body');
@@ -162,10 +185,31 @@ function openModal(title, html, { wide = false } = {}) {
   body.scrollTop = 0;
   return body;
 }
-const closeModal = () => $('#modal').close();
+// ปิดแบบมีจังหวะออก (ย่อ+จาง / เลื่อนลงบนมือถือ) แล้วค่อยปิดจริง
+function closeModal() {
+  if (!modal.open) return;
+  if (!motionOK()) { modal.close(); return; }
+  modal.classList.add('closing');
+  clearTimeout(closeTimer);
+  closeTimer = setTimeout(() => { if (modal.classList.contains('closing')) { modal.classList.remove('closing'); modal.close(); } }, 230);
+}
+modal.addEventListener('cancel', (e) => { e.preventDefault(); closeModal(); });
+$('.sheet-head').addEventListener('submit', (e) => { e.preventDefault(); closeModal(); });
 const safe = (fn) => async (...args) => {
   try { await fn(...args); } catch (e) { toast(e.message, true); }
 };
+// ช่องกรอกที่ผิด: ขอบแดง + สั่นเบา ๆ จนกว่าจะแก้
+function flag(inp) {
+  inp.focus();
+  const f = inp.closest('.field');
+  if (!f) return;
+  f.classList.remove('invalid');
+  void f.offsetWidth;
+  f.classList.add('invalid');
+  const clear = () => f.classList.remove('invalid');
+  inp.addEventListener('input', clear, { once: true });
+  inp.addEventListener('change', clear, { once: true });
+}
 const formData = (form) => Object.fromEntries(new FormData(form).entries());
 
 // ชื่อเต็มของแผนก เช่น "งานการพยาบาลผู้ป่วยหนัก (ICU)" ใช้ในเอกสาร PDF
@@ -247,6 +291,8 @@ $('#btn-admin').addEventListener('click', safe(async () => {
       await store.act('checkPin');
     } catch (err) {
       state.pin = '';
+      flag(e.target.pin);
+      e.target.pin.select();
       throw err;
     }
     sessionStorage.setItem('pin', state.pin);
@@ -293,8 +339,34 @@ function fitNav() {
   const compact = links.scrollWidth > links.clientWidth + 1;
   nav.classList.toggle('compact', compact);
   if (!compact) setMenu(false);
+  slidePill();
+}
+// แถบเทาใต้เมนูหน้าปัจจุบัน เลื่อนจากตำแหน่งเดิมไปหน้าใหม่
+function slidePill() {
+  const nl = $('#nav-links');
+  const act = $('a.active', nl);
+  if ($('#nav-bar').classList.contains('compact') || !act) { nl.classList.remove('has-thumb', 'thumb-live'); return; }
+  const x = act.offsetLeft, w = act.offsetWidth;
+  const px = parseFloat(nl.style.getPropertyValue('--tx')), pw = parseFloat(nl.style.getPropertyValue('--tw'));
+  // FLIP: ความกว้างเปลี่ยนทันที แล้วเลื่อน/ยืดด้วย transform อย่างเดียว (ลื่นเต็มรีเฟรชเรตจอ)
+  if (nl.classList.contains('thumb-live') && pw && (px !== x || pw !== w)) {
+    nl.classList.remove('thumb-live');
+    nl.style.setProperty('--tw', w + 'px');
+    nl.style.setProperty('--tx', px + 'px');
+    nl.style.setProperty('--sx', pw / w);
+    void getComputedStyle(nl, '::before').transform;
+    nl.classList.add('thumb-live');
+  }
+  nl.style.setProperty('--tx', x + 'px');
+  nl.style.setProperty('--tw', w + 'px');
+  nl.style.setProperty('--sx', 1);
+  if (!nl.classList.contains('has-thumb')) {
+    nl.classList.add('has-thumb');
+    requestAnimationFrame(() => requestAnimationFrame(() => nl.classList.add('thumb-live')));
+  }
 }
 window.addEventListener('resize', fitNav);
+document.fonts?.ready.then(fitNav);
 
 function setMenu(open) {
   $('#nav-bar').classList.toggle('open', open);
@@ -306,44 +378,99 @@ $('#nav-links').addEventListener('click', (e) => { if (e.target.closest('a')) se
 // ปุ่ม "สรุปรายเดือน" ในหน้าภาพรวม / ประวัติ
 document.addEventListener('click', (e) => { if (e.target.closest('[data-monthly]') && isAdmin()) showMonthlyReport(); });
 
-function render() {
+// องค์ประกอบที่ค่อย ๆ ลอยขึ้นตามลำดับการอ่าน เมื่อเปลี่ยนหน้า (ไม่เล่นซ้ำตอนซิงก์ข้อมูล/พิมพ์ค้นหา)
+const ENTER = '.page > .banner, .hero > *, .choice, .stat-strip, .page > .page-head, .page > .page-head-row, .page > .toolbar, #rf-type, #rf > .group, .item-card, .rows > li, .stats > .stat, .grid-2 > .card, .page > section.card';
+let enterTimer;
+function choreograph(page) {
+  if (!motionOK()) return;
+  $$(ENTER, page).filter((el) => !(el.matches('section.card') && el.querySelector('.rows'))).slice(0, 14)
+    .forEach((el, i) => { el.classList.add('in'); el.style.setProperty('--i', i); });
+  page.classList.add('enter');
+  clearTimeout(enterTimer);
+  enterTimer = setTimeout(() => page.classList.remove('enter'), 1400);
+}
+// ตัวเลขบนหน้าแรกนับขึ้นสั้น ๆ (ค่าจริงอยู่ใน HTML เสมอ)
+function countUp(root) {
+  if (!motionOK() || navigator.webdriver || document.hidden) return;
+  const strip = $('.stat-strip', root);
+  if (!strip) return;
+  const delay = (Number(strip.style.getPropertyValue('--i')) || 0) * 40 + 120;
+  const els = $$('.v', strip).map((el) => ({ el, txt: el.textContent, n: Number(el.textContent.replace(/\D/g, '')) })).filter((x) => x.n > 1);
+  if (!els.length) return;
+  let t0;
+  const tick = (t) => {
+    t0 ??= t + delay;
+    const p = Math.min(1, Math.max(0, (t - t0) / 700));
+    const e = 1 - (1 - p) ** 3;
+    for (const x of els) if (x.el.isConnected) x.el.textContent = p < 1 ? fmtNum(Math.round(x.n * e)) : x.txt;
+    if (p < 1 && els[0].el.isConnected) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+function render(enter = false) {
   const key = currentRoute();
   document.title = `${ROUTES[key].title} · ระบบเบิก-ยืมพัสดุ`;
   renderNav();
   const page = $('#page');
-  // เล่น animation ใหม่ทุกครั้งที่เปลี่ยนหน้า
-  page.style.animation = 'none';
-  void page.offsetHeight;
-  page.style.animation = '';
+  page.classList.remove('enter');
   page.innerHTML = '';
   if (DEMO) {
     page.insertAdjacentHTML('beforeend', '<div class="banner">โหมดทดลอง — ข้อมูลเก็บเฉพาะในเบราว์เซอร์เครื่องนี้ เชื่อม Google Sheets ตามคู่มือใน README เพื่อใช้ร่วมกันทุกเครื่อง</div>');
   }
   ROUTES[key].render(page);
+  if (enter) { choreograph(page); if (key === 'home') countUp(page); }
 }
 
 let lastSnapshot = '';
 let lastRoute = '';
+// View Transitions (Chrome/Edge 111+, Safari 18+): หน้าเฟดสลับ, แถบนำทางนิ่ง, หัวการ์ดลอยไปเป็นหัวเรื่องฟอร์ม
+// เบราว์เซอร์ที่ไม่รองรับ / ลดการเคลื่อนไหว / มีหน้าต่างเปิดอยู่ → วาดหน้าตามปกติ
 async function route() {
   setMenu(false);
-  const key = currentRoute();
-  if (key !== lastRoute) window.scrollTo(0, 0);
+  const key = currentRoute(), from = lastRoute, changed = key !== from;
+  const prevType = $('#rf-type button.active')?.dataset.type;
   lastRoute = key;
-  render();
+  const useVT = changed && !!document.startViewTransition && motionOK() && !modalOpen();
+  let morph = null;
+  const mark = (el) => { if (el) { el.style.viewTransitionName = 'page-title'; morph = el; } };
+  const update = () => {
+    if (changed) window.scrollTo(0, 0);
+    render(changed);
+    if (useVT && from === 'request' && key === 'home' && prevType) {
+      const h = $(`.choice.${prevType} h2`);
+      mark(h);
+      h?.closest('.choice')?.classList.remove('in');
+    }
+    if (morph && key === 'request') $('#rf-title')?.closest('.page-head')?.classList.remove('in');
+  };
+  if (useVT) {
+    if (from === 'home' && key === 'request') mark($(`.choice.${hashParams().get('type') === 'borrow' ? 'borrow' : 'withdraw'} h2`));
+    document.documentElement.classList.add('vt');
+    let vt;
+    try { vt = document.startViewTransition(update); } catch { document.documentElement.classList.remove('vt'); update(); }
+    if (vt) {
+      vt.finished.finally(() => {
+        document.documentElement.classList.remove('vt');
+        if (morph?.isConnected) morph.style.viewTransitionName = '';
+      });
+      await vt.updateCallbackDone.catch(() => {});
+    }
+  } else update();
   await syncFromSheet();
 }
 
 // โหมด Google Sheets: ดึงข้อมูลล่าสุดเบื้องหลัง แล้ววาดใหม่ถ้ามีการแก้ไข (จากเครื่องอื่นหรือแก้ในชีตโดยตรง)
 // หน้าฟอร์มเบิก/ยืม วาดเฉพาะรายการพัสดุใหม่ ข้อมูลที่กรอกไว้ไม่หาย
 async function syncFromSheet() {
-  if (DEMO || $('#modal').open) return;
+  if (DEMO || modalOpen()) return;
   const key = currentRoute();
   try {
     await store.load();
     const snap = JSON.stringify(state.db);
     if (snap === lastSnapshot) return;
     lastSnapshot = snap;
-    if ($('#modal').open || currentRoute() !== key) return;
+    if (modalOpen() || currentRoute() !== key) return;
     if (key === 'request') redrawPickList?.(); else render();
   } catch (e) { toast(e.message, true); }
 }
@@ -362,9 +489,10 @@ function renderHome(page) {
   const items = state.db.items.filter((i) => i.active);
   const ready = items.filter((i) => i.available_qty > 0);
   const low = items.filter(isLow);
+  const todayTh = new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long' });
   page.insertAdjacentHTML('beforeend', `
     <section class="hero">
-      <p class="eyebrow">${esc(CONFIG.HOSPITAL_NAME || 'ระบบพัสดุ')}</p>
+      <p class="eyebrow">${esc(CONFIG.HOSPITAL_NAME || 'ระบบพัสดุ')} <span class="eyebrow-date">· ${esc(todayTh)}</span></p>
       <h1>เบิก หรือ ยืม<br><span class="gradient-text">ง่ายในไม่กี่คลิก</span></h1>
       <p class="lead">เลือกพัสดุ กรอกชื่อและแผนก แล้วรับใบเบิก/ใบยืมเป็นไฟล์ PDF ได้ทันที</p>
     </section>
@@ -374,14 +502,12 @@ function renderHome(page) {
         <h2>เบิกพัสดุ</h2>
         <p>เวชภัณฑ์และวัสดุสิ้นเปลือง เบิกไปใช้ในหน่วยงานแล้วไม่ต้องนำมาคืน</p>
         <span class="cta">เริ่มเบิกพัสดุ</span>
-        <span class="ghost">${ICON.withdraw}</span>
       </a>
       <a class="choice borrow" href="#/request?type=borrow">
         <span class="choice-icon">${ICON.borrow}</span>
         <h2>ยืมพัสดุ</h2>
         <p>ยืมพัสดุไปใช้ก่อนชั่วคราว แล้วนำมาคืนคลังภายในวันที่กำหนด</p>
         <span class="cta">เริ่มยืมพัสดุ</span>
-        <span class="ghost">${ICON.borrow}</span>
       </a>
     </div>
     <div class="stat-strip">
@@ -393,8 +519,11 @@ function renderHome(page) {
 
 // ===================== Request form (เบิก / ยืม) =====================
 let redrawPickList = null;
+let rfObservers = [];
 
 function renderRequestForm(page) {
+  rfObservers.forEach((o) => o.disconnect());
+  rfObservers = [];
   const params = hashParams();
   let type = TYPES[params.get('type')] ? params.get('type') : (lsGet('last-type') || 'withdraw');
   // มาจากปุ่ม "เบิก/ยืม" ในหน้าพัสดุ: เลือกรายการนั้นไว้ให้
@@ -448,9 +577,27 @@ function renderRequestForm(page) {
     </form>`);
 
   const form = $('#rf');
+  const navH = () => $('#nav-bar').offsetHeight;
+  const tools = $('.pick-tools');
+  let spy = null;
+  // เส้นใต้แถบค้นหาขึ้นเฉพาะตอนแถบติดอยู่ใต้เมนู
+  if ('IntersectionObserver' in window) {
+    const st = new IntersectionObserver(([e]) => tools.classList.toggle('stuck', !e.isIntersecting && e.boundingClientRect.top < navH()),
+      { rootMargin: `-${navH()}px 0px 0px 0px` });
+    st.observe(tools.previousElementSibling);
+    rfObservers.push(st);
+  }
+  // ไฮไลต์ตัวอักษรของกลุ่มที่กำลังดูอยู่ในแถบ A–Z
+  function markLetter(idx) {
+    const az = $('#rf-az');
+    let on;
+    $$('button', az).forEach((b) => { const m = b.dataset.jump === idx; b.classList.toggle('on', m); if (m) on = b; });
+    if (on) az.scrollTo({ left: on.offsetLeft - (az.clientWidth - on.offsetWidth) / 2, behavior: motionOK() ? 'smooth' : 'auto' });
+  }
   const allowed = () => itemsView().filter((i) => i.active && BorrowCore.allows(i, type));
 
   function applyType() {
+    form.dataset.type = type;
     const w = type === 'withdraw';
     $('#rf-title').textContent = w ? 'เบิกพัสดุ' : 'ยืมพัสดุ';
     $('#rf-lead').textContent = w
@@ -478,6 +625,7 @@ function renderRequestForm(page) {
     $('#rf-count').textContent = chosen.length ? `${chosen.length} รายการ · ${fmtNum(chosen.reduce((s, x) => s + x.q, 0))} ชิ้น` : 'ยังไม่ได้เลือกพัสดุ';
     $('#rf-detail').textContent = chosen.length ? chosen.map((x) => `${x.item.name} ×${x.q}`).join(', ') : `เลือกพัสดุที่ต้องการ${verb}จากรายการด้านบน`;
     $('#rf-submit').textContent = `ยืนยันการ${verb}`;
+    form.classList.toggle('has-picks', chosen.length > 0);
   }
 
   // ค้นหาแบบไม่สนตัวพิมพ์เล็ก/ใหญ่ ช่องว่าง และวงเล็บ: "airway100" เจอ "Airway 100mm"
@@ -490,6 +638,8 @@ function renderRequestForm(page) {
     return '#';
   };
   let show = 'ready';
+  let wasEmpty = false;
+  let tick = null; // การเปลี่ยนจำนวนล่าสุด ใช้เล่นอนิเมชันหลังวาดรายการใหม่
   const stockBadge = (i) => i.available_qty === 0 ? '<span class="stock out">หมด</span>'
     : `<span class="stock ${isLow(i) ? 'low' : 'ok'}">${isLow(i) ? 'เหลือน้อย' : 'เหลือ'} ${fmtNum(i.available_qty)} ${esc(i.unit)}</span>`;
 
@@ -502,7 +652,8 @@ function renderRequestForm(page) {
     if (q) items = items.filter((i) => norm(i.name + ' ' + i.code).includes(q));
     const pickedN = Object.keys(state.picks).length;
     $$('#rf-show button').forEach((b) => b.classList.toggle('active', b.dataset.show === show));
-    $('#rf-picked-n').textContent = pickedN ? ` ${pickedN}` : '';
+    const pn = pickedN ? ` ${pickedN}` : '';
+    if ($('#rf-picked-n').textContent !== pn) { $('#rf-picked-n').textContent = pn; bump($('#rf-picked-n')); }
     $('#rf-shown').textContent = `${fmtNum(items.length)} / ${fmtNum(all.length)} รายการ`;
 
     const groups = new Map();
@@ -521,9 +672,9 @@ function renderRequestForm(page) {
           <div class="pick-meta"><span class="code">${esc(i.code)}</span>${stockBadge(i)}</div>
         </div>
         ${n ? `<div class="stepper">
-            <button type="button" data-dec="${i.id}" aria-label="ลด">−</button>
+            <button type="button" data-dec="${i.id}" class="${n === 1 ? 'rm' : ''}" aria-label="${n === 1 ? 'นำออก' : 'ลด'}">${n === 1 ? IC.trash : IC.minus}</button>
             <input type="number" inputmode="numeric" min="0" max="${i.available_qty}" value="${n}" data-qty="${i.id}" aria-label="จำนวน">
-            <button type="button" data-inc="${i.id}" aria-label="เพิ่ม" ${n >= i.available_qty ? 'disabled' : ''}>+</button>
+            <button type="button" data-inc="${i.id}" aria-label="เพิ่ม" ${n >= i.available_qty ? 'disabled' : ''}>${IC.plus}</button>
           </div>`
           : `<button type="button" class="btn add-btn" data-inc="${i.id}" ${out ? 'disabled' : ''}>${out ? 'หมด' : '+ เลือก'}</button>`}
       </li>`;
@@ -532,28 +683,81 @@ function renderRequestForm(page) {
     const grouped = !q && show !== 'picked' && keys.length > 3;
     $('#rf-az').innerHTML = grouped ? keys.map((k, idx) => `<button type="button" data-jump="${idx}">${esc(k)}</button>`).join('') : '';
     $('#rf-az').hidden = !grouped;
+    // หน้าว่างพร้อมปุ่มแก้ได้ในแตะเดียว
+    const E = (ic, t, h, acts) => `<div class="empty${wasEmpty ? '' : ' enter'}"><span class="empty-ic">${ic}</span><p class="empty-t">${t}</p>${h ? `<p class="empty-h">${h}</p>` : ''}${acts ? `<div class="empty-act">${acts}</div>` : ''}</div>`;
+    const qv = esc($('#rf-q').value.trim());
     $('#rf-list').innerHTML = items.length
       ? (grouped
         ? keys.map((k, idx) => `<div class="pick-group" data-group="${idx}"><div class="pick-letter">${esc(k)}</div>
             <ul class="list">${groups.get(k).map(row).join('')}</ul></div>`).join('')
         : `<ul class="list">${items.map(row).join('')}</ul>`)
-      : `<div class="empty">${show === 'picked' ? 'ยังไม่ได้เลือกพัสดุ'
-        : q ? `ไม่พบ "${esc($('#rf-q').value.trim())}"${show === 'ready' ? ' ในรายการที่มีของ — ลองกด "ทั้งหมด"' : ''}`
-        : 'ยังไม่มีพัสดุสำหรับประเภทนี้'}</div>`;
+      : (show === 'picked'
+        ? E(ICON.box, 'ยังไม่ได้เลือกพัสดุ', 'แตะ "+ เลือก" ที่รายการพัสดุ', '<button type="button" class="btn sm" data-show-set="ready">ดูรายการที่มีของ</button>')
+        : q && show === 'ready'
+          ? E(ICON.search, `ไม่พบ "${qv}" ในรายการที่มีของ`, '', '<button type="button" class="btn sm" data-show-set="all">ค้นในทั้งหมด</button><button type="button" class="btn sm plain" data-clear-q>ล้างคำค้น</button>')
+          : q
+            ? E(ICON.search, `ไม่พบ "${qv}"`, 'ลองพิมพ์ชื่อสั้นลง หรือค้นด้วยรหัส เช่น NSO-010', '<button type="button" class="btn sm plain" data-clear-q>ล้างคำค้น</button>')
+            : E(ICON.box, 'ยังไม่มีพัสดุสำหรับประเภทนี้', '', ''));
+    wasEmpty = !items.length;
     drawSummary();
+    if (spy) { spy.disconnect(); rfObservers = rfObservers.filter((o) => o !== spy); spy = null; }
+    if (grouped && 'IntersectionObserver' in window) {
+      const top = navH() + tools.offsetHeight + 4;
+      spy = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) markLetter(e.target.dataset.group); },
+        { rootMargin: `-${top}px 0px -${Math.max(0, innerHeight - top - 2)}px 0px` });
+      $$('#rf-list .pick-group').forEach((g) => spy.observe(g));
+      rfObservers.push(spy);
+    }
+    if (tick) { const t = tick; tick = null; afterChange(t); }
   }
   redrawPickList = drawList;
 
-  const setQty = (id, qty) => {
+  const setQty = (id, qty, rect = null) => {
     const i = itemById(id);
+    const from = state.picks[id] || 0;
     qty = Math.max(0, Math.min(i.available_qty, Math.floor(Number(qty) || 0)));
     if (qty) state.picks[id] = qty; else delete state.picks[id];
+    const ae = document.activeElement;
+    tick = { id: String(id), from, to: qty, rect,
+      focus: ae?.matches?.('[data-dec]') ? 'dec' : ae?.matches?.('[data-inc]') ? 'inc' : ae?.matches?.('[data-qty]') ? 'qty' : null };
     drawList();
   };
+  // หลังวาดใหม่: คืนโฟกัสปุ่มเดิม + อนิเมชัน (ตัวเลขเลื่อน, แถวเด้งเข้า/ออก, จำนวนในแถบยืนยันเด้ง)
+  function afterChange({ id, from, to, focus, rect }) {
+    const q = (a) => $(`#rf-list [${a}="${id}"]`);
+    if (focus) [q(`data-${focus}`), q('data-inc'), q('data-dec'), q('data-qty')].find((el) => el && !el.disabled)?.focus({ preventScroll: true });
+    if (!motionOK() || from === to) return;
+    const li = (q('data-inc') || q('data-dec'))?.closest('.pick');
+    if (!from) { li?.classList.add('just-on'); if (!(rect && flyToCheckout(rect))) bump($('#rf-count')); }
+    else if (!to) { li?.classList.add('just-off'); bump($('#rf-count')); }
+    else { q('data-qty')?.classList.add(to > from ? 'roll-up' : 'roll-down'); bump($('#rf-count')); }
+  }
+  // จุดสีลอยโค้งจากปุ่ม "+ เลือก" เข้าแถบยืนยัน (เฉพาะการเลือกครั้งแรกของรายการนั้น)
+  function flyToCheckout(a) {
+    const to = $('#rf-count');
+    const bar = $('.checkout');
+    if (!to || !bar || !motionOK() || +getComputedStyle(bar).opacity < 0.5) return false;
+    const b = to.getBoundingClientRect();
+    const x0 = a.left + a.width / 2, y0 = a.top + a.height / 2;
+    const dx = b.left + 12 - x0, dy = b.top + b.height / 2 - y0;
+    const o = document.createElement('i');
+    o.className = 'fly' + (type === 'borrow' ? ' borrow' : '');
+    o.innerHTML = '<i></i>';
+    o.style.left = x0 + 'px';
+    o.style.top = y0 + 'px';
+    document.body.append(o);
+    o.animate([{ transform: 'translateX(0)' }, { transform: `translateX(${dx}px)` }], { duration: 480, easing: 'cubic-bezier(.3,0,.6,1)', fill: 'forwards' });
+    o.firstChild.animate([{ transform: 'translateY(0) scale(1)' }, { transform: `translateY(${dy}px) scale(.5)`, opacity: 0.5 }],
+      { duration: 480, easing: 'cubic-bezier(.5,-0.6,.8,.6)', fill: 'forwards' }).finished.then(() => { o.remove(); bump($('#rf-count')); }, () => o.remove());
+    return true;
+  }
   $('#rf-list').addEventListener('click', (e) => {
+    const ss = e.target.closest('[data-show-set]');
+    if (ss) { show = ss.dataset.showSet; drawList(); return; }
+    if (e.target.closest('[data-clear-q]')) { $('#rf-q').value = ''; drawList(); $('#rf-q').focus(); return; }
     const inc = e.target.closest('[data-inc]');
     const dec = e.target.closest('[data-dec]');
-    if (inc) setQty(inc.dataset.inc, (state.picks[inc.dataset.inc] || 0) + 1);
+    if (inc) setQty(inc.dataset.inc, (state.picks[inc.dataset.inc] || 0) + 1, inc.classList.contains('add-btn') ? inc.getBoundingClientRect() : null);
     if (dec) setQty(dec.dataset.dec, (state.picks[dec.dataset.dec] || 0) - 1);
   });
   $('#rf-list').addEventListener('change', (e) => {
@@ -569,19 +773,30 @@ function renderRequestForm(page) {
     if (!g) return;
     const offset = $('#nav-bar').offsetHeight + $('.pick-tools').offsetHeight + 8;
     window.scrollTo({ top: g.getBoundingClientRect().top + window.scrollY - offset, behavior: 'smooth' });
+    const L = $('.pick-letter', g);
+    if (L && motionOK()) { L.classList.remove('hit'); void L.offsetWidth; L.classList.add('hit'); }
   });
-  $$('#rf-type button').forEach((b) => b.addEventListener('click', () => { type = b.dataset.type; applyType(); }));
+  $$('#rf-type button').forEach((b) => b.addEventListener('click', () => {
+    if (type === b.dataset.type) return;
+    type = b.dataset.type;
+    applyType();
+    if (motionOK()) {
+      [$('#rf-title'), $('#rf-lead')].forEach((el, k) => el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }],
+        { duration: 280, delay: k * 40, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'backwards' }));
+    }
+  }));
 
   form.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
     const data = formData(form);
-    if (!data.borrower_name.trim()) { form.borrower_name.focus(); throw new Error('กรุณากรอกชื่อ-นามสกุล'); }
-    if (!data.department) { form.department.focus(); throw new Error('กรุณาเลือกแผนก'); }
-    if (type === 'borrow' && (!data.due_date || data.due_date <= today())) { form.due_date.focus(); throw new Error('กรุณาเลือกวันคืน (ตั้งแต่วันพรุ่งนี้เป็นต้นไป)'); }
+    if (!data.borrower_name.trim()) { flag(form.borrower_name); throw new Error('กรุณากรอกชื่อ-นามสกุล'); }
+    if (!data.department) { flag(form.department); throw new Error('กรุณาเลือกแผนก'); }
+    if (type === 'borrow' && (!data.due_date || data.due_date <= today())) { flag(form.due_date); throw new Error('กรุณาเลือกวันคืน (ตั้งแต่วันพรุ่งนี้เป็นต้นไป)'); }
     const items = Object.entries(state.picks).map(([item_id, qty]) => ({ item_id: Number(item_id), qty }));
     if (!items.length) throw new Error('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
     const btn = $('#rf-submit');
     btn.disabled = true;
+    btn.classList.add('busy');
     try {
       const id = await store.act('createRequest', { ...data, type, items });
       lsSet('last-name', data.borrower_name.trim());
@@ -595,6 +810,7 @@ function renderRequestForm(page) {
       showSuccess(id);
     } finally {
       btn.disabled = false;
+      btn.classList.remove('busy');
     }
   }));
 
@@ -607,10 +823,10 @@ function showSuccess(id) {
   const r = requestView(state.db.requests.find((x) => x.id === id));
   const w = r.type === 'withdraw';
   const body = openModal('', `
-    <div class="success">
-      <svg class="check-anim" viewBox="0 0 76 76"><circle cx="38" cy="38" r="34"/><path d="M23 39.5 33.5 50 54 28"/></svg>
+    <div class="success" data-type="${r.type}">
+      <span class="done" aria-hidden="true"><svg class="check-anim" viewBox="0 0 76 76"><circle cx="38" cy="38" r="34"/><path d="M23 39.5 33.5 50 54 28"/></svg></span>
       <h2>${w ? 'เบิกพัสดุเรียบร้อย' : 'ยืมพัสดุเรียบร้อย'}</h2>
-      <p class="doc-no">เลขที่ <b>${esc(r.request_no)}</b> · ${r.items.length} รายการ${w ? '' : ` · คืนภายใน ${fmtDate(r.due_date)}`}</p>
+      <p class="doc-no"><span class="doc-label">เลขที่เอกสาร</span><b class="doc-id">${esc(r.request_no)}</b><span>${r.items.length} รายการ${w ? '' : ` · คืนภายใน ${fmtDate(r.due_date)}`}</span></p>
       <div class="permission">
         <span class="file-icon">PDF</span>
         <div>
@@ -632,6 +848,9 @@ function showSuccess(id) {
       ? 'แตะ "บันทึก PDF" แล้วเลือก "บันทึกไปยังไฟล์" หรือ "พิมพ์" · ควรเก็บไฟล์ไว้ (เจ้าหน้าที่ออกให้ใหม่ได้)'
       : 'ใช้พิมพ์และลงลายมือชื่อ' + (w ? 'ผู้เบิก' : 'ผู้ยืม') + 'และเจ้าหน้าที่พัสดุ · ควรเก็บไฟล์ไว้ (เจ้าหน้าที่ออกให้ใหม่ได้)';
     $('#pdf-save', body).disabled = false;
+    $('.permission', body).classList.add('ready');
+    $('#pdf-save', body).classList.add('ready');
+    if (motionOK()) navigator.vibrate?.(12);
   }).catch((e) => {
     $('#pdf-q', body).textContent = 'สร้างไฟล์ PDF ไม่สำเร็จ';
     $('#pdf-sub', body).textContent = e.message + ' — แจ้งเจ้าหน้าที่พัสดุให้ออกเอกสารจากหน้าประวัติ';
@@ -708,16 +927,17 @@ function renderItems(page) {
   const draw = () => {
     $$('#f-kind button').forEach((b) => b.classList.toggle('active', b.dataset.kind === kind));
     $('#items-grid').innerHTML = filtered().map((i) => `
-      <div class="item-card" data-item="${i.id}">
+      <div class="item-card${i.available_qty === 0 ? ' out' : ''}" data-item="${i.id}">
         <div class="top">
           <span class="pick-icon ${i.kind === 'borrow' ? 'borrow' : ''}">${i.kind === 'borrow' ? ICON.borrow : ICON.box}</span>
           <div style="flex:1;min-width:0"><div class="name">${esc(i.name)}</div><div class="code">${esc(i.code)} · ${esc(i.category || 'ไม่ระบุหมวด')}</div></div>
         </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          ${i.available_qty === 0 ? '<span class="pill out">หมด</span>' : isLow(i) ? '<span class="pill low">ใกล้หมด</span>' : ''}
-          ${i.active ? '' : '<span class="pill">ปิดใช้งาน</span>'}
-          ${i.borrowed_qty ? `<span class="pill borrow">ถูกยืม ${fmtNum(i.borrowed_qty)}</span>` : ''}
-        </div>
+        ${(() => {
+          const p = (i.available_qty === 0 ? '<span class="pill out">หมด</span>' : isLow(i) ? '<span class="pill low">ใกล้หมด</span>' : '') +
+            (i.active ? '' : '<span class="pill">ปิดใช้งาน</span>') +
+            (i.borrowed_qty ? `<span class="pill borrow">ถูกยืม ${fmtNum(i.borrowed_qty)}</span>` : '');
+          return p ? `<div class="item-pills">${p}</div>` : '';
+        })()}
         <div class="qty"><b>${fmtNum(i.available_qty)}</b><span>${esc(i.unit)} คงเหลือ</span><span class="spacer"></span>
           <span class="actions">${actionBtns(i)}</span></div>
         ${stockBar(i)}
@@ -1143,7 +1363,7 @@ function renderSettings(page) {
 // ===================== Boot =====================
 (async () => {
   renderMode();
-  $('#page').innerHTML = '<div class="empty"><span class="spinner"></span> กำลังโหลดข้อมูล...</div>';
+  $('#page').innerHTML = '<div class="skel" role="status"><span class="vh">กำลังโหลดข้อมูล...</span><i class="sk sk-h1"></i><i class="sk sk-lead"></i><div class="sk-grid"><i class="sk sk-card"></i><i class="sk sk-card"></i></div></div>';
   try {
     if (state.pin) {
       try { await store.act('checkPin'); } catch { state.pin = ''; sessionStorage.removeItem('pin'); renderMode(); }
@@ -1151,7 +1371,7 @@ function renderSettings(page) {
     if (!state.pin) await store.load();
     lastSnapshot = JSON.stringify(state.db);
     lastRoute = currentRoute();
-    render();
+    render(true);
   } catch (e) {
     $('#page').innerHTML = `<div class="card card-pad error">โหลดข้อมูลไม่สำเร็จ: ${esc(e.message)}<br>
       ตรวจสอบ API_URL ใน config.js และการ Deploy ของ Google Apps Script</div>`;
