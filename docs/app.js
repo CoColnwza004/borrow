@@ -121,8 +121,8 @@ const store = {
       if (!state.pin) lsSet(CACHE_KEY, JSON.stringify(state.db));
     }
   },
-  async act(action, payload) {
-    $('#loading').hidden = false;
+  async act(action, payload, { quiet = false } = {}) {
+    if (!quiet) $('#loading').hidden = false;
     try {
       if (DEMO) {
         const db = structuredClone(demoDb); // ถ้า error กลางทาง ข้อมูลเดิมไม่เสีย
@@ -296,48 +296,60 @@ $('#btn-admin').addEventListener('click', safe(async () => {
     toast('ออกจากโหมดเจ้าหน้าที่แล้ว');
     return;
   }
+  pinForm();
+}));
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ใส่ PIN → หน้าต่างใส่รหัสหายไป → ป๊อปอัป "กำลังเข้าสู่ระบบ" → "เข้าสู่ระบบสำเร็จ" (ผิด: แจ้งแล้วเปิดช่องใส่รหัสให้ใหม่)
+function pinForm(error = '') {
   const body = openModal('โหมดเจ้าหน้าที่พัสดุ', `
     <p class="muted">ใช้สำหรับรับคืนพัสดุ รับเข้าสต็อก ตรวจนับ และจัดการรายชื่อพัสดุ/แผนก</p>
     <form id="pin-form" class="fields">
       <label class="field full">รหัส PIN${DEMO ? ' <span class="hint">(โหมดทดลองใช้ 1234)</span>' : ''}
         <input type="password" name="pin" inputmode="numeric" autocomplete="off" required autofocus></label>
+      ${error ? `<p class="error full" role="alert">${esc(error)}</p>` : ''}
       <div class="actions full"><button class="btn primary lg block">เข้าสู่ระบบ</button></div>
     </form>`);
-  $('#pin-form', body).addEventListener('submit', safe(async (e) => {
+  if (error) flag($('[name=pin]', body));
+  $('#pin-form', body).addEventListener('submit', async (e) => {
     e.preventDefault();
-    state.pin = e.target.pin.value;
+    const pin = e.target.pin.value;
+    if (!pin) { flag(e.target.pin); return; }
+    closeModal();
+    await sleep(motionOK() ? 220 : 0); // รอหน้าต่างใส่รหัสปิดก่อน
+    const hud = loginHud();
+    state.pin = pin;
     try {
-      await store.act('checkPin');
+      // แสดง "กำลังเข้าสู่ระบบ" อย่างน้อยครู่หนึ่ง ไม่ให้กะพริบหายเร็วเกินไป
+      await Promise.all([store.act('checkPin', undefined, { quiet: true }), sleep(700)]);
     } catch (err) {
       state.pin = '';
-      flag(e.target.pin);
-      e.target.pin.select();
-      throw err;
+      await hud.fail(err.message);
+      pinForm(err.message);
+      return;
     }
     sessionStorage.setItem('pin', state.pin);
-    closeModal();
     renderMode();
     route();
-    loginHud();
-  }));
-}));
+    hud.success();
+  });
+}
 
-// ป๊อปอัปกลางจอเมื่อเข้าสู่ระบบเจ้าหน้าที่สำเร็จ แสดง 5 วินาที (แตะหรือกด Esc เพื่อปิดก่อนได้)
+// ป๊อปอัปกลางจอ: "กำลังเข้าสู่ระบบ" → "เข้าสู่ระบบสำเร็จ" แสดง 5 วินาที (แตะหรือกด Esc เพื่อปิดก่อนได้)
 function loginHud() {
   $('.hud')?.remove();
   const el = document.createElement('div');
   el.className = 'hud';
   el.setAttribute('role', 'status');
   el.setAttribute('aria-live', 'polite');
-  el.innerHTML = `<div class="hud-card" tabindex="-1">
-      <span class="hud-ic" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="30"/><path d="M20 33.5 28.5 42 45 24"/></svg></span>
-      <h3>เข้าสู่ระบบสำเร็จ</h3>
-      <p>ยินดีต้อนรับ เจ้าหน้าที่พัสดุ</p>
-      <div class="hud-tags"><span>พัสดุคงเหลือ</span><span>ประวัติเบิก-ยืม</span><span>ภาพรวม</span><span>Google Sheet</span><span>ตั้งค่า</span></div>
-      <p class="hud-hint">${$('#nav-bar').classList.contains('compact') ? 'เปิดเมนูเจ้าหน้าที่ได้ที่ปุ่ม ☰ มุมขวาบน' : 'เมนูเจ้าหน้าที่อยู่ที่แถบด้านบน'}</p>
-      <span class="hud-bar" aria-hidden="true"><i></i></span>
+  el.innerHTML = `<div class="hud-card" data-state="loading" tabindex="-1">
+      <span class="hud-spin" aria-hidden="true"></span>
+      <h3>กำลังเข้าสู่ระบบ</h3>
+      <p>กำลังตรวจสอบรหัส PIN…</p>
     </div>`;
   document.body.append(el);
+  const card = $('.hud-card', el);
   let timer;
   const close = () => {
     if (!el.isConnected || el.classList.contains('out')) return;
@@ -346,16 +358,42 @@ function loginHud() {
     el.classList.add('out');
     setTimeout(() => el.remove(), motionOK() ? 260 : 0);
   };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
-  timer = setTimeout(close, 5000);
-  $('.hud-card', el).addEventListener('click', close);
+  const onKey = (e) => { if (e.key === 'Escape' && card.dataset.state === 'ok') close(); };
+  card.addEventListener('click', () => { if (card.dataset.state === 'ok') close(); });
   document.addEventListener('keydown', onKey);
+  const swap = (state, html) => {
+    card.dataset.state = state;
+    card.innerHTML = html;
+    if (motionOK()) card.animate([{ transform: 'scale(.96)' }, { transform: 'scale(1.02)' }, { transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.34,1.56,.64,1)' });
+  };
+  return {
+    success() {
+      swap('ok', `
+        <span class="hud-ic" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="30"/><path d="M20 33.5 28.5 42 45 24"/></svg></span>
+        <h3>เข้าสู่ระบบสำเร็จ</h3>
+        <p>ยินดีต้อนรับ เจ้าหน้าที่พัสดุ</p>
+        <div class="hud-tags"><span>พัสดุคงเหลือ</span><span>ประวัติเบิก-ยืม</span><span>ภาพรวม</span><span>Google Sheet</span><span>ตั้งค่า</span></div>
+        <p class="hud-hint">${$('#nav-bar').classList.contains('compact') ? 'เปิดเมนูเจ้าหน้าที่ได้ที่ปุ่ม ☰ มุมขวาบน' : 'เมนูเจ้าหน้าที่อยู่ที่แถบด้านบน'}</p>
+        <span class="hud-bar" aria-hidden="true"><i></i></span>`);
+      timer = setTimeout(close, 5000);
+    },
+    async fail(msg) {
+      swap('error', `
+        <span class="hud-ic" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="30"/><path d="M23 23 41 41M41 23 23 41"/></svg></span>
+        <h3>เข้าสู่ระบบไม่สำเร็จ</h3>
+        <p>${esc(msg)}</p>`);
+      await sleep(1500);
+      close();
+      await sleep(motionOK() ? 260 : 0);
+    },
+  };
 }
 
 // ===================== Routing =====================
-// ผู้ใช้ทั่วไปเห็นเฉพาะหน้าเบิกพัสดุ หน้าอื่นเปิดได้หลังเข้าสู่ระบบเจ้าหน้าที่
+// ผู้ใช้ทั่วไปเห็นหน้าแรก + หน้าเบิกพัสดุ หน้าอื่นเปิดได้หลังเข้าสู่ระบบเจ้าหน้าที่
 const ROUTES = {
-  home: { title: 'เบิกพัสดุ', render: renderRequestForm },
+  home: { title: 'หน้าแรก', render: renderHome },
+  request: { title: 'เบิกพัสดุ', render: renderRequestForm },
   items: { title: 'พัสดุคงเหลือ', render: renderItems, admin: true },
   requests: { title: 'ประวัติเบิก-ยืม', render: renderRequests, admin: true },
   dashboard: { title: 'ภาพรวม', render: renderDashboard, admin: true },
@@ -365,8 +403,7 @@ const ROUTES = {
 };
 
 function currentRoute() {
-  let key = location.hash.replace(/^#\/?/, '').split('?')[0] || 'home';
-  if (key === 'request') key = 'home'; // ลิงก์เดิม #/request?type=...
+  const key = location.hash.replace(/^#\/?/, '').split('?')[0] || 'home';
   return ROUTES[key] && (!ROUTES[key].admin || isAdmin()) ? key : 'home';
 }
 const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
@@ -374,12 +411,10 @@ const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
 function renderNav() {
   const reqs = requestsView();
   const overdue = reqs.filter((r) => r.is_overdue).length;
-  const links = [['home', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['requests', 'ประวัติเบิก-ยืม', overdue], ['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['sheet', 'Google Sheet'], ['settings', 'ตั้งค่า']];
+  const links = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['requests', 'ประวัติเบิก-ยืม', overdue], ['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['sheet', 'Google Sheet'], ['settings', 'ตั้งค่า']];
   const cur = currentRoute();
   const a = ([k, label, n]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur ? 'active' : ''}">${label}${n ? `<span class="badge">${n}</span>` : ''}</a>`;
-  // ผู้ใช้ทั่วไปมีหน้าเดียว ไม่ต้องมีเมนู
-  $('#nav-links').innerHTML = isAdmin() ? links.map(a).join('') : '';
-  $('#nav-bar').classList.toggle('solo', !isAdmin());
+  $('#nav-links').innerHTML = (isAdmin() ? links : links.slice(0, 2)).map(a).join('');
   fitNav();
 }
 
@@ -431,7 +466,7 @@ $('#nav-links').addEventListener('click', (e) => { if (e.target.closest('a')) se
 document.addEventListener('click', (e) => { if (e.target.closest('[data-monthly]') && isAdmin()) showMonthlyReport(); });
 
 // องค์ประกอบที่ค่อย ๆ ลอยขึ้นตามลำดับการอ่าน เมื่อเปลี่ยนหน้า (ไม่เล่นซ้ำตอนซิงก์ข้อมูล/พิมพ์ค้นหา)
-const ENTER = '.page > .banner, .page > .page-head, .page > .page-head-row, .page > .toolbar, #rf > .group, .item-card, .rows > li, .stats > .stat, .grid-2 > .card, .page > section.card';
+const ENTER = '.page > .banner, .hero > *, .choice, .stat-strip, .page > .page-head, .page > .page-head-row, .page > .toolbar, #rf > .group, .item-card, .rows > li, .stats > .stat, .grid-2 > .card, .page > section.card';
 let enterTimer;
 function choreograph(page) {
   if (!motionOK()) return;
@@ -441,6 +476,25 @@ function choreograph(page) {
   clearTimeout(enterTimer);
   enterTimer = setTimeout(() => page.classList.remove('enter'), 1400);
 }
+// ตัวเลขบนหน้าแรกนับขึ้นสั้น ๆ (ค่าจริงอยู่ใน HTML เสมอ)
+function countUp(root) {
+  if (!motionOK() || navigator.webdriver || document.hidden) return;
+  const strip = $('.stat-strip', root);
+  if (!strip) return;
+  const delay = (Number(strip.style.getPropertyValue('--i')) || 0) * 40 + 120;
+  const els = $$('.v', strip).map((el) => ({ el, txt: el.textContent, n: Number(el.textContent.replace(/\D/g, '')) })).filter((x) => x.n > 1);
+  if (!els.length) return;
+  let t0;
+  const tick = (t) => {
+    t0 ??= t + delay;
+    const p = Math.min(1, Math.max(0, (t - t0) / 700));
+    const e = 1 - (1 - p) ** 3;
+    for (const x of els) if (x.el.isConnected) x.el.textContent = p < 1 ? fmtNum(Math.round(x.n * e)) : x.txt;
+    if (p < 1 && els[0].el.isConnected) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 function render(enter = false) {
   const key = currentRoute();
   document.title = `${ROUTES[key].title} · ระบบเบิกพัสดุ`;
@@ -452,28 +506,41 @@ function render(enter = false) {
     page.insertAdjacentHTML('beforeend', '<div class="banner">โหมดทดลอง — ข้อมูลเก็บเฉพาะในเบราว์เซอร์เครื่องนี้ เชื่อม Google Sheets ตามคู่มือใน README เพื่อใช้ร่วมกันทุกเครื่อง</div>');
   }
   ROUTES[key].render(page);
-  if (enter) choreograph(page);
+  if (enter) { choreograph(page); if (key === 'home') countUp(page); }
 }
 
 let lastSnapshot = '';
 let lastRoute = '';
-// View Transitions (Chrome/Edge 111+, Safari 18+): หน้าเฟดสลับ, แถบนำทางนิ่ง
+// View Transitions (Chrome/Edge 111+, Safari 18+): หน้าเฟดสลับ, แถบนำทางนิ่ง, หัวการ์ดลอยไปเป็นหัวเรื่องฟอร์ม
 // เบราว์เซอร์ที่ไม่รองรับ / ลดการเคลื่อนไหว / มีหน้าต่างเปิดอยู่ → วาดหน้าตามปกติ
 async function route() {
   setMenu(false);
   const key = currentRoute(), from = lastRoute, changed = key !== from;
   lastRoute = key;
   const useVT = changed && !!document.startViewTransition && motionOK() && !modalOpen();
+  // หัวการ์ด "เบิกพัสดุ" ในหน้าแรกลอยไปเป็นหัวเรื่องของฟอร์ม (และลอยกลับ)
+  let morph = null;
+  const mark = (el) => { if (el) { el.style.viewTransitionName = 'page-title'; morph = el; } };
   const update = () => {
     if (changed) window.scrollTo(0, 0);
     render(changed);
+    if (useVT && from === 'request' && key === 'home') {
+      const h = $('.choice.withdraw h2');
+      mark(h);
+      h?.closest('.choice')?.classList.remove('in');
+    }
+    if (morph && key === 'request') $('#rf-title')?.closest('.page-head')?.classList.remove('in');
   };
   if (useVT) {
+    if (from === 'home' && key === 'request') mark($('.choice.withdraw h2'));
     document.documentElement.classList.add('vt');
     let vt;
     try { vt = document.startViewTransition(update); } catch { document.documentElement.classList.remove('vt'); update(); }
     if (vt) {
-      vt.finished.finally(() => document.documentElement.classList.remove('vt'));
+      vt.finished.finally(() => {
+        document.documentElement.classList.remove('vt');
+        if (morph?.isConnected) morph.style.viewTransitionName = '';
+      });
       await vt.updateCallbackDone.catch(() => {});
     }
   } else update();
@@ -491,7 +558,7 @@ async function syncFromSheet() {
     if (snap === lastSnapshot) return;
     lastSnapshot = snap;
     if (modalOpen() || currentRoute() !== key) return;
-    if (key === 'home') redrawPickList?.(); else render();
+    if (key === 'request') redrawPickList?.(); else render();
   } catch (e) { toast(e.message, true); }
 }
 // กลับมาที่แท็บ / แอปบนมือถือ → ดึงยอดล่าสุด
@@ -502,6 +569,37 @@ window.addEventListener('hashchange', route);
 function refresh() {
   lastSnapshot = JSON.stringify(state.db);
   render();
+}
+
+// ===================== Home =====================
+function renderHome(page) {
+  const items = state.db.items.filter((i) => i.active && BorrowCore.allows(i, 'withdraw'));
+  const ready = items.filter((i) => i.available_qty > 0);
+  const low = items.filter(isLow);
+  const todayTh = new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long' });
+  // ตัวเลขกดดูรายละเอียดได้เฉพาะเจ้าหน้าที่ (หน้าพัสดุคงเหลือ)
+  const stat = (v, l, q = '', warn = false) => isAdmin()
+    ? `<a href="#/items${q}" class="${warn ? 'warn' : ''}"><span class="v">${v}</span><span class="l">${l}</span></a>`
+    : `<div class="${warn ? 'warn' : ''}"><span class="v">${v}</span><span class="l">${l}</span></div>`;
+  page.insertAdjacentHTML('beforeend', `
+    <section class="hero">
+      <p class="eyebrow">${esc(CONFIG.HOSPITAL_NAME || 'ระบบพัสดุ')} <span class="eyebrow-date">· ${esc(todayTh)}</span></p>
+      <h1>เบิกพัสดุ<br><span class="gradient-text">ง่าย ๆ ด้วยคลิกเดียว</span></h1>
+      <p class="lead">เลือกพัสดุ กรอกชื่อและแผนก แล้วรับใบเบิกเป็นไฟล์ PDF ได้ทันที</p>
+    </section>
+    <div class="choice-grid single">
+      <a class="choice withdraw" href="#/request">
+        <span class="choice-icon">${ICON.withdraw}</span>
+        <h2>เบิกพัสดุ</h2>
+        <p>เวชภัณฑ์และวัสดุสิ้นเปลือง เบิกไปใช้ในหน่วยงานได้ทันที</p>
+        <span class="cta">เริ่มเบิกพัสดุ</span>
+      </a>
+    </div>
+    <div class="stat-strip">
+      ${stat(fmtNum(items.length), 'รายการพัสดุ')}
+      ${stat(fmtNum(ready.length), 'มีของพร้อมเบิก')}
+      ${stat(fmtNum(low.length), 'หมด / ใกล้หมด', '?low=1', low.length > 0)}
+    </div>`);
 }
 
 // ===================== Request form (เบิก / ยืม) =====================
@@ -516,7 +614,7 @@ function renderRequestForm(page) {
   // มาจากปุ่ม "เบิก" ในหน้าพัสดุคงเหลือ: เลือกรายการนั้นไว้ให้
   const pre = itemById(params.get('item'));
   if (pre && BorrowCore.allows(pre, type) && pre.available_qty > 0 && !state.picks[pre.id]) state.picks[pre.id] = 1;
-  if (params.toString()) history.replaceState(null, '', '#/');
+  if (params.toString()) history.replaceState(null, '', '#/request');
   const todayTh = new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   page.insertAdjacentHTML('beforeend', `
@@ -949,7 +1047,7 @@ function renderItems(page) {
   };
 
   const actionBtns = (i) => BorrowCore.allows(i, 'withdraw')
-    ? `<a class="btn sm primary" href="#/?item=${i.id}" ${i.available_qty > 0 && i.active ? '' : 'hidden'}>เบิก</a>` : '';
+    ? `<a class="btn sm primary" href="#/request?item=${i.id}" ${i.available_qty > 0 && i.active ? '' : 'hidden'}>เบิก</a>` : '';
 
   const draw = () => {
     $$('#f-kind button').forEach((b) => b.classList.toggle('active', b.dataset.kind === kind));
@@ -1002,7 +1100,7 @@ function showItem(id) {
       <dt>สถานที่เก็บ</dt><dd>${esc(i.location || '-')}</dd>
     </dl>
     <div class="toolbar">
-      ${BorrowCore.allows(i, 'withdraw') && i.available_qty > 0 && i.active ? `<a class="btn primary" href="#/?item=${i.id}" data-close>เบิกรายการนี้</a>` : ''}
+      ${BorrowCore.allows(i, 'withdraw') && i.available_qty > 0 && i.active ? `<a class="btn primary" href="#/request?item=${i.id}" data-close>เบิกรายการนี้</a>` : ''}
       ${isAdmin() ? `<span class="spacer"></span><button class="btn ok" data-stock="receive">รับเข้า</button>
         <button class="btn" data-stock="adjust">ตรวจนับ</button>
         <button class="btn" data-stock="lost">ตัดชำรุด</button>
