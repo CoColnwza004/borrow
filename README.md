@@ -44,6 +44,18 @@ repo มีไฟล์ [`netlify.toml`](netlify.toml) อยู่แล้ว 
   และคัดลอก `AllInOne.gs` จากหน้าไฟล์บน GitHub (กด Raw ขณะล็อกอิน) แทนลิงก์ raw สาธารณะ
 - ใช้ Netlify แล้วไม่ต้องใช้ GitHub Pages (ปิดได้ที่ Settings → Pages) จะได้มีเว็บเดียว
 
+### ทางเลือก: เผยแพร่ด้วย Vercel (ฟรี)
+repo มีไฟล์ [`vercel.json`](vercel.json) อยู่แล้ว (เผยแพร่โฟลเดอร์ `docs/` ไม่ต้อง build และใส่ส่วนหัวความปลอดภัยชุดเดียวกับ Netlify)
+1. เข้า https://vercel.com → **Sign Up / Continue with GitHub** (เลือกแผน **Hobby** ฟรี)
+2. **Add New… → Project** → อนุญาต Vercel เข้าถึง GitHub (เลือก *Only select repositories* → `borrow` ได้) → กด **Import** ที่ repo `borrow`
+3. หน้า Configure: Framework Preset = **Other**, Root Directory เว้นไว้ที่ `./` ไม่ต้องแก้อย่างอื่น (อ่านจาก vercel.json ให้อัตโนมัติ) → **Deploy**
+4. เว็บจะอยู่ที่ `https://<ชื่อโปรเจกต์>.vercel.app` เปลี่ยนชื่อได้ที่ **Settings → General → Project Name** หรือ **Settings → Domains**
+5. Vercel อัปเดตเว็บจริงเมื่อ push เข้า **branch หลักของ repo** (Production Branch) ส่วน branch อื่นจะได้ลิงก์ Preview แยก
+   เปลี่ยน branch เว็บจริงได้ที่ **Settings → Environments → Production → Branch Tracking** (หน้าตาแบบเก่าอยู่ที่ Settings → Git)
+
+- `API_URL` ใน `docs/config.js` ใช้ได้เลย ไม่ต้องแก้ Apps Script หรือ Deploy ใหม่เพราะย้าย host
+- ย้ายมา Vercel แล้ว ลบเว็บเดิมบน Netlify ได้ที่ **Site configuration → Delete this site** จะได้มีเว็บเดียว
+
 ### ขั้นที่ 2: เชื่อม Google Sheets เพื่อให้ทุกเครื่องใช้ข้อมูลพัสดุ/สต็อกชุดเดียวกัน (ประมาณ 10 นาที)
 
 **Google Sheet มาจากไหน?** สร้างใหม่เองด้วยบัญชี Google (Gmail หรือบัญชี Google Workspace ของโรงพยาบาล) ไม่ต้องมีชีตเดิม
