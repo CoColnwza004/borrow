@@ -1,0 +1,10 @@
+// Cloudflare Workers (Static Assets): เผยแพร่โฟลเดอร์ docs/ ตรง ๆ ไม่มีโค้ดฝั่งเซิร์ฟเวอร์
+// ตั้ง Build command = node scripts/cf-headers.js (สร้าง docs/_headers ส่วนหัวความปลอดภัย) และ Deploy command = npx wrangler deploy
+{
+  "name": "borrow",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./docs",
+    "not_found_handling": "none"
+  }
+}

@@ -446,3 +446,14 @@ test('core: sheet tables add readable Thai columns and an on-loan tab', () => {
   assert.equal(loaded.items.find((i) => i.code === 'EQ-005').available_qty, nb.available_qty);
   assert.equal(Object.keys(loaded.requests[0]).includes('ประเภท'), false);
 });
+
+test('Cloudflare _headers is generated from netlify.toml (same CSP and cache rules)', () => {
+  const { build } = require('../scripts/cf-headers.js');
+  const toml = fs.readFileSync(path.join(__dirname, '../netlify.toml'), 'utf8');
+  const out = build(toml);
+  const csp = toml.match(/Content-Security-Policy = "(.*)"/)[1];
+  assert.ok(out.includes('/*\n  Content-Security-Policy: ' + csp + '\n'));
+  assert.match(out, /\n {2}X-Frame-Options: DENY\n/);
+  assert.match(out, /\/fonts\/\*\n {2}Cache-Control: public, max-age=31536000, immutable/);
+  assert.match(out, /\/vendor\/\*\n {2}Cache-Control: public, max-age=31536000, immutable/);
+});

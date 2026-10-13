@@ -44,6 +44,23 @@ repo มีไฟล์ [`netlify.toml`](netlify.toml) อยู่แล้ว 
   และคัดลอก `AllInOne.gs` จากหน้าไฟล์บน GitHub (กด Raw ขณะล็อกอิน) แทนลิงก์ raw สาธารณะ
 - ใช้ Netlify แล้วไม่ต้องใช้ GitHub Pages (ปิดได้ที่ Settings → Pages) จะได้มีเว็บเดียว
 
+### ทางเลือก: เผยแพร่ด้วย Cloudflare (ฟรี)
+repo มี [`wrangler.jsonc`](wrangler.jsonc) (เผยแพร่โฟลเดอร์ `docs/` แบบไฟล์ล้วน) และ [`scripts/cf-headers.js`](scripts/cf-headers.js)
+ซึ่งสร้างส่วนหัวความปลอดภัย/แคช (`docs/_headers`) จาก `netlify.toml` ตอน deploy จึงตรงกับ Netlify เสมอ และไม่ชนกันถ้ายังเปิด Netlify ไว้
+1. เข้า https://dash.cloudflare.com → สมัคร/ล็อกอิน (แผน **Free**)
+2. **Workers & Pages → Create application → Import a repository** (หรือ Continue with GitHub) → อนุญาตเข้าถึง repo `borrow` → เลือก repo
+3. ตั้งค่า: Project name เช่น `pakkred-supply`
+   - **Build command** = `node scripts/cf-headers.js`
+   - **Deploy command** = `npx wrangler deploy` (ค่าเริ่มต้น)
+   - Production branch = branch หลักของ repo → **Deploy**
+4. เว็บจะอยู่ที่ `https://pakkred-supply.<ชื่อบัญชี>.workers.dev` (ใส่โดเมนเองได้ที่ Settings → Domains & Routes)
+5. ทุกครั้งที่ push เข้า branch หลัก Cloudflare จะอัปเดตเว็บให้เอง
+
+ถ้าหน้าจอเป็นแบบ **Pages** (Create → Pages → Connect to Git): Framework preset = None, **Build command** = `node scripts/cf-headers.js`, **Build output directory** = `docs`
+
+- `API_URL` และ Apps Script ใช้ตัวเดิมได้เลย ไม่ต้องแก้หรือ Deploy ใหม่
+- ย้ายเสร็จแล้วลบเว็บบน Netlify ได้ (Site configuration → Delete this site) แจ้งลิงก์ใหม่ให้ทุกแผนก และคนที่เพิ่มเว็บไว้หน้าจอโฮมให้เพิ่มใหม่
+
 ### ขั้นที่ 2: เชื่อม Google Sheets เพื่อให้ทุกเครื่องใช้ข้อมูลพัสดุ/สต็อกชุดเดียวกัน (ประมาณ 10 นาที)
 
 **Google Sheet มาจากไหน?** สร้างใหม่เองด้วยบัญชี Google (Gmail หรือบัญชี Google Workspace ของโรงพยาบาล) ไม่ต้องมีชีตเดิม
