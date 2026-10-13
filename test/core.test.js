@@ -87,14 +87,23 @@ function mockAppsScript() {
   const mkSheet = (name) => {
     const sh = {
       data: [],
+      writes: 0,
       getLastRow: () => sh.data.length,
-      getDataRange: () => ({ getValues: () => sh.data.map((r) => r.slice()) }),
+      // เหมือน Sheets จริง: ได้ตารางสี่เหลี่ยม ช่องว่าง = ''
+      getDataRange: () => {
+        const w = Math.max(0, ...sh.data.map((r) => r.length));
+        return { getValues: () => (sh.data.length ? sh.data : [[]]).map((r) => Array.from({ length: Math.max(w, 1) }, (_, j) => r[j] ?? '')) };
+      },
       clearContents: () => { sh.data = []; },
       getRange: (r, c, nr) => ({
         setNumberFormat() { return this; },
         setFontWeight() { return this; },
         setBackground() { return this; },
-        setValues: (rows) => { sh.data = rows.map((x) => x.slice()); },
+        // เขียนทับเฉพาะช่วงที่กำหนด แถว/คอลัมน์นอกช่วงยังอยู่ (เหมือน Sheets จริง)
+        setValues: (rows) => {
+          sh.writes++;
+          rows.forEach((row, i) => { const t = sh.data[r - 1 + i] || []; row.forEach((v, j) => { t[c - 1 + j] = v; }); sh.data[r - 1 + i] = t; });
+        },
       }),
       setFrozenRows() {},
     };
@@ -115,7 +124,8 @@ function mockAppsScript() {
   const ss = {
     setActiveSheet: (sh) => { ss.active = sh; },
     moveActiveSheet: (pos) => { const name = Object.keys(sheets).find((k) => sheets[k] === ss.active); order.splice(pos - 1, 0, name); },
-    getSheetByName: (n) => sheets[n] || null, insertSheet: mkSheet, getSpreadsheetTimeZone: () => 'Asia/Bangkok' };
+    getSheetByName: (n) => sheets[n] || null, insertSheet: mkSheet, getSpreadsheetTimeZone: () => 'Asia/Bangkok',
+    getUrl: () => 'https://docs.google.com/spreadsheets/d/TEST/edit', getName: () => 'พัสดุ รพ.' };
   const ctx = vm.createContext({
     SpreadsheetApp: { getActiveSpreadsheet: () => ss },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
@@ -125,6 +135,29 @@ function mockAppsScript() {
   });
   return { sheets, ctx, triggers, order };
 }
+
+test('Apps Script: only changed tabs are rewritten, shrinking tabs leave no stale rows', () => {
+  const { sheets, ctx } = mockAppsScript();
+  for (const f of ['core.js', 'apps-script/Code.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
+  ctx.setup();
+  const writes = () => Object.fromEntries(Object.entries(sheets).map(([k, v]) => [k, v.writes]));
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  let before = writes();
+  assert.equal(post({ action: 'load' }).ok, true);
+  assert.deepEqual(writes(), before, 'load ไม่เขียนชีต');
+  before = writes();
+  assert.equal(post({ action: 'createRequest', payload: { borrower_name: 'ก ข', department: 'ICU', type: 'withdraw', items: [{ item_id: 2, qty: 1 }] } }).ok, true);
+  const after = writes();
+  for (const t of ['อุปกรณ์', 'คำขอยืม', 'รายการในคำขอ', 'ประวัติสต็อก', 'รายการเบิก-ยืม']) assert.equal(after[t], before[t] + 1, t);
+  for (const t of ['หน่วยงาน', 'หมวดหมู่', 'พัสดุที่ถูกยืมอยู่']) assert.equal(after[t], before[t], t + ' ไม่ต้องเขียนใหม่');
+  // ลบแผนก: แท็บสั้นลง ต้องไม่มีแถวเก่าค้าง
+  assert.equal(post({ action: 'removeMaster', payload: { table: 'departments', name: 'ICU' }, pin: '1234' }).ok, true);
+  assert.equal(sheets['หน่วยงาน'].data.length, 22);
+  assert.ok(!sheets['หน่วยงาน'].data.some((r) => r[0] === 'ICU'));
+  const reloaded = post({ action: 'load', pin: '1234' }).state;
+  assert.equal(reloaded.departments.length, 21);
+  assert.equal(reloaded.items.find((i) => i.id === 2).available_qty, 724);
+});
 
 test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () => {
   const { sheets, ctx } = mockAppsScript();
@@ -158,6 +191,9 @@ test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () =
   assert.equal(pub.items.length, 286);
   assert.equal(pub.departments.length, 22);
   assert.equal(post({ action: 'load', pin: 'wrong' }).state.requests.length, 0);
+  // ลิงก์ Google Sheet ส่งให้เฉพาะเจ้าหน้าที่
+  assert.equal(post({ action: 'load', pin: 'wrong' }).sheet, undefined);
+  assert.equal(post({ action: 'load', pin: '1234' }).sheet.url, 'https://docs.google.com/spreadsheets/d/TEST/edit');
   // reload from "sheet" text values (เจ้าหน้าที่เห็นครบ)
   const loaded = post({ action: 'load', pin: '1234' }).state;
   assert.equal(loaded.items.find((i) => i.id === 2).available_qty, 723);

@@ -101,7 +101,13 @@ function handle_(body) {
     if (body.action !== 'load' || autoReturned) saveDb_(db);
     // ประวัติการเบิก-ยืมส่งให้เฉพาะเจ้าหน้าที่ (มี PIN) ผู้ใช้ทั่วไปได้เฉพาะสต็อกและใบที่เพิ่งส่ง
     var state = isAdmin ? db : BorrowCore.publicView(db, body.action === 'createRequest' ? result : 0);
-    return json_({ ok: true, result: result, state: state });
+    var out = { ok: true, result: result, state: state };
+    // ลิงก์ชีตให้เจ้าหน้าที่เท่านั้น (หน้า Google Sheet บนเว็บ)
+    if (isAdmin) {
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      out.sheet = { url: ss.getUrl(), name: ss.getName() };
+    }
+    return json_(out);
   } catch (err) {
     return json_({ ok: false, error: err.message });
   } finally {
@@ -113,14 +119,19 @@ function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
+// ค่าในชีตตอนอ่าน (เป็นข้อความ) ใช้เทียบตอนบันทึก แท็บที่ไม่เปลี่ยนจะไม่ถูกเขียนใหม่ บันทึกเร็วขึ้นมาก
+var RAW_ = {};
+
 function loadDb_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var tz = ss.getSpreadsheetTimeZone();
   var db = BorrowCore.emptyDb();
+  RAW_ = {};
   Object.keys(BorrowCore.TABLES).forEach(function (t) {
     var sh = ss.getSheetByName(SHEET_NAMES[t]);
     if (!sh || sh.getLastRow() < 2) return;
     var values = sh.getDataRange().getValues();
+    RAW_[t] = values.map(function (r) { return r.map(String); });
     var header = values.shift();
     db[t] = values.map(function (row) {
       var o = {};
@@ -141,22 +152,30 @@ function saveDb_(db) {
   var data = BorrowCore.sheetData(db);
   Object.keys(data).forEach(function (t) {
     var d = data[t];
+    var n = d.header.length;
+    var rows = [d.header].concat(d.rows).map(function (r) { return r.map(String); });
     var sh = ss.getSheetByName(SHEET_NAMES[t]);
+    var cur = null;
     if (!sh) {
       sh = ss.insertSheet(SHEET_NAMES[t]);
       var front = { log: 1, on_loan: 2 };
       if (front[t]) { ss.setActiveSheet(sh); ss.moveActiveSheet(front[t]); }
+    } else {
+      cur = RAW_[t] || sh.getDataRange().getValues().map(function (r) { return r.map(String); });
+      if (JSON.stringify(cur) === JSON.stringify(rows)) return; // แท็บนี้ไม่มีอะไรเปลี่ยน
     }
-    var rows = [d.header].concat(d.rows);
-    var n = d.header.length;
-    sh.clearContents();
+    // ล้างเฉพาะเมื่อข้อมูลเดิมยาว/กว้างกว่าของใหม่ (ไม่งั้นเขียนทับได้เลย)
+    if (cur && (cur.length > rows.length || (cur[0] || []).length > n)) sh.clearContents();
     var range = sh.getRange(1, 1, rows.length, n);
     range.setNumberFormat('@'); // เก็บเป็นข้อความ ป้องกัน Sheets แปลงวันที่/รหัสเอง
-    range.setValues(rows.map(function (r) { return r.map(String); }));
-    sh.setFrozenRows(1);
-    sh.getRange(1, 1, 1, n).setFontWeight('bold').setBackground(null);
-    // คอลัมน์ภาษาไทยที่ระบบเขียนให้อัตโนมัติ (แก้ในชีตไม่มีผล) ทำหัวคอลัมน์สีฟ้าอ่อนไว้
-    if (d.extra) sh.getRange(1, n - d.extra + 1, 1, d.extra).setBackground('#e8f0fe');
+    range.setValues(rows);
+    // จัดหัวตารางเฉพาะแท็บใหม่ หรือเมื่อหัวคอลัมน์เปลี่ยน
+    if (!cur || JSON.stringify(cur[0]) !== JSON.stringify(rows[0])) {
+      sh.setFrozenRows(1);
+      sh.getRange(1, 1, 1, n).setFontWeight('bold').setBackground(null);
+      // คอลัมน์ภาษาไทยที่ระบบเขียนให้อัตโนมัติ (แก้ในชีตไม่มีผล) ทำหัวคอลัมน์สีฟ้าอ่อนไว้
+      if (d.extra) sh.getRange(1, n - d.extra + 1, 1, d.extra).setBackground('#e8f0fe');
+    }
   });
 }
 
