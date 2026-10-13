@@ -346,8 +346,20 @@ function slidePill() {
   const nl = $('#nav-links');
   const act = $('a.active', nl);
   if ($('#nav-bar').classList.contains('compact') || !act) { nl.classList.remove('has-thumb', 'thumb-live'); return; }
-  nl.style.setProperty('--tx', act.offsetLeft + 'px');
-  nl.style.setProperty('--tw', act.offsetWidth + 'px');
+  const x = act.offsetLeft, w = act.offsetWidth;
+  const px = parseFloat(nl.style.getPropertyValue('--tx')), pw = parseFloat(nl.style.getPropertyValue('--tw'));
+  // FLIP: ความกว้างเปลี่ยนทันที แล้วเลื่อน/ยืดด้วย transform อย่างเดียว (ลื่นเต็มรีเฟรชเรตจอ)
+  if (nl.classList.contains('thumb-live') && pw && (px !== x || pw !== w)) {
+    nl.classList.remove('thumb-live');
+    nl.style.setProperty('--tw', w + 'px');
+    nl.style.setProperty('--tx', px + 'px');
+    nl.style.setProperty('--sx', pw / w);
+    void getComputedStyle(nl, '::before').transform;
+    nl.classList.add('thumb-live');
+  }
+  nl.style.setProperty('--tx', x + 'px');
+  nl.style.setProperty('--tw', w + 'px');
+  nl.style.setProperty('--sx', 1);
   if (!nl.classList.contains('has-thumb')) {
     nl.classList.add('has-thumb');
     requestAnimationFrame(() => requestAnimationFrame(() => nl.classList.add('thumb-live')));

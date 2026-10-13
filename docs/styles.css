@@ -339,10 +339,10 @@ textarea { resize: vertical; min-height: 80px; }
 .btn {
   font: inherit; font-size: 15px; font-weight: 500; letter-spacing: normal; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 9px 18px; border-radius: 980px; border: none; cursor: pointer; white-space: nowrap;
-  background: var(--fill); color: var(--text); transition: background .2s, color .2s, opacity .2s, box-shadow .3s var(--ease-out), transform .45s var(--spring);
+  background: var(--fill); color: var(--text); transition: background .2s, color .2s, opacity .2s, transform .45s var(--spring);
 }
 @media (hover: hover) { .btn:hover { background: var(--fill-strong); text-decoration: none; } }
-.btn:active:not(:disabled) { transform: scale(.96); transition-duration: .2s, .2s, .2s, .3s, .08s; }
+.btn:active:not(:disabled) { transform: scale(.96); transition-duration: .2s, .2s, .2s, .08s; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 .btn.primary { background: var(--accent); color: #fff; }
 @media (hover: hover) { .btn.primary:hover { background: var(--accent-hover); } }
@@ -773,11 +773,11 @@ button, .btn, a, input, select, .row, .item-card { -webkit-tap-highlight-color: 
 .nav-links { position: relative; }
 .nav-links a { position: relative; z-index: 1; }
 .nav-links::before {
-  content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: var(--tw, 0); transform: translateX(var(--tx, 0));
+  content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: var(--tw, 0); transform: translateX(var(--tx, 0)) scaleX(var(--sx, 1)); transform-origin: 0 50%; will-change: transform;
   border-radius: 980px; background: var(--fill); opacity: 0; pointer-events: none;
 }
 .nav-links.has-thumb::before { opacity: 1; }
-.nav-links.thumb-live::before { transition: transform .45s var(--spring), width .45s var(--spring); }
+.nav-links.thumb-live::before { transition: transform .45s var(--spring); }
 .nav-links.has-thumb a.active { background: none; }
 .nav.compact .nav-links::before { display: none; }
 
@@ -787,8 +787,6 @@ button, .btn, a, input, select, .row, .item-card { -webkit-tap-highlight-color: 
 .page.enter .item-card.in .bar > span { transform-origin: left; animation: bar-fill .6s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 40ms + 180ms); }
 @keyframes bar-fill { from { transform: scaleX(0); } }
 .page.enter .checkout { animation-delay: .3s; animation-fill-mode: both; }
-.page.enter .gradient-text { animation: grad-sweep 1.1s .25s var(--ease-out) both; }
-@keyframes grad-sweep { from { background-position: 100% 0; } }
 
 /* ============ สีเฉพาะเมื่อมีความหมาย ============ */
 /* มีของ = เขียว (ตัวอักษร + จุด ไม่มีพื้น), หมด = แดงอ่อน (พื้นจาง ๆ) */
@@ -862,11 +860,7 @@ button, .btn, a, input, select, .row, .item-card { -webkit-tap-highlight-color: 
 .stepper input.roll-down { animation: roll-down .22s var(--ease-out); }
 @keyframes roll-up { from { opacity: 0; transform: translateY(60%); } }
 @keyframes roll-down { from { opacity: 0; transform: translateY(-60%); } }
-.pick.just-on { animation: pick-on .45s var(--ease-out); }
-@keyframes pick-on { from { background-color: transparent; box-shadow: none; } }
 .pick.just-on .stepper { transform-origin: 100% 50%; animation: pop-in .4s var(--spring) both; }
-.pick.just-off { animation: pick-off .35s var(--ease-out); }
-@keyframes pick-off { from { background-color: rgba(var(--tint), .1); } }
 .pick.just-off .add-btn { transform-origin: 100% 50%; animation: pop-in .32s var(--spring) both; }
 @keyframes pop-in { from { opacity: 0; transform: scale(.7); } }
 .seg-count { display: inline-block; }
@@ -908,9 +902,34 @@ button, .btn, a, input, select, .row, .item-card { -webkit-tap-highlight-color: 
 html.vt #nav-bar { view-transition-name: nav; }
 html.vt #rf-title { view-transition-name: page-title; }
 ::view-transition-old(nav) { display: none; }
-::view-transition-new(nav) { animation: none; }
+::view-transition-new(nav), ::view-transition-group(nav), ::view-transition-group(root) { animation: none; }
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .2s; animation-timing-function: var(--ease-out); }
 ::view-transition-old(root) { animation-name: vt-out; }
 @keyframes vt-out { to { opacity: 0; transform: scale(.985); } }
 ::view-transition-group(page-title) { animation-duration: .5s; animation-timing-function: var(--ease-sheet); }
 ::view-transition-old(page-title), ::view-transition-new(page-title) { height: 100%; width: auto; object-position: left top; }
+
+/* ============ 120Hz: ทุกอนิเมชันใช้แค่ transform / opacity (GPU ทำเอง ไม่ต้องวาดใหม่ทุกเฟรม) ============ */
+.segmented:not(#tabs)::before { will-change: transform; }
+.bar > span { transition: none; }
+/* เงาตอนชี้: ใช้ชั้นเงาสำเร็จรูปแล้วเฟดความทึบ แทนการเปลี่ยน box-shadow ทีละเฟรม */
+.choice { overflow: visible; isolation: isolate; transition: transform .5s var(--spring); }
+.item-card { position: relative; isolation: isolate; transition: transform .3s var(--ease); }
+.choice::after, .item-card::after {
+  content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  box-shadow: var(--shadow-lg); opacity: 0; transition: opacity .4s var(--ease-out);
+}
+.choice.withdraw::after { box-shadow: var(--shadow-lg), 0 30px 60px -30px rgba(0,113,227,.35); }
+.choice.borrow::after { box-shadow: var(--shadow-lg), 0 30px 60px -30px rgba(191,72,0,.30); }
+@media (hover: hover) {
+  .choice:hover, .choice.withdraw:hover, .choice.borrow:hover, .item-card:hover { box-shadow: var(--shadow); }
+  .choice:hover::after, .item-card:hover::after { opacity: 1; }
+}
+/* แถวที่เพิ่งเลือก / เพิ่งเอาออก: ชั้นสีเฟดความทึบ แทนการเปลี่ยนสีพื้นทีละเฟรม */
+.pick { position: relative; isolation: isolate; }
+.pick.just-on::before, .pick.just-off::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; border-radius: 12px; pointer-events: none;
+  animation: fade-out .4s var(--ease-out) forwards;
+}
+.pick.just-on::before { background: var(--surface); }
+.pick.just-off::before { background: rgba(var(--tint), .1); }
