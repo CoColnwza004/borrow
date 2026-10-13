@@ -209,5 +209,6 @@ const PdfDoc = (() => {
     return true;
   }
 
-  return { build, buildReport, save, isIOS, monthName, reportFileName, fileName: (r) => `${r.request_no}.pdf` };
+  const preload = () => { loadLib().catch(() => {}); };
+  return { build, buildReport, save, preload, isIOS, monthName, reportFileName, fileName: (r) => `${r.request_no}.pdf` };
 })();

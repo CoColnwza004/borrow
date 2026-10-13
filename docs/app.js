@@ -6,6 +6,8 @@ const API_URL = (CONFIG.API_URL || '').trim();
 const DEMO = !API_URL;
 const DEMO_KEY = 'supply-demo-db-v3';
 const DEMO_PIN = '1234';
+// สต็อก/แผนกล่าสุด (ข้อมูลสาธารณะเท่านั้น) เก็บไว้ในเครื่อง เพื่อเปิดหน้าได้ทันทีโดยไม่ต้องรอ Google Sheets
+const CACHE_KEY = 'supply-public-cache-v1';
 const { STATUS, MOVE, TYPES, KINDS } = BorrowCore;
 
 const state = {
@@ -60,6 +62,8 @@ const ICON = {
   search: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 14 15.5l.3.3v.8l5 5 1.5-1.5-5-5Zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9Z"/></svg>',
   chev: '<svg viewBox="0 0 24 24"><path d="M9.3 6.7 10.7 5.3 17.4 12l-6.7 6.7-1.4-1.4 5.3-5.3-5.3-5.3Z"/></svg>',
   doc: '<svg viewBox="0 0 24 24"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm7 1.5V9h5.5L13 3.5ZM8 13v2h8v-2H8Zm0 4v2h5v-2H8Z"/></svg>',
+  sheet: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Zm-1 1.8L18.2 9H13V3.8ZM7 11h10v8H7v-8Zm1.5 1.5v1.5h3v-1.5h-3Zm4.5 0v1.5h2.5v-1.5H13Zm-4.5 3V17h3v-1.5h-3Zm4.5 0V17h2.5v-1.5H13Z"/></svg>',
+  ext: '<svg viewBox="0 0 24 24"><path d="M14 3h7v7h-2V6.4l-9.3 9.3-1.4-1.4L17.6 5H14V3ZM5 5h6v2H5v12h12v-6h2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/></svg>',
 };
 
 // ===================== Data layer =====================
@@ -73,7 +77,19 @@ async function remote(action, payload) {
   if (!res.ok) throw new Error('เชื่อมต่อ Google Sheets ไม่สำเร็จ (' + res.status + ')');
   const data = await res.json();
   if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+  if (data.sheet) state.sheet = data.sheet; // ลิงก์ Google Sheet ส่งมาเฉพาะคำขอที่มี PIN เจ้าหน้าที่
   return data;
+}
+
+// ข้อมูลพัสดุตั้งต้น (52 KB) ใช้เฉพาะโหมดทดลอง จึงโหลดเมื่อจำเป็นเท่านั้น
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('โหลดไฟล์ ' + src + ' ไม่สำเร็จ'));
+    document.head.appendChild(s);
+  });
 }
 
 function demoLoad() {
@@ -96,11 +112,13 @@ const demoView = (keep) => structuredClone(state.pin === DEMO_PIN ? demoDb : Bor
 const store = {
   async load() {
     if (DEMO) {
+      if (typeof SEED_DATA === 'undefined') await loadScript('seed-data.js');
       demoDb = demoLoad();
       if (BorrowCore.autoReturnDue(demoDb, new Date())) demoSave(demoDb);
       state.db = demoView(0);
     } else {
       state.db = BorrowCore.normalize((await remote('load')).state);
+      if (!state.pin) lsSet(CACHE_KEY, JSON.stringify(state.db));
     }
   },
   async act(action, payload) {
@@ -270,6 +288,7 @@ function renderMode() {
 $('#btn-admin').addEventListener('click', safe(async () => {
   if (isAdmin()) {
     state.pin = '';
+    state.sheet = null;
     sessionStorage.removeItem('pin');
     renderMode();
     await store.load();
@@ -299,23 +318,55 @@ $('#btn-admin').addEventListener('click', safe(async () => {
     closeModal();
     renderMode();
     route();
-    toast('เข้าสู่โหมดเจ้าหน้าที่แล้ว');
+    loginHud();
   }));
 }));
 
+// ป๊อปอัปกลางจอเมื่อเข้าสู่ระบบเจ้าหน้าที่สำเร็จ แสดง 5 วินาที (แตะหรือกด Esc เพื่อปิดก่อนได้)
+function loginHud() {
+  $('.hud')?.remove();
+  const el = document.createElement('div');
+  el.className = 'hud';
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-live', 'polite');
+  el.innerHTML = `<div class="hud-card" tabindex="-1">
+      <span class="hud-ic" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="30"/><path d="M20 33.5 28.5 42 45 24"/></svg></span>
+      <h3>เข้าสู่ระบบสำเร็จ</h3>
+      <p>ยินดีต้อนรับ เจ้าหน้าที่พัสดุ</p>
+      <div class="hud-tags"><span>พัสดุคงเหลือ</span><span>ประวัติเบิก-ยืม</span><span>ภาพรวม</span><span>Google Sheet</span><span>ตั้งค่า</span></div>
+      <p class="hud-hint">${$('#nav-bar').classList.contains('compact') ? 'เปิดเมนูเจ้าหน้าที่ได้ที่ปุ่ม ☰ มุมขวาบน' : 'เมนูเจ้าหน้าที่อยู่ที่แถบด้านบน'}</p>
+      <span class="hud-bar" aria-hidden="true"><i></i></span>
+    </div>`;
+  document.body.append(el);
+  let timer;
+  const close = () => {
+    if (!el.isConnected || el.classList.contains('out')) return;
+    clearTimeout(timer);
+    document.removeEventListener('keydown', onKey);
+    el.classList.add('out');
+    setTimeout(() => el.remove(), motionOK() ? 260 : 0);
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  timer = setTimeout(close, 5000);
+  $('.hud-card', el).addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
+}
+
 // ===================== Routing =====================
+// ผู้ใช้ทั่วไปเห็นเฉพาะหน้าเบิกพัสดุ หน้าอื่นเปิดได้หลังเข้าสู่ระบบเจ้าหน้าที่
 const ROUTES = {
-  home: { title: 'หน้าแรก', render: renderHome },
-  request: { title: 'เบิก / ยืม', render: renderRequestForm },
-  items: { title: 'พัสดุคงเหลือ', render: renderItems },
+  home: { title: 'เบิกพัสดุ', render: renderRequestForm },
+  items: { title: 'พัสดุคงเหลือ', render: renderItems, admin: true },
   requests: { title: 'ประวัติเบิก-ยืม', render: renderRequests, admin: true },
   dashboard: { title: 'ภาพรวม', render: renderDashboard, admin: true },
   movements: { title: 'ประวัติสต็อก', render: renderMovements, admin: true },
   settings: { title: 'ตั้งค่า', render: renderSettings, admin: true },
+  sheet: { title: 'Google Sheet', render: renderSheet, admin: true },
 };
 
 function currentRoute() {
-  const key = location.hash.replace(/^#\/?/, '').split('?')[0] || 'home';
+  let key = location.hash.replace(/^#\/?/, '').split('?')[0] || 'home';
+  if (key === 'request') key = 'home'; // ลิงก์เดิม #/request?type=...
   return ROUTES[key] && (!ROUTES[key].admin || isAdmin()) ? key : 'home';
 }
 const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
@@ -323,11 +374,12 @@ const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
 function renderNav() {
   const reqs = requestsView();
   const overdue = reqs.filter((r) => r.is_overdue).length;
-  const links = [['home', 'หน้าแรก'], ['request', 'เบิก / ยืม'], ['items', 'พัสดุคงเหลือ']];
-  const admin = [['requests', 'ประวัติเบิก-ยืม', overdue], ['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['settings', 'ตั้งค่า']];
+  const links = [['home', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['requests', 'ประวัติเบิก-ยืม', overdue], ['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['sheet', 'Google Sheet'], ['settings', 'ตั้งค่า']];
   const cur = currentRoute();
   const a = ([k, label, n]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur ? 'active' : ''}">${label}${n ? `<span class="badge">${n}</span>` : ''}</a>`;
-  $('#nav-links').innerHTML = links.map(a).join('') + (isAdmin() ? '<span class="divider"></span>' + admin.map(a).join('') : '');
+  // ผู้ใช้ทั่วไปมีหน้าเดียว ไม่ต้องมีเมนู
+  $('#nav-links').innerHTML = isAdmin() ? links.map(a).join('') : '';
+  $('#nav-bar').classList.toggle('solo', !isAdmin());
   fitNav();
 }
 
@@ -379,7 +431,7 @@ $('#nav-links').addEventListener('click', (e) => { if (e.target.closest('a')) se
 document.addEventListener('click', (e) => { if (e.target.closest('[data-monthly]') && isAdmin()) showMonthlyReport(); });
 
 // องค์ประกอบที่ค่อย ๆ ลอยขึ้นตามลำดับการอ่าน เมื่อเปลี่ยนหน้า (ไม่เล่นซ้ำตอนซิงก์ข้อมูล/พิมพ์ค้นหา)
-const ENTER = '.page > .banner, .hero > *, .choice, .stat-strip, .page > .page-head, .page > .page-head-row, .page > .toolbar, #rf-type, #rf > .group, .item-card, .rows > li, .stats > .stat, .grid-2 > .card, .page > section.card';
+const ENTER = '.page > .banner, .page > .page-head, .page > .page-head-row, .page > .toolbar, #rf > .group, .item-card, .rows > li, .stats > .stat, .grid-2 > .card, .page > section.card';
 let enterTimer;
 function choreograph(page) {
   if (!motionOK()) return;
@@ -389,28 +441,9 @@ function choreograph(page) {
   clearTimeout(enterTimer);
   enterTimer = setTimeout(() => page.classList.remove('enter'), 1400);
 }
-// ตัวเลขบนหน้าแรกนับขึ้นสั้น ๆ (ค่าจริงอยู่ใน HTML เสมอ)
-function countUp(root) {
-  if (!motionOK() || navigator.webdriver || document.hidden) return;
-  const strip = $('.stat-strip', root);
-  if (!strip) return;
-  const delay = (Number(strip.style.getPropertyValue('--i')) || 0) * 40 + 120;
-  const els = $$('.v', strip).map((el) => ({ el, txt: el.textContent, n: Number(el.textContent.replace(/\D/g, '')) })).filter((x) => x.n > 1);
-  if (!els.length) return;
-  let t0;
-  const tick = (t) => {
-    t0 ??= t + delay;
-    const p = Math.min(1, Math.max(0, (t - t0) / 700));
-    const e = 1 - (1 - p) ** 3;
-    for (const x of els) if (x.el.isConnected) x.el.textContent = p < 1 ? fmtNum(Math.round(x.n * e)) : x.txt;
-    if (p < 1 && els[0].el.isConnected) requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
-}
-
 function render(enter = false) {
   const key = currentRoute();
-  document.title = `${ROUTES[key].title} · ระบบเบิก-ยืมพัสดุ`;
+  document.title = `${ROUTES[key].title} · ระบบเบิกพัสดุ`;
   renderNav();
   const page = $('#page');
   page.classList.remove('enter');
@@ -419,41 +452,28 @@ function render(enter = false) {
     page.insertAdjacentHTML('beforeend', '<div class="banner">โหมดทดลอง — ข้อมูลเก็บเฉพาะในเบราว์เซอร์เครื่องนี้ เชื่อม Google Sheets ตามคู่มือใน README เพื่อใช้ร่วมกันทุกเครื่อง</div>');
   }
   ROUTES[key].render(page);
-  if (enter) { choreograph(page); if (key === 'home') countUp(page); }
+  if (enter) choreograph(page);
 }
 
 let lastSnapshot = '';
 let lastRoute = '';
-// View Transitions (Chrome/Edge 111+, Safari 18+): หน้าเฟดสลับ, แถบนำทางนิ่ง, หัวการ์ดลอยไปเป็นหัวเรื่องฟอร์ม
+// View Transitions (Chrome/Edge 111+, Safari 18+): หน้าเฟดสลับ, แถบนำทางนิ่ง
 // เบราว์เซอร์ที่ไม่รองรับ / ลดการเคลื่อนไหว / มีหน้าต่างเปิดอยู่ → วาดหน้าตามปกติ
 async function route() {
   setMenu(false);
   const key = currentRoute(), from = lastRoute, changed = key !== from;
-  const prevType = $('#rf-type button.active')?.dataset.type;
   lastRoute = key;
   const useVT = changed && !!document.startViewTransition && motionOK() && !modalOpen();
-  let morph = null;
-  const mark = (el) => { if (el) { el.style.viewTransitionName = 'page-title'; morph = el; } };
   const update = () => {
     if (changed) window.scrollTo(0, 0);
     render(changed);
-    if (useVT && from === 'request' && key === 'home' && prevType) {
-      const h = $(`.choice.${prevType} h2`);
-      mark(h);
-      h?.closest('.choice')?.classList.remove('in');
-    }
-    if (morph && key === 'request') $('#rf-title')?.closest('.page-head')?.classList.remove('in');
   };
   if (useVT) {
-    if (from === 'home' && key === 'request') mark($(`.choice.${hashParams().get('type') === 'borrow' ? 'borrow' : 'withdraw'} h2`));
     document.documentElement.classList.add('vt');
     let vt;
     try { vt = document.startViewTransition(update); } catch { document.documentElement.classList.remove('vt'); update(); }
     if (vt) {
-      vt.finished.finally(() => {
-        document.documentElement.classList.remove('vt');
-        if (morph?.isConnected) morph.style.viewTransitionName = '';
-      });
+      vt.finished.finally(() => document.documentElement.classList.remove('vt'));
       await vt.updateCallbackDone.catch(() => {});
     }
   } else update();
@@ -471,7 +491,7 @@ async function syncFromSheet() {
     if (snap === lastSnapshot) return;
     lastSnapshot = snap;
     if (modalOpen() || currentRoute() !== key) return;
-    if (key === 'request') redrawPickList?.(); else render();
+    if (key === 'home') redrawPickList?.(); else render();
   } catch (e) { toast(e.message, true); }
 }
 // กลับมาที่แท็บ / แอปบนมือถือ → ดึงยอดล่าสุด
@@ -484,39 +504,6 @@ function refresh() {
   render();
 }
 
-// ===================== Home =====================
-function renderHome(page) {
-  const items = state.db.items.filter((i) => i.active);
-  const ready = items.filter((i) => i.available_qty > 0);
-  const low = items.filter(isLow);
-  const todayTh = new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long' });
-  page.insertAdjacentHTML('beforeend', `
-    <section class="hero">
-      <p class="eyebrow">${esc(CONFIG.HOSPITAL_NAME || 'ระบบพัสดุ')} <span class="eyebrow-date">· ${esc(todayTh)}</span></p>
-      <h1>เบิก หรือ ยืม<br><span class="gradient-text">ง่ายในไม่กี่คลิก</span></h1>
-      <p class="lead">เลือกพัสดุ กรอกชื่อและแผนก แล้วรับใบเบิก/ใบยืมเป็นไฟล์ PDF ได้ทันที</p>
-    </section>
-    <div class="choice-grid">
-      <a class="choice withdraw" href="#/request?type=withdraw">
-        <span class="choice-icon">${ICON.withdraw}</span>
-        <h2>เบิกพัสดุ</h2>
-        <p>เวชภัณฑ์และวัสดุสิ้นเปลือง เบิกไปใช้ในหน่วยงานแล้วไม่ต้องนำมาคืน</p>
-        <span class="cta">เริ่มเบิกพัสดุ</span>
-      </a>
-      <a class="choice borrow" href="#/request?type=borrow">
-        <span class="choice-icon">${ICON.borrow}</span>
-        <h2>ยืมพัสดุ</h2>
-        <p>ยืมพัสดุไปใช้ก่อนชั่วคราว แล้วนำมาคืนคลังภายในวันที่กำหนด</p>
-        <span class="cta">เริ่มยืมพัสดุ</span>
-      </a>
-    </div>
-    <div class="stat-strip">
-      <a href="#/items"><span class="v">${fmtNum(items.length)}</span><span class="l">รายการพัสดุ</span></a>
-      <a href="#/items"><span class="v">${fmtNum(ready.length)}</span><span class="l">มีของพร้อมเบิก/ยืม</span></a>
-      <a href="#/items?low=1" class="${low.length ? 'warn' : ''}"><span class="v">${fmtNum(low.length)}</span><span class="l">หมด / ใกล้หมด</span></a>
-    </div>`);
-}
-
 // ===================== Request form (เบิก / ยืม) =====================
 let redrawPickList = null;
 let rfObservers = [];
@@ -525,37 +512,41 @@ function renderRequestForm(page) {
   rfObservers.forEach((o) => o.disconnect());
   rfObservers = [];
   const params = hashParams();
-  let type = TYPES[params.get('type')] ? params.get('type') : (lsGet('last-type') || 'withdraw');
-  // มาจากปุ่ม "เบิก/ยืม" ในหน้าพัสดุ: เลือกรายการนั้นไว้ให้
+  const type = 'withdraw'; // เว็บนี้เปิดให้เบิกอย่างเดียว (ข้อมูลใบยืมเดิมยังอยู่ในระบบให้เจ้าหน้าที่ดูได้)
+  // มาจากปุ่ม "เบิก" ในหน้าพัสดุคงเหลือ: เลือกรายการนั้นไว้ให้
   const pre = itemById(params.get('item'));
   if (pre && BorrowCore.allows(pre, type) && pre.available_qty > 0 && !state.picks[pre.id]) state.picks[pre.id] = 1;
+  if (params.toString()) history.replaceState(null, '', '#/');
+  const todayTh = new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   page.insertAdjacentHTML('beforeend', `
-    <div class="page-head">
-      <h1 id="rf-title"></h1>
-      <p class="lead" id="rf-lead"></p>
+    <div class="page-head wd-head">
+      <p class="eyebrow">${esc(CONFIG.HOSPITAL_NAME || 'ระบบพัสดุ')} <span class="eyebrow-date">· ${esc(todayTh)}</span></p>
+      <h1 id="rf-title">เบิกพัสดุ</h1>
+      <p class="lead" id="rf-lead">เลือกพัสดุ กรอกชื่อและแผนก แล้วรับใบเบิกเป็นไฟล์ PDF ได้ทันที</p>
     </div>
-    <div class="segmented big" id="rf-type" role="tablist">
-      <button type="button" data-type="withdraw" role="tab">เบิกพัสดุ</button>
-      <button type="button" data-type="borrow" role="tab">ยืมพัสดุ</button>
-    </div>
-    <form id="rf" novalidate style="display:flex;flex-direction:column;gap:24px">
-      <section class="group">
-        <div class="group-head"><h2><span class="step">1</span>ข้อมูลผู้ขอ</h2></div>
+    <form id="rf" class="wd" novalidate>
+      <aside class="group slip">
+        <div class="slip-head">
+          <span class="slip-ic" aria-hidden="true">${ICON.withdraw}</span>
+          <div><h2>ใบเบิกพัสดุ</h2><p class="slip-sub">ข้อมูลผู้เบิก</p></div>
+        </div>
         <div class="fields">
           <label class="field">ชื่อ-นามสกุล <span class="req">*</span>
             <input name="borrower_name" required autocomplete="name" placeholder="เช่น สมชาย ใจดี" value="${esc(lsGet('last-name'))}"></label>
           <label class="field">แผนก <span class="req">*</span>
             <select name="department" required>${deptOptions(lsGet('last-dept'))}</select></label>
-          <label class="field" id="rf-due">วันคืน <span class="req">*</span>
-            <span class="hint">(ถึงวันนี้ระบบคืนเข้าสต็อกอัตโนมัติ)</span>
-            <input type="date" name="due_date" min="${addDays(1)}" value="${addDays(7)}"></label>
-          <label class="field" id="rf-note">หมายเหตุ <span class="hint">(ไม่บังคับ)</span>
+          <label class="field full" id="rf-note">หมายเหตุ <span class="hint">(ไม่บังคับ)</span>
             <input name="note" placeholder="เช่น ใช้ทดแทนชั่วคราวระหว่างรอของ"></label>
         </div>
-      </section>
-      <section class="group">
-        <div class="group-head"><h2><span class="step">2</span>เลือกพัสดุ</h2></div>
+        <div class="slip-items" id="rf-slip" aria-live="polite"></div>
+        <div class="checkout">
+          <div class="sum"><strong id="rf-count"></strong><span id="rf-detail"></span></div>
+          <button class="btn primary lg" id="rf-submit"></button>
+        </div>
+      </aside>
+      <section class="group pick-col">
+        <div class="group-head"><h2>เลือกพัสดุ</h2></div>
         <div class="pick-tools">
           <div class="search">${ICON.search}<input type="search" id="rf-q" autocomplete="off" placeholder="ค้นหา เช่น airway, ถุงมือ, NSO-010"></div>
           <div class="pick-filter">
@@ -570,10 +561,6 @@ function renderRequestForm(page) {
         </div>
         <div id="rf-list"></div>
       </section>
-      <div class="checkout">
-        <div class="sum"><strong id="rf-count"></strong><span id="rf-detail"></span></div>
-        <button class="btn primary lg" id="rf-submit"></button>
-      </div>
     </form>`);
 
   const form = $('#rf');
@@ -598,24 +585,12 @@ function renderRequestForm(page) {
 
   function applyType() {
     form.dataset.type = type;
-    const w = type === 'withdraw';
-    $('#rf-title').textContent = w ? 'เบิกพัสดุ' : 'ยืมพัสดุ';
-    $('#rf-lead').textContent = w
-      ? 'สำหรับเวชภัณฑ์และวัสดุสิ้นเปลืองที่ใช้แล้วหมดไป ไม่ต้องนำมาคืน'
-      : 'ยืมพัสดุไปใช้ชั่วคราว และนำมาคืนคลังภายในวันที่กำหนด';
-    $$('#rf-type button').forEach((b) => {
-      b.classList.toggle('active', b.dataset.type === type);
-      b.setAttribute('aria-selected', String(b.dataset.type === type));
-    });
-    $('#rf-due').hidden = w;
-    form.due_date.required = !w;
-    $('#rf-submit').className = 'btn lg ' + (w ? 'primary' : 'borrow');
-    // ตัดพัสดุที่ใช้กับประเภทนี้ไม่ได้ออกจากรายการที่เลือก
+    $('#rf-submit').className = 'btn lg primary';
+    // ตัดพัสดุที่เบิกไม่ได้ (เช่น ครุภัณฑ์สำหรับยืม) ออกจากรายการที่เลือก
     for (const id of Object.keys(state.picks)) {
       const i = itemById(id);
       if (!i || !BorrowCore.allows(i, type)) delete state.picks[id];
     }
-    history.replaceState(null, '', `#/request?type=${type}`);
     drawList();
   }
 
@@ -626,6 +601,16 @@ function renderRequestForm(page) {
     $('#rf-detail').textContent = chosen.length ? chosen.map((x) => `${x.item.name} ×${x.q}`).join(', ') : `เลือกพัสดุที่ต้องการ${verb}จากรายการด้านบน`;
     $('#rf-submit').textContent = `ยืนยันการ${verb}`;
     form.classList.toggle('has-picks', chosen.length > 0);
+    // ใบเบิกด้านขวา (จอกว้าง): รายการที่เลือกพร้อมปุ่มปรับจำนวน
+    $('#rf-slip').innerHTML = chosen.length
+      ? `<ul class="slip-list">${chosen.map(({ item: i, q }) => `<li>
+          <div class="slip-name"><span>${esc(i.name)}</span><small>${esc(i.code)} · ${esc(i.unit)}</small></div>
+          <div class="mini-step">
+            <button type="button" data-dec="${i.id}" aria-label="${q === 1 ? 'นำออก' : 'ลด'} ${esc(i.name)}">${q === 1 ? IC.trash : IC.minus}</button>
+            <b>${fmtNum(q)}</b>
+            <button type="button" data-inc="${i.id}" aria-label="เพิ่ม ${esc(i.name)}" ${q >= i.available_qty ? 'disabled' : ''}>${IC.plus}</button>
+          </div></li>`).join('')}</ul>`
+      : `<div class="slip-empty">${ICON.box}<span>ยังไม่ได้เลือกพัสดุ<br><small>แตะ "+ เลือก" ที่รายการด้านซ้าย</small></span></div>`;
   }
 
   // ค้นหาแบบไม่สนตัวพิมพ์เล็ก/ใหญ่ ช่องว่าง และวงเล็บ: "airway100" เจอ "Airway 100mm"
@@ -717,15 +702,16 @@ function renderRequestForm(page) {
     const from = state.picks[id] || 0;
     qty = Math.max(0, Math.min(i.available_qty, Math.floor(Number(qty) || 0)));
     if (qty) state.picks[id] = qty; else delete state.picks[id];
+    if (qty) PdfDoc.preload(); // โหลดตัวสร้าง PDF (900 KB) ไว้ก่อน ใบเบิกจะพร้อมเร็วขึ้นหลังกดยืนยัน
     const ae = document.activeElement;
-    tick = { id: String(id), from, to: qty, rect,
+    tick = { id: String(id), from, to: qty, rect, zone: ae?.closest?.('#rf-slip') ? '#rf-slip' : '#rf-list',
       focus: ae?.matches?.('[data-dec]') ? 'dec' : ae?.matches?.('[data-inc]') ? 'inc' : ae?.matches?.('[data-qty]') ? 'qty' : null };
     drawList();
   };
   // หลังวาดใหม่: คืนโฟกัสปุ่มเดิม + อนิเมชัน (ตัวเลขเลื่อน, แถวเด้งเข้า/ออก, จำนวนในแถบยืนยันเด้ง)
-  function afterChange({ id, from, to, focus, rect }) {
-    const q = (a) => $(`#rf-list [${a}="${id}"]`);
-    if (focus) [q(`data-${focus}`), q('data-inc'), q('data-dec'), q('data-qty')].find((el) => el && !el.disabled)?.focus({ preventScroll: true });
+  function afterChange({ id, from, to, focus, rect, zone }) {
+    const q = (a, z = '#rf-list') => $(`${z} [${a}="${id}"]`);
+    if (focus) [q(`data-${focus}`, zone), q('data-inc', zone), q('data-dec', zone), q('data-qty', zone)].find((el) => el && !el.disabled)?.focus({ preventScroll: true });
     if (!motionOK() || from === to) return;
     const li = (q('data-inc') || q('data-dec'))?.closest('.pick');
     if (!from) { li?.classList.add('just-on'); if (!(rect && flyToCheckout(rect))) bump($('#rf-count')); }
@@ -776,22 +762,18 @@ function renderRequestForm(page) {
     const L = $('.pick-letter', g);
     if (L && motionOK()) { L.classList.remove('hit'); void L.offsetWidth; L.classList.add('hit'); }
   });
-  $$('#rf-type button').forEach((b) => b.addEventListener('click', () => {
-    if (type === b.dataset.type) return;
-    type = b.dataset.type;
-    applyType();
-    if (motionOK()) {
-      [$('#rf-title'), $('#rf-lead')].forEach((el, k) => el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }],
-        { duration: 280, delay: k * 40, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'backwards' }));
-    }
-  }));
+  $('#rf-slip').addEventListener('click', (e) => {
+    const inc = e.target.closest('[data-inc]');
+    const dec = e.target.closest('[data-dec]');
+    if (inc) setQty(inc.dataset.inc, (state.picks[inc.dataset.inc] || 0) + 1);
+    if (dec) setQty(dec.dataset.dec, (state.picks[dec.dataset.dec] || 0) - 1);
+  });
 
   form.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
     const data = formData(form);
     if (!data.borrower_name.trim()) { flag(form.borrower_name); throw new Error('กรุณากรอกชื่อ-นามสกุล'); }
     if (!data.department) { flag(form.department); throw new Error('กรุณาเลือกแผนก'); }
-    if (type === 'borrow' && (!data.due_date || data.due_date <= today())) { flag(form.due_date); throw new Error('กรุณาเลือกวันคืน (ตั้งแต่วันพรุ่งนี้เป็นต้นไป)'); }
     const items = Object.entries(state.picks).map(([item_id, qty]) => ({ item_id: Number(item_id), qty }));
     if (!items.length) throw new Error('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
     const btn = $('#rf-submit');
@@ -801,7 +783,6 @@ function renderRequestForm(page) {
       const id = await store.act('createRequest', { ...data, type, items });
       lsSet('last-name', data.borrower_name.trim());
       lsSet('last-dept', data.department);
-      lsSet('last-type', type);
       state.picks = {};
       lastSnapshot = JSON.stringify(state.db);
       form.note.value = '';
@@ -815,6 +796,52 @@ function renderRequestForm(page) {
   }));
 
   applyType();
+}
+
+// ===================== Google Sheet (เจ้าหน้าที่) =====================
+// ลิงก์ไปชีตที่เว็บเชื่อมอยู่: Apps Script ส่ง URL มาให้เฉพาะคำขอที่มี PIN (หรือใส่ SHEET_URL ใน config.js เอง)
+const SHEET_TABS = [
+  ['รายการเบิก-ยืม', 'ทุกรายการที่ถูกเบิก/ยืม 1 แถวต่อพัสดุ: วันที่ เลขที่ ผู้ขอ แผนก ชื่อพัสดุ จำนวน (ล่าสุดอยู่บน)', 'view'],
+  ['อุปกรณ์', 'รายชื่อพัสดุและยอดคงเหลือ แก้คอลัมน์ available_qty (คงเหลือ) ชื่อ หน่วย ที่เก็บ ได้ · เพิ่มพัสดุใหม่ให้ทำผ่านเว็บ', 'edit'],
+  ['หน่วยงาน', 'รายชื่อแผนกที่ให้เลือกในฟอร์ม เพิ่ม/แก้ได้', 'edit'],
+  ['หมวดหมู่', 'หมวดหมู่ของพัสดุ', 'edit'],
+  ['ประวัติสต็อก', 'ทุกการเคลื่อนไหวของสต็อก ใช้ตรวจสอบย้อนหลัง', 'keep'],
+  ['คำขอยืม / รายการในคำขอ', 'ข้อมูลใบเบิก/ใบยืมที่ระบบใช้งาน', 'keep'],
+  ['พัสดุที่ถูกยืมอยู่', 'ใบยืมเดิมที่ยังไม่คืน (ระบบสร้างใหม่ทุกครั้ง)', 'view'],
+];
+function renderSheet(page) {
+  const sh = state.sheet || (CONFIG.SHEET_URL ? { url: CONFIG.SHEET_URL, name: '' } : null);
+  const url = sh && /^https:\/\/docs\.google\.com\//.test(sh.url) ? sh.url : '';
+  const tag = { view: '<span class="pill">ดูอย่างเดียว</span>', edit: '<span class="pill in">แก้ได้</span>', keep: '<span class="pill low">ไม่ควรแก้</span>' };
+  page.insertAdjacentHTML('beforeend', `
+    <div class="page-head"><h1>Google Sheet</h1><p class="lead">ข้อมูลพัสดุ สต็อก และใบเบิกทั้งหมดของเว็บนี้บันทึกอยู่ในชีตนี้</p></div>
+    <section class="card sheet-card">
+      <span class="sheet-ic" aria-hidden="true">${ICON.sheet}</span>
+      <div class="sheet-main">
+        ${url ? `<h2>${esc(sh.name || 'Google Sheet ที่เชื่อมอยู่')}</h2>
+          <p class="sheet-url">${esc(url)}</p>
+          <div class="sheet-actions">
+            <a class="btn primary lg" href="${esc(url)}" target="_blank" rel="noopener noreferrer">เปิด Google Sheet ${ICON.ext}</a>
+            <button type="button" class="btn lg" id="sheet-copy">คัดลอกลิงก์</button>
+          </div>
+          <p class="muted small">เปิดได้เฉพาะบัญชี Google ที่ได้รับสิทธิ์ในชีตนี้ (ตั้งค่าที่ปุ่ม แชร์ ใน Google Sheet)</p>`
+        : DEMO ? `<h2>ยังไม่ได้เชื่อม Google Sheet</h2>
+          <p class="muted">ตอนนี้เป็นโหมดทดลอง ข้อมูลเก็บในเบราว์เซอร์เครื่องนี้เท่านั้น ทำตามคู่มือใน README หัวข้อ "เชื่อม Google Sheets" เพื่อใช้ข้อมูลร่วมกันทุกเครื่อง</p>`
+        : `<h2>ยังไม่พบลิงก์ของชีต</h2>
+          <p class="muted">อัปเดตโค้ด Apps Script เป็นไฟล์ AllInOne.gs ล่าสุด แล้ว Deploy → Manage deployments → New version
+            ลิงก์จะแสดงที่นี่อัตโนมัติ (หรือใส่ SHEET_URL ใน config.js)</p>`}
+      </div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h3>แท็บในชีต</h3></div>
+      <ul class="rows sheet-tabs">${SHEET_TABS.map(([n, d, k]) => `<li><div class="sheet-tab"><b>${esc(n)}</b>${tag[k]}</div><p>${esc(d)}</p></li>`).join('')}</ul>
+      <p class="muted small sheet-note">คอลัมน์ที่หัวเป็นสีฟ้าอ่อน ระบบเขียนให้อัตโนมัติ แก้แล้วจะถูกเขียนทับ ·
+        แก้ยอดในชีตโดยตรงจะไม่ถูกบันทึกในประวัติสต็อก (ใช้ปุ่ม รับเข้า / ตรวจนับ บนเว็บถ้าต้องการประวัติครบ)</p>
+    </section>`);
+  $('#sheet-copy')?.addEventListener('click', safe(async () => {
+    await navigator.clipboard.writeText(url);
+    toast('คัดลอกลิงก์แล้ว');
+  }));
 }
 
 // ===================== Success + PDF =====================
@@ -921,8 +948,8 @@ function renderItems(page) {
       (!cat || i.category === cat) && (!kind || BorrowCore.allows(i, kind)) && (!low || isLow(i)));
   };
 
-  const actionBtns = (i) => ['withdraw', 'borrow'].filter((t) => BorrowCore.allows(i, t)).map((t) =>
-    `<a class="btn sm ${t === 'withdraw' ? 'primary' : 'borrow'}" href="#/request?type=${t}&item=${i.id}" ${i.available_qty > 0 && i.active ? '' : 'hidden'}>${TYPES[t]}</a>`).join('');
+  const actionBtns = (i) => BorrowCore.allows(i, 'withdraw')
+    ? `<a class="btn sm primary" href="#/?item=${i.id}" ${i.available_qty > 0 && i.active ? '' : 'hidden'}>เบิก</a>` : '';
 
   const draw = () => {
     $$('#f-kind button').forEach((b) => b.classList.toggle('active', b.dataset.kind === kind));
@@ -975,8 +1002,7 @@ function showItem(id) {
       <dt>สถานที่เก็บ</dt><dd>${esc(i.location || '-')}</dd>
     </dl>
     <div class="toolbar">
-      ${['withdraw', 'borrow'].filter((t) => BorrowCore.allows(i, t) && i.available_qty > 0 && i.active)
-        .map((t) => `<a class="btn ${t === 'withdraw' ? 'primary' : 'borrow'}" href="#/request?type=${t}&item=${i.id}" data-close>${TYPES[t]}รายการนี้</a>`).join('')}
+      ${BorrowCore.allows(i, 'withdraw') && i.available_qty > 0 && i.active ? `<a class="btn primary" href="#/?item=${i.id}" data-close>เบิกรายการนี้</a>` : ''}
       ${isAdmin() ? `<span class="spacer"></span><button class="btn ok" data-stock="receive">รับเข้า</button>
         <button class="btn" data-stock="adjust">ตรวจนับ</button>
         <button class="btn" data-stock="lost">ตัดชำรุด</button>
@@ -1364,6 +1390,20 @@ function renderSettings(page) {
 (async () => {
   renderMode();
   $('#page').innerHTML = '<div class="skel" role="status"><span class="vh">กำลังโหลดข้อมูล...</span><i class="sk sk-h1"></i><i class="sk sk-lead"></i><div class="sk-grid"><i class="sk sk-card"></i><i class="sk sk-card"></i></div></div>';
+  // เปิดหน้าทันทีจากข้อมูลที่เก็บไว้ครั้งก่อน แล้วดึงยอดล่าสุดจาก Google Sheets ตามมา (ฟอร์มที่กรอกไว้ไม่หาย)
+  if (!DEMO && !state.pin) {
+    try {
+      const cached = JSON.parse(lsGet(CACHE_KEY) || 'null');
+      if (cached?.items?.length) {
+        state.db = BorrowCore.normalize(cached);
+        lastSnapshot = JSON.stringify(state.db);
+        lastRoute = currentRoute();
+        render(true);
+        await syncFromSheet();
+        return;
+      }
+    } catch { /* ใช้วิธีปกติด้านล่าง */ }
+  }
   try {
     if (state.pin) {
       try { await store.act('checkPin'); } catch { state.pin = ''; sessionStorage.removeItem('pin'); renderMode(); }

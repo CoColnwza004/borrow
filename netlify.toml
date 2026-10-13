@@ -7,11 +7,25 @@
 [[headers]]
   for = "/*"
   [headers.values]
-    # อนุญาตเฉพาะสคริปต์ของเว็บนี้เอง, ฟอนต์จาก Google Fonts และเรียกข้อมูลจาก Google Apps Script เท่านั้น
-    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    # อนุญาตเฉพาะสคริปต์และฟอนต์ของเว็บนี้เอง และเรียกข้อมูลจาก Google Apps Script เท่านั้น
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
     X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "no-referrer"
     Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
     Strict-Transport-Security = "max-age=31536000"
 
+# ไฟล์ที่ไม่เปลี่ยน (ฟอนต์, ตัวสร้าง PDF) ให้เบราว์เซอร์เก็บไว้ 1 ปี เปิดครั้งถัดไปไม่ต้องโหลดซ้ำ
+# (ถ้าเปลี่ยนไฟล์ในโฟลเดอร์เหล่านี้ ให้ตั้งชื่อไฟล์ใหม่)
+[[headers]]
+  for = "/fonts/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+[[headers]]
+  for = "/vendor/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+[[headers]]
+  for = "/icons/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
