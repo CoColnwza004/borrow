@@ -5,6 +5,6 @@
 // - SHEET_URL (ไม่บังคับ) = ลิงก์ Google Sheet สำหรับหน้า "Google Sheet" ของเจ้าหน้าที่
 //   ปกติไม่ต้องใส่ Apps Script เวอร์ชันล่าสุดส่งลิงก์มาให้เอง (เฉพาะคนที่ใส่ PIN)
 window.APP_CONFIG = {
-  API_URL: 'https://script.google.com/macros/s/AKfycbyl_jEmWzFDWvubSSnhM0Uiz6ogScqxcKV5x8AwcoNx9eRx2TnXevNcjj6-UMYQXxg5ng/exec',
+  API_URL: 'https://script.google.com/macros/s/AKfycbw9tFgUddEHiQpPP5Mdlw4Yo2N417WI3-zOF6EZ2a97zvJSIohXpsXDOAgnhlxY8fNnOQ/exec',
   HOSPITAL_NAME: 'โรงพยาบาลปากเกร็ด',
 };
