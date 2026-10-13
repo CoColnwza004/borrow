@@ -457,3 +457,22 @@ test('Cloudflare _headers is generated from netlify.toml (same CSP and cache rul
   assert.match(out, /\/fonts\/\*\n {2}Cache-Control: public, max-age=31536000, immutable/);
   assert.match(out, /\/vendor\/\*\n {2}Cache-Control: public, max-age=31536000, immutable/);
 });
+
+test('Apps Script: withdrawing an out-of-stock item writes a negative balance to the sheet; receiving offsets it', () => {
+  const { sheets, ctx } = mockAppsScript();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
+  ctx.setup();
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  const inv = sheets['อุปกรณ์'];
+  const col = inv.data[0].indexOf('available_qty');
+  const row = () => inv.data.find((r, i) => i > 0 && Number(r[col]) === 0); // พัสดุที่หมดในชีต
+  const outRow = row();
+  const id = Number(outRow[0]);
+  const cell = () => inv.data.find((r) => r[0] === String(id))[col];
+  const w = post({ action: 'createRequest', payload: { borrower_name: 'ก ข', department: 'ICU', type: 'withdraw', items: [{ item_id: id, qty: 3 }] } });
+  assert.equal(w.ok, true, w.error);
+  assert.equal(cell(), '-3');
+  assert.equal(post({ action: 'load' }).state.items.find((i) => i.id === id).available_qty, -3);
+  assert.equal(post({ action: 'stock', payload: { item_id: id, type: 'receive', qty: 10 }, pin: '1234' }).ok, true);
+  assert.equal(cell(), '7');
+});

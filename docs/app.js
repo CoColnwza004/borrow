@@ -883,7 +883,16 @@ function renderRequestForm(page) {
     btn.disabled = true;
     btn.classList.add('busy');
     try {
-      const id = await store.act('createRequest', { ...data, type, items });
+      let id;
+      try {
+        id = await store.act('createRequest', { ...data, type, items });
+      } catch (err) {
+        // Apps Script เวอร์ชันเก่ายังไม่ให้เบิกของที่หมด (ยอดติดลบ)
+        if (/คงเหลือไม่พอ/.test(err.message)) {
+          throw new Error(err.message + ' — ระบบใน Google Sheet ยังเป็นเวอร์ชันเก่า ให้เจ้าหน้าที่อัปเดต Apps Script (Deploy → New version) แล้วจะเบิกของที่หมดได้');
+        }
+        throw err;
+      }
       lsSet('last-name', data.borrower_name.trim());
       lsSet('last-dept', data.department);
       state.picks = {};
