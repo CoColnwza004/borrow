@@ -15,7 +15,7 @@ var ADMIN_PIN = '1234';
 // ชื่อแท็บคงไว้ตามเวอร์ชันก่อน เพื่อให้ชีตที่ใช้งานอยู่แล้วอ่านต่อได้
 var SHEET_NAMES = {
   items: 'อุปกรณ์',
-  requests: 'คำขอยืม',
+  requests: 'ประวัติการเบิก',
   request_items: 'รายการในคำขอ',
   movements: 'ประวัติสต็อก',
   departments: 'หน่วยงาน',
@@ -25,13 +25,24 @@ var SHEET_NAMES = {
   on_loan: 'พัสดุที่ถูกยืมอยู่',
 };
 
+// ชื่อแท็บเดิม: ชีตที่ใช้งานอยู่แล้วจะถูกเปลี่ยนชื่อให้อัตโนมัติ (ข้อมูลเดิมอยู่ครบ)
+var LEGACY_NAMES = { requests: ['คำขอยืม'] };
+
+function sheet_(ss, t) {
+  var sh = ss.getSheetByName(SHEET_NAMES[t]);
+  if (sh) return sh;
+  var old = (LEGACY_NAMES[t] || []).map(function (n) { return ss.getSheetByName(n); }).filter(Boolean)[0];
+  if (old) old.setName(SHEET_NAMES[t]);
+  return old || null;
+}
+
 /**
  * รันจากหน้า Apps Script เพื่อสร้างแท็บและใส่รายการพัสดุ/แผนกจาก SeedData
  * รันซ้ำได้จนกว่าจะเริ่มมีการเบิก/ยืมจริง (จะเขียนทับรายการพัสดุ แผนก และประวัติสต็อกทั้งหมด)
  */
 function setup() {
   if (typeof SEED_DATA === 'undefined') throw new Error('ไม่พบไฟล์ SeedData กรุณาคัดลอก docs/seed-data.js มาเป็นไฟล์ SeedData ก่อน');
-  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.requests);
+  var sh = sheet_(SpreadsheetApp.getActiveSpreadsheet(), 'requests');
   if (sh && sh.getLastRow() > 1) {
     throw new Error('มีรายการเบิก/ยืมในชีตแล้ว ไม่ได้เขียนทับ (ถ้าต้องการเริ่มใหม่ให้ลบแท็บ "' + SHEET_NAMES.requests + '" ก่อน)');
   }
@@ -105,6 +116,18 @@ function handle_(body) {
   }
 }
 
+// แท็บประวัติการเบิก: หัวคอลัมน์อ่านง่ายสีเขียวอ่อน ข้อมูลระบบท้ายตารางสีเทา รายการพัสดุขึ้นบรรทัดใหม่ทีละชิ้น
+function formatReadable_(sh, d, nRows) {
+  var n = d.header.length;
+  sh.setFrozenColumns(1);
+  sh.getRange(1, 1, 1, d.front).setBackground('#e6f4ea');
+  sh.getRange(1, d.front + 1, 1, d.sys).setBackground('#f1f3f4').setFontColor('#80868b').setFontWeight('normal');
+  sh.getRange(1, 1, Math.max(nRows, 2), n).setVerticalAlignment('top');
+  sh.autoResizeColumns(1, d.front);
+  sh.setColumnWidth(d.wide, 340);
+  sh.getRange(1, d.wide, Math.max(nRows, 2), 1).setWrap(true);
+}
+
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
@@ -118,14 +141,17 @@ function loadDb_() {
   var db = BorrowCore.emptyDb();
   RAW_ = {};
   Object.keys(BorrowCore.TABLES).forEach(function (t) {
-    var sh = ss.getSheetByName(SHEET_NAMES[t]);
+    var sh = sheet_(ss, t);
     if (!sh || sh.getLastRow() < 2) return;
     var values = sh.getDataRange().getValues();
     RAW_[t] = values.map(function (r) { return r.map(String); });
-    var header = values.shift();
+    // หัวคอลัมน์ภาษาไทย (เช่น เลขที่, แผนก) แปลงกลับเป็นชื่อช่องในระบบ คอลัมน์ที่ระบบสร้างไว้อ่านอย่างเดียวข้ามไป
+    var cols = BorrowCore.TABLES[t];
+    var header = values.shift().map(function (h) { return BorrowCore.fieldOf(t, String(h)); });
     db[t] = values.map(function (row) {
       var o = {};
       header.forEach(function (h, i) {
+        if (cols.indexOf(h) < 0) return;
         var v = row[i];
         // ถ้ามีคนพิมพ์วันที่ลงในชีตเอง Sheets จะแปลงเป็น Date ให้แปลงกลับเป็นข้อความ
         if (v instanceof Date) v = Utilities.formatDate(v, tz, h === 'created_at' || /_at$/.test(h) ? 'yyyy-MM-dd HH:mm' : 'yyyy-MM-dd');
@@ -144,7 +170,7 @@ function saveDb_(db) {
     var d = data[t];
     var n = d.header.length;
     var rows = [d.header].concat(d.rows).map(function (r) { return r.map(String); });
-    var sh = ss.getSheetByName(SHEET_NAMES[t]);
+    var sh = sheet_(ss, t);
     var cur = null;
     if (!sh) {
       sh = ss.insertSheet(SHEET_NAMES[t]);
@@ -162,9 +188,10 @@ function saveDb_(db) {
     // จัดหัวตารางเฉพาะแท็บใหม่ หรือเมื่อหัวคอลัมน์เปลี่ยน
     if (!cur || JSON.stringify(cur[0]) !== JSON.stringify(rows[0])) {
       sh.setFrozenRows(1);
-      sh.getRange(1, 1, 1, n).setFontWeight('bold').setBackground(null);
+      sh.getRange(1, 1, 1, n).setFontWeight('bold').setBackground(null).setFontColor(null);
       // คอลัมน์ภาษาไทยที่ระบบเขียนให้อัตโนมัติ (แก้ในชีตไม่มีผล) ทำหัวคอลัมน์สีฟ้าอ่อนไว้
       if (d.extra) sh.getRange(1, n - d.extra + 1, 1, d.extra).setBackground('#e8f0fe');
+      if (d.front) formatReadable_(sh, d, rows.length);
     }
   });
 }

@@ -60,15 +60,36 @@ test('core: validation for type, department, due date, kind and stock', () => {
   assert.throws(() => Core.run(db, 'createRequest', { ...w, type: '' }, user), /เบิก หรือ ยืม/);
   assert.throws(() => Core.run(db, 'createRequest', { ...w, department: 'แผนกที่ไม่มี' }, user), /แผนกจากรายการ/);
   assert.throws(() => Core.run(db, 'createRequest', { ...w, items: [] }, user), /อย่างน้อย 1/);
-  assert.throws(() => Core.run(db, 'createRequest', { ...w, items: [{ item_id: paper.id, qty: 999 }] }, user), /คงเหลือไม่พอ/);
   assert.throws(() => Core.run(db, 'createRequest', { ...w, items: [{ item_id: proj.id, qty: 1 }] }, user), /ยืมได้อย่างเดียว/);
   const b = { ...person, type: 'borrow', items: [{ item_id: proj.id, qty: 1 }] };
   assert.throws(() => Core.run(db, 'createRequest', b, user), /วันคืน/);
   assert.throws(() => Core.run(db, 'createRequest', { ...b, due_date: '2000-01-01' }, user), /วันพรุ่งนี้/);
   assert.throws(() => Core.run(db, 'createRequest', { ...b, due_date: Core.ymd(new Date()) }, user), /วันพรุ่งนี้/);
   assert.throws(() => Core.run(db, 'createRequest', { ...b, due_date: DUE, items: [{ item_id: paper.id, qty: 1 }] }, user), /เบิกได้อย่างเดียว/);
+  // ยืมเกินของที่มีไม่ได้ (เบิกได้ ดูการทดสอบถัดไป)
+  assert.throws(() => Core.run(db, 'createRequest', { ...b, due_date: DUE, items: [{ item_id: proj.id, qty: proj.available_qty + 1 }] }, user), /คงเหลือไม่พอ/);
   assert.equal(db.requests.length, 0);
   assert.equal(paper.available_qty, 120);
+});
+
+test('core: withdrawing more than stock goes negative; receiving new stock offsets it', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const admin = { isAdmin: true };
+  const id = Core.run(db, 'createRequest', { ...person, type: 'withdraw', items: [{ item_id: paper.id, qty: 125 }] }, user);
+  assert.equal(db.requests.find((r) => r.id === id).status, 'issued');
+  assert.equal(paper.available_qty, -5);
+  // เบิกตอนของหมด (ติดลบอยู่แล้ว) ก็ยังได้
+  Core.run(db, 'createRequest', { ...person, type: 'withdraw', items: [{ item_id: paper.id, qty: 3 }] }, user);
+  assert.equal(paper.available_qty, -8);
+  // ติดลบต้องอยู่หลังโหลดจากชีต (ไม่ถูกปัดเป็น 0)
+  const reloaded = Core.normalize(JSON.parse(JSON.stringify(db)));
+  assert.equal(reloaded.items.find((i) => i.id === paper.id).available_qty, -8);
+  // รับเข้า 20 หักล้างยอดค้าง เหลือ 12
+  Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 20 }, admin);
+  assert.equal(paper.available_qty, 12);
+  // ตัดชำรุดเกินของที่มียังไม่ได้
+  assert.throws(() => Core.run(db, 'stock', { item_id: paper.id, type: 'lost', qty: 13 }, admin), /คงเหลือไม่พอ/);
 });
 
 test('core: legacy rows without type/kind still load', () => {
@@ -99,6 +120,9 @@ function mockAppsScript() {
         setNumberFormat() { return this; },
         setFontWeight() { return this; },
         setBackground() { return this; },
+        setFontColor() { return this; },
+        setVerticalAlignment() { return this; },
+        setWrap() { return this; },
         // เขียนทับเฉพาะช่วงที่กำหนด แถว/คอลัมน์นอกช่วงยังอยู่ (เหมือน Sheets จริง)
         setValues: (rows) => {
           sh.writes++;
@@ -106,6 +130,10 @@ function mockAppsScript() {
         },
       }),
       setFrozenRows() {},
+      setFrozenColumns() {},
+      autoResizeColumns() {},
+      setColumnWidth() {},
+      setName: (n) => { delete sheets[name]; sheets[n] = sh; name = n; },
     };
     sheets[name] = sh;
     return sh;
@@ -148,7 +176,7 @@ test('Apps Script: only changed tabs are rewritten, shrinking tabs leave no stal
   before = writes();
   assert.equal(post({ action: 'createRequest', payload: { borrower_name: 'ก ข', department: 'ICU', type: 'withdraw', items: [{ item_id: 2, qty: 1 }] } }).ok, true);
   const after = writes();
-  for (const t of ['อุปกรณ์', 'คำขอยืม', 'รายการในคำขอ', 'ประวัติสต็อก', 'รายการเบิก-ยืม']) assert.equal(after[t], before[t] + 1, t);
+  for (const t of ['อุปกรณ์', 'ประวัติการเบิก', 'รายการในคำขอ', 'ประวัติสต็อก', 'รายการเบิก-ยืม']) assert.equal(after[t], before[t] + 1, t);
   for (const t of ['หน่วยงาน', 'หมวดหมู่', 'พัสดุที่ถูกยืมอยู่']) assert.equal(after[t], before[t], t + ' ไม่ต้องเขียนใหม่');
   // ลบแผนก: แท็บสั้นลง ต้องไม่มีแถวเก่าค้าง
   assert.equal(post({ action: 'removeMaster', payload: { table: 'departments', name: 'ICU' }, pin: '1234' }).ok, true);
@@ -157,6 +185,29 @@ test('Apps Script: only changed tabs are rewritten, shrinking tabs leave no stal
   const reloaded = post({ action: 'load', pin: '1234' }).state;
   assert.equal(reloaded.departments.length, 21);
   assert.equal(reloaded.items.find((i) => i.id === 2).available_qty, 724);
+});
+
+test('Apps Script: old "คำขอยืม" tab is renamed to "ประวัติการเบิก" and keeps its data', () => {
+  const { sheets, ctx } = mockAppsScript();
+  for (const f of ['core.js', 'apps-script/Code.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
+  ctx.setup();
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  post({ action: 'createRequest', payload: { borrower_name: 'ผู้เบิกเดิม', department: 'ICU', type: 'withdraw', items: [{ item_id: 2, qty: 1 }] } });
+  // จำลองชีตเวอร์ชันก่อน: แท็บชื่อ คำขอยืม หัวคอลัมน์อังกฤษ
+  const C = require('../docs/core.js');
+  const old = sheets['ประวัติการเบิก'];
+  const hdr = old.data[0].map((h) => C.fieldOf('requests', h));
+  old.data[0] = hdr;
+  old.setName('คำขอยืม');
+  assert.ok(sheets['คำขอยืม'] && !sheets['ประวัติการเบิก']);
+  const st = post({ action: 'load', pin: '1234' }).state;
+  assert.ok(sheets['ประวัติการเบิก'] && !sheets['คำขอยืม'], 'tab renamed');
+  assert.equal(st.requests.length, 1);
+  assert.equal(st.requests[0].borrower_name, 'ผู้เบิกเดิม');
+  // บันทึกครั้งถัดไปเขียนหัวคอลัมน์ภาษาไทย
+  post({ action: 'createRequest', payload: { borrower_name: 'คนใหม่', department: 'ER', type: 'withdraw', items: [{ item_id: 2, qty: 1 }] } });
+  assert.equal(sheets['ประวัติการเบิก'].data[0][0], 'เลขที่');
+  assert.equal(post({ action: 'load', pin: '1234' }).state.requests.length, 2);
 });
 
 test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () => {
@@ -200,7 +251,7 @@ test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () =
   assert.equal(loaded.items.find((i) => i.id === 2).kind, 'both');
   assert.equal(loaded.items.find((i) => i.id === 4).available_qty, 59);
   assert.equal(loaded.departments.find((d) => d.name === 'ICU').full_name, 'งานการพยาบาลผู้ป่วยหนัก');
-  assert.deepEqual(loaded.requests.map((r) => [r.type, r.status]), [['withdraw', 'issued'], ['borrow', 'borrowed']]);
+  assert.deepEqual(loaded.requests.sort((a, b) => a.id - b.id).map((r) => [r.type, r.status]), [['withdraw', 'issued'], ['borrow', 'borrowed']]);
   const ret = post({ action: 'returnItems', payload: { id: borrow.result, items: [{ item_id: 4, returned_qty: 1 }] }, pin: '1234' });
   assert.equal(ret.ok, true);
   assert.equal(ret.state.items.find((i) => i.id === 4).available_qty, 60);
@@ -319,16 +370,16 @@ test('Apps Script: daily trigger and page loads apply automatic returns', () => 
   const logRow = sheets['รายการเบิก-ยืม'].data[1];
   assert.deepEqual([logRow[2], logRow[3], logRow[6], logRow[7], logRow[8]], ['ยืม', 'ก', 'Airway 100mm', '5', 'ชิ้น']);
   // จำลองว่าถึงวันคืนแล้ว: แก้วันคืนในชีตเป็นเมื่อวาน
-  const req = sheets['คำขอยืม'];
+  const req = sheets['ประวัติการเบิก'];
   const dueCol = req.data[0].indexOf('due_date');
   req.data[1][dueCol] = '2020-01-01';
   ctx.autoReturnDaily();
   assert.equal(qty(), 60);
-  assert.equal(req.data[1][req.data[0].indexOf('status')], 'returned');
+  assert.equal(req.data.find((r) => r[3] === 'ก')[req.data[0].indexOf('status')], 'returned');
   // ใบที่สอง: ไม่มี trigger ทำงาน แต่มีคนเปิดเว็บ (load) ก็คืนให้เช่นกัน
   post({ action: 'createRequest', payload: { borrower_name: 'ข', department: 'ER', type: 'borrow', due_date: DUE, items: [{ item_id: 4, qty: 2 }] } });
   assert.equal(qty(), 58);
-  req.data[2][dueCol] = '2020-01-01';
+  req.data.find((r) => r[3] === 'ข')[dueCol] = '2020-01-01'; // แถวล่าสุดอยู่บน
   JSON.parse(ctx.doGet().body);
   assert.equal(qty(), 60);
 });
@@ -362,9 +413,12 @@ test('core: sheet tables add readable Thai columns and an on-loan tab', () => {
   Core.run(db, 'returnItems', { id, items: [{ item_id: nb.id, returned_qty: 1 }] }, admin);
   const d = Core.sheetData(db);
   const col = (t, name) => d[t].header.indexOf(name);
-  // คอลัมน์เดิมอยู่ที่เดิม คอลัมน์ไทยต่อท้าย
-  assert.deepEqual(d.requests.header.slice(0, Core.TABLES.requests.length), Core.TABLES.requests);
-  const req = d.requests.rows[1];
+  // แท็บประวัติการเบิก: คอลัมน์อ่านง่ายอยู่หน้า ครบทุกช่องของระบบ (หัวไทยแปลงกลับได้) ล่าสุดอยู่บน
+  assert.deepEqual(d.requests.header.slice(0, 5), ['เลขที่', 'วันที่', 'ประเภท', 'ผู้เบิก/ผู้ยืม', 'แผนก']);
+  assert.deepEqual(Core.TABLES.requests.filter((c) => !d.requests.header.map((h) => Core.fieldOf('requests', h)).includes(c)), []);
+  const req = d.requests.rows[0];
+  assert.equal(req[col('requests', 'จำนวนรวม')], 2);
+  assert.match(d.requests.rows[1][col('requests', 'วันที่')], /^\d{1,2}\/\d{1,2}\/25\d\d \d{2}:\d{2}$/);
   assert.equal(req[col('requests', 'ประเภท')], 'ยืม');
   assert.equal(req[col('requests', 'สถานะ')], 'กำลังยืม');
   assert.equal(req[col('requests', 'รายการพัสดุ')], 'โน้ตบุ๊ก ×2 เครื่อง');
@@ -382,10 +436,13 @@ test('core: sheet tables add readable Thai columns and an on-loan tab', () => {
   // อ่านกลับจากชีต: คอลัมน์ไทยถูกละไว้ ข้อมูลเหมือนเดิม
   const back = {};
   Object.keys(Core.TABLES).forEach((t) => {
-    back[t] = d[t].rows.map((r) => Object.fromEntries(d[t].header.map((h, i) => [h, String(r[i])])));
+    // เหมือน Code.gs: แปลงหัวไทยกลับ แล้วข้ามคอลัมน์ที่ระบบสร้างไว้อ่านอย่างเดียว
+    back[t] = d[t].rows.map((r) => Object.fromEntries(d[t].header.map((h, i) => [Core.fieldOf(t, h), String(r[i])])
+      .filter(([k]) => Core.TABLES[t].includes(k))));
   });
   const loaded = Core.normalize(back);
-  assert.deepEqual(loaded.requests.map((r) => r.status), ['issued', 'borrowed']);
+  assert.deepEqual(loaded.requests.sort((a, b) => a.id - b.id).map((r) => [r.status, r.request_no, r.borrower_name, r.department]),
+    [['issued', 'WD' + String(new Date().getFullYear() + 543).slice(2) + '-001', 'สมชาย ใจดี', 'งานธุรการ'], ['borrowed', 'BR' + String(new Date().getFullYear() + 543).slice(2) + '-001', 'สมชาย ใจดี', 'งานธุรการ']]);
   assert.equal(loaded.items.find((i) => i.code === 'EQ-005').available_qty, nb.available_qty);
   assert.equal(Object.keys(loaded.requests[0]).includes('ประเภท'), false);
 });

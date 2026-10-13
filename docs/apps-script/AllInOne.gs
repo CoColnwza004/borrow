@@ -25,7 +25,7 @@ var ADMIN_PIN = '1234';
 // ชื่อแท็บคงไว้ตามเวอร์ชันก่อน เพื่อให้ชีตที่ใช้งานอยู่แล้วอ่านต่อได้
 var SHEET_NAMES = {
   items: 'อุปกรณ์',
-  requests: 'คำขอยืม',
+  requests: 'ประวัติการเบิก',
   request_items: 'รายการในคำขอ',
   movements: 'ประวัติสต็อก',
   departments: 'หน่วยงาน',
@@ -35,13 +35,24 @@ var SHEET_NAMES = {
   on_loan: 'พัสดุที่ถูกยืมอยู่',
 };
 
+// ชื่อแท็บเดิม: ชีตที่ใช้งานอยู่แล้วจะถูกเปลี่ยนชื่อให้อัตโนมัติ (ข้อมูลเดิมอยู่ครบ)
+var LEGACY_NAMES = { requests: ['คำขอยืม'] };
+
+function sheet_(ss, t) {
+  var sh = ss.getSheetByName(SHEET_NAMES[t]);
+  if (sh) return sh;
+  var old = (LEGACY_NAMES[t] || []).map(function (n) { return ss.getSheetByName(n); }).filter(Boolean)[0];
+  if (old) old.setName(SHEET_NAMES[t]);
+  return old || null;
+}
+
 /**
  * รันจากหน้า Apps Script เพื่อสร้างแท็บและใส่รายการพัสดุ/แผนกจาก SeedData
  * รันซ้ำได้จนกว่าจะเริ่มมีการเบิก/ยืมจริง (จะเขียนทับรายการพัสดุ แผนก และประวัติสต็อกทั้งหมด)
  */
 function setup() {
   if (typeof SEED_DATA === 'undefined') throw new Error('ไม่พบไฟล์ SeedData กรุณาคัดลอก docs/seed-data.js มาเป็นไฟล์ SeedData ก่อน');
-  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.requests);
+  var sh = sheet_(SpreadsheetApp.getActiveSpreadsheet(), 'requests');
   if (sh && sh.getLastRow() > 1) {
     throw new Error('มีรายการเบิก/ยืมในชีตแล้ว ไม่ได้เขียนทับ (ถ้าต้องการเริ่มใหม่ให้ลบแท็บ "' + SHEET_NAMES.requests + '" ก่อน)');
   }
@@ -115,6 +126,18 @@ function handle_(body) {
   }
 }
 
+// แท็บประวัติการเบิก: หัวคอลัมน์อ่านง่ายสีเขียวอ่อน ข้อมูลระบบท้ายตารางสีเทา รายการพัสดุขึ้นบรรทัดใหม่ทีละชิ้น
+function formatReadable_(sh, d, nRows) {
+  var n = d.header.length;
+  sh.setFrozenColumns(1);
+  sh.getRange(1, 1, 1, d.front).setBackground('#e6f4ea');
+  sh.getRange(1, d.front + 1, 1, d.sys).setBackground('#f1f3f4').setFontColor('#80868b').setFontWeight('normal');
+  sh.getRange(1, 1, Math.max(nRows, 2), n).setVerticalAlignment('top');
+  sh.autoResizeColumns(1, d.front);
+  sh.setColumnWidth(d.wide, 340);
+  sh.getRange(1, d.wide, Math.max(nRows, 2), 1).setWrap(true);
+}
+
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
@@ -128,14 +151,17 @@ function loadDb_() {
   var db = BorrowCore.emptyDb();
   RAW_ = {};
   Object.keys(BorrowCore.TABLES).forEach(function (t) {
-    var sh = ss.getSheetByName(SHEET_NAMES[t]);
+    var sh = sheet_(ss, t);
     if (!sh || sh.getLastRow() < 2) return;
     var values = sh.getDataRange().getValues();
     RAW_[t] = values.map(function (r) { return r.map(String); });
-    var header = values.shift();
+    // หัวคอลัมน์ภาษาไทย (เช่น เลขที่, แผนก) แปลงกลับเป็นชื่อช่องในระบบ คอลัมน์ที่ระบบสร้างไว้อ่านอย่างเดียวข้ามไป
+    var cols = BorrowCore.TABLES[t];
+    var header = values.shift().map(function (h) { return BorrowCore.fieldOf(t, String(h)); });
     db[t] = values.map(function (row) {
       var o = {};
       header.forEach(function (h, i) {
+        if (cols.indexOf(h) < 0) return;
         var v = row[i];
         // ถ้ามีคนพิมพ์วันที่ลงในชีตเอง Sheets จะแปลงเป็น Date ให้แปลงกลับเป็นข้อความ
         if (v instanceof Date) v = Utilities.formatDate(v, tz, h === 'created_at' || /_at$/.test(h) ? 'yyyy-MM-dd HH:mm' : 'yyyy-MM-dd');
@@ -154,7 +180,7 @@ function saveDb_(db) {
     var d = data[t];
     var n = d.header.length;
     var rows = [d.header].concat(d.rows).map(function (r) { return r.map(String); });
-    var sh = ss.getSheetByName(SHEET_NAMES[t]);
+    var sh = sheet_(ss, t);
     var cur = null;
     if (!sh) {
       sh = ss.insertSheet(SHEET_NAMES[t]);
@@ -172,9 +198,10 @@ function saveDb_(db) {
     // จัดหัวตารางเฉพาะแท็บใหม่ หรือเมื่อหัวคอลัมน์เปลี่ยน
     if (!cur || JSON.stringify(cur[0]) !== JSON.stringify(rows[0])) {
       sh.setFrozenRows(1);
-      sh.getRange(1, 1, 1, n).setFontWeight('bold').setBackground(null);
+      sh.getRange(1, 1, 1, n).setFontWeight('bold').setBackground(null).setFontColor(null);
       // คอลัมน์ภาษาไทยที่ระบบเขียนให้อัตโนมัติ (แก้ในชีตไม่มีผล) ทำหัวคอลัมน์สีฟ้าอ่อนไว้
       if (d.extra) sh.getRange(1, n - d.extra + 1, 1, d.extra).setBackground('#e8f0fe');
+      if (d.front) formatReadable_(sh, d, rows.length);
     }
   });
 }
@@ -203,6 +230,13 @@ var BorrowCore = (function () {
     departments: ['name', 'full_name'],
     categories: ['name'],
   };
+  // หัวคอลัมน์ภาษาไทยในแท็บประวัติการเบิก ที่เป็นข้อมูลจริง (อ่านกลับเข้าระบบ)
+  var LABELS = { requests: { request_no: 'เลขที่', borrower_name: 'ผู้เบิก/ผู้ยืม', department: 'แผนก', note: 'หมายเหตุ' } };
+  function fieldOf(table, header) {
+    var m = LABELS[table];
+    if (m) for (var k in m) if (m[k] === header) return k;
+    return header;
+  }
   var NUMERIC = ['id', 'total_qty', 'available_qty', 'min_qty', 'active', 'request_id', 'item_id', 'qty', 'returned_qty', 'lost_qty',
     'available_after', 'total_after'];
 
@@ -250,8 +284,8 @@ var BorrowCore = (function () {
     db.request_items.forEach(function (l) {
       if (open[l.request_id]) lent[l.item_id] = (lent[l.item_id] || 0) + Math.max(0, l.qty - l.returned_qty - l.lost_qty);
     });
+    // คงเหลือติดลบได้ (เบิกของที่หมด = ค้างจ่าย) รับเข้าครั้งถัดไปจะหักล้างเอง
     db.items.forEach(function (i) {
-      if (i.available_qty < 0) i.available_qty = 0;
       i.total_qty = i.available_qty + (lent[i.id] || 0);
     });
     return db;
@@ -263,8 +297,9 @@ var BorrowCore = (function () {
     var item = byId(db.items, o.item_id) || fail('ไม่พบรายการพัสดุ');
     var available = item.available_qty + o.available_delta;
     var total = item.total_qty + o.total_delta;
-    if (available < 0) fail('"' + item.name + '" คงเหลือไม่พอ (คงเหลือ ' + item.available_qty + ' ' + item.unit + ')');
-    if (total < 0 || available > total) fail('ยอดสต็อกของ "' + item.name + '" ไม่ถูกต้องหลังปรับปรุง');
+    // ห้ามลดจนติดลบ ยกเว้นการเบิก (allowNegative) ส่วนการรับเข้า/คืนเข้าสต็อกที่ติดลบอยู่ทำได้เสมอ
+    if (!o.allowNegative && o.available_delta < 0 && available < 0) fail('"' + item.name + '" คงเหลือไม่พอ (คงเหลือ ' + item.available_qty + ' ' + item.unit + ')');
+    if ((!o.allowNegative && o.total_delta < 0 && total < 0) || available > total) fail('ยอดสต็อกของ "' + item.name + '" ไม่ถูกต้องหลังปรับปรุง');
     item.available_qty = available;
     item.total_qty = total;
     db.movements.push({
@@ -306,7 +341,8 @@ var BorrowCore = (function () {
         var item = byId(db.items, id);
         if (!item || !item.active) fail('มีพัสดุที่ไม่พบหรือถูกปิดใช้งาน');
         if (!allows(item, type)) fail('"' + item.name + '" ' + KINDS[item.kind]);
-        if (merged[id] > item.available_qty) {
+        // เบิกได้แม้ของหมด (ยอดติดลบ) ส่วนการยืมต้องมีของจริง
+        if (type === 'borrow' && merged[id] > item.available_qty) {
           fail('"' + item.name + '" คงเหลือไม่พอ (ขอ ' + merged[id] + ', คงเหลือ ' + item.available_qty + ' ' + item.unit + ')');
         }
       });
@@ -328,7 +364,7 @@ var BorrowCore = (function () {
         var q = merged[id];
         db.request_items.push({ request_id: r.id, item_id: Number(id), qty: q, returned_qty: 0, lost_qty: 0 });
         moveStock(db, ctx, type === 'withdraw'
-          ? { item_id: id, type: 'withdraw', available_delta: -q, total_delta: -q, qty: -q, request_no: r.request_no }
+          ? { item_id: id, type: 'withdraw', available_delta: -q, total_delta: -q, qty: -q, request_no: r.request_no, allowNegative: true }
           : { item_id: id, type: 'borrow', available_delta: -q, total_delta: 0, qty: -q, request_no: r.request_no });
       });
       return r.id;
@@ -513,8 +549,14 @@ var BorrowCore = (function () {
         ['ชื่อพัสดุ', function (m) { return itemOf(m.item_id).name; }],
       ],
     };
+    // วันที่แบบไทยสำหรับคนอ่าน เช่น 12/10/2569 09:15
+    var thaiStamp = function (v) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}))?/.exec(v || '');
+      return m ? Number(m[3]) + '/' + Number(m[2]) + '/' + (Number(m[1]) + 543) + (m[4] ? ' ' + m[4] : '') : '';
+    };
     var out = {};
     Object.keys(TABLES).forEach(function (t) {
+      if (t === 'requests') return; // แท็บประวัติการเบิกจัดรูปแบบอ่านง่ายด้านล่าง
       var cols = TABLES[t];
       var ex = extra[t] || [];
       out[t] = {
@@ -525,10 +567,30 @@ var BorrowCore = (function () {
         }),
       };
     });
-    // วันที่แบบไทยสำหรับคนอ่าน เช่น 12/10/2569 09:15
-    var thaiStamp = function (v) {
-      var m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}))?/.exec(v || '');
-      return m ? Number(m[3]) + '/' + Number(m[2]) + '/' + (Number(m[1]) + 543) + (m[4] ? ' ' + m[4] : '') : '';
+    // แท็บ "ประวัติการเบิก": คอลัมน์อ่านง่ายอยู่หน้า (ล่าสุดอยู่บน) ข้อมูลระบบครบทุกช่องอยู่ท้ายตาราง
+    // คอลัมน์ เลขที่/ผู้เบิก/แผนก/หมายเหตุ เป็นข้อมูลจริงที่ระบบอ่านกลับ (ชื่อหัวภาษาไทยแปลงกลับด้วย fieldOf)
+    var reqFront = [
+      ['เลขที่', function (r) { return r.request_no; }],
+      ['วันที่', function (r) { return thaiStamp(r.created_at); }],
+      ['ประเภท', function (r) { return TYPES[r.type] || ''; }],
+      [LABELS.requests.borrower_name, function (r) { return r.borrower_name; }],
+      ['แผนก', function (r) { return r.department; }],
+      ['รายการพัสดุ', function (r) {
+        return lines(db, r.id).map(function (l) { var it = itemOf(l.item_id); return it.name + ' ×' + l.qty + ' ' + it.unit; }).join('\n');
+      }],
+      ['จำนวนรวม', function (r) { return lines(db, r.id).reduce(function (n, l) { return n + l.qty; }, 0); }],
+      ['สถานะ', function (r) { return STATUS[r.status] || r.status; }],
+      ['กำหนดคืน', function (r) { return r.type === 'borrow' ? thaiStamp(r.due_date) : ''; }],
+      ['หมายเหตุ', function (r) { return r.note; }],
+    ];
+    var reqSys = TABLES.requests.filter(function (c) { return !LABELS.requests[c]; });
+    out.requests = {
+      header: reqFront.map(function (e) { return e[0]; }).concat(reqSys),
+      front: reqFront.length, sys: reqSys.length, wide: 6,
+      rows: db.requests.slice().sort(function (a, b) { return b.id - a.id; }).map(function (r) {
+        return reqFront.map(function (e) { var v = e[1](r); return v === undefined ? '' : v; })
+          .concat(reqSys.map(function (c) { return r[c] === undefined ? '' : r[c]; }));
+      }),
     };
     var loans = [];
     db.requests.filter(function (r) { return r.status === 'borrowed'; })
@@ -635,7 +697,7 @@ var BorrowCore = (function () {
     return db;
   }
 
-  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, emptyDb: emptyDb, ymd: ymd };
+  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;
