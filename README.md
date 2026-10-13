@@ -56,6 +56,22 @@ repo มีไฟล์ [`vercel.json`](vercel.json) อยู่แล้ว (�
 - `API_URL` ใน `docs/config.js` ใช้ได้เลย ไม่ต้องแก้ Apps Script หรือ Deploy ใหม่เพราะย้าย host
 - ย้ายมา Vercel แล้ว ลบเว็บเดิมบน Netlify ได้ที่ **Site configuration → Delete this site** จะได้มีเว็บเดียว
 
+### ทางเลือก: เผยแพร่ด้วย Cloudflare (ฟรี)
+repo มีไฟล์ [`wrangler.jsonc`](wrangler.jsonc) (เผยแพร่โฟลเดอร์ `docs/` แบบไฟล์ล้วน ไม่มีโค้ดฝั่งเซิร์ฟเวอร์) และ [`docs/_headers`](docs/_headers) (ส่วนหัวความปลอดภัยชุดเดียวกับ Netlify/Vercel) อยู่แล้ว
+1. เข้า https://dash.cloudflare.com → สมัคร/ล็อกอิน (แผน **Free**)
+2. เมนู **Compute (Workers) → Workers & Pages → Create application**
+3. เลือก **Import a repository** (หรือ Continue with GitHub) → อนุญาต Cloudflare เข้าถึง GitHub (เลือก *Only select repositories* → `borrow` ได้) → เลือก repo `borrow`
+4. หน้า Set up: Project name เช่น `pakkred-supply`, **Build command เว้นว่าง**, **Deploy command = `npx wrangler deploy`** (ค่าเริ่มต้น) → **Deploy**
+   - ระบบอ่าน `wrangler.jsonc` เอง ไม่ต้องตั้งค่าอื่น
+5. เว็บจะอยู่ที่ `https://pakkred-supply.<ชื่อบัญชี>.workers.dev` ใส่โดเมนของตัวเองได้ที่ **Settings → Domains & Routes**
+6. ทุกครั้งที่ push เข้า branch หลักของ repo Cloudflare จะอัปเดตเว็บให้เอง (ประมาณ 1 นาที)
+
+ถ้าบัญชีของคุณเห็นแท็บ **Pages** แทน (Create → Pages → Connect to Git) ให้ตั้ง Framework preset = **None**, Build command เว้นว่าง, **Build output directory = `docs`** แล้วกด Save and Deploy
+(เว็บจะอยู่ที่ `https://<ชื่อโปรเจกต์>.pages.dev` และอ่าน `docs/_headers` ให้เอง)
+
+- `API_URL` ใน `docs/config.js` ใช้ได้เลย ไม่ต้องแก้ Apps Script หรือ Deploy ใหม่เพราะย้าย host
+- ย้ายมา Cloudflare แล้ว ลบโปรเจกต์บน Vercel (Settings → General → Delete Project) และเว็บบน Netlify ได้ จะได้มีเว็บเดียว
+
 ### ขั้นที่ 2: เชื่อม Google Sheets เพื่อให้ทุกเครื่องใช้ข้อมูลพัสดุ/สต็อกชุดเดียวกัน (ประมาณ 10 นาที)
 
 **Google Sheet มาจากไหน?** สร้างใหม่เองด้วยบัญชี Google (Gmail หรือบัญชี Google Workspace ของโรงพยาบาล) ไม่ต้องมีชีตเดิม

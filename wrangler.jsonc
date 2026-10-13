@@ -1,0 +1,10 @@
+// Cloudflare Workers (Static Assets): เผยแพร่โฟลเดอร์ docs/ ตรง ๆ ไม่มีโค้ดฝั่งเซิร์ฟเวอร์
+// ส่วนหัวความปลอดภัยอยู่ใน docs/_headers (Cloudflare Pages ก็อ่านไฟล์เดียวกัน)
+{
+  "name": "borrow",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./docs",
+    "not_found_handling": "none"
+  }
+}
