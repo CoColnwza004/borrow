@@ -71,6 +71,25 @@ function installDailyTrigger() {
   ScriptApp.newTrigger('autoReturnDaily').timeBased().everyDays(1).atHour(0).nearMinute(5).create();
 }
 
+/**
+ * ก่อนเปิดใช้งานจริง: รันฟังก์ชันนี้ 1 ครั้งจากหน้า Apps Script (เลือก resetForLaunch แล้วกด เรียกใช้)
+ * ล้างประวัติการเบิก/ยืม รายการในคำขอ และประวัติสต็อกทั้งหมด แล้วตั้งยอดคงเหลือทุกรายการเป็น 0
+ * รายชื่อพัสดุ รายชื่อแผนก และหมวดหมู่อยู่ครบ · ถ้ารันผิด ย้อนกลับได้ที่ Google Sheet → ไฟล์ → ประวัติเวอร์ชัน
+ */
+function resetForLaunch() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var db = loadDb_();
+    var n = BorrowCore.resetForLaunch(db);
+    saveDb_(db);
+    Logger.log('รีเซ็ตเรียบร้อย: ลบใบเบิก/ยืม ' + n.requests + ' ใบ, ประวัติสต็อก ' + n.movements + ' รายการ, ตั้งยอด ' +
+      db.items.length + ' รายการเป็น 0 (เก็บแผนก ' + db.departments.length + ' แผนกไว้)');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 /** ทำงานอัตโนมัติทุกวันจาก installDailyTrigger() */
 function autoReturnDaily() {
   var lock = LockService.getScriptLock();
@@ -697,7 +716,18 @@ var BorrowCore = (function () {
     return db;
   }
 
-  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  // เริ่มใช้งานจริง: ล้างใบเบิก/ใบยืมและประวัติสต็อกทั้งหมด ตั้งยอดทุกรายการเป็น 0
+  // เก็บรายชื่อพัสดุ (ชื่อ รหัส หน่วย หมวดหมู่ ที่เก็บ จุดเตือน) รายชื่อแผนก และหมวดหมู่ไว้เหมือนเดิม
+  function resetForLaunch(db) {
+    var cleared = { requests: db.requests.length, movements: db.movements.length };
+    db.requests = [];
+    db.request_items = [];
+    db.movements = [];
+    db.items.forEach(function (i) { i.available_qty = 0; i.total_qty = 0; });
+    return cleared;
+  }
+
+  return { resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

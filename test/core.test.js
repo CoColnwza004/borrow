@@ -105,6 +105,7 @@ test('core: legacy rows without type/kind still load', () => {
 
 function mockAppsScript() {
   const sheets = {};
+  const logs = [];
   const mkSheet = (name) => {
     const sh = {
       data: [],
@@ -160,8 +161,9 @@ function mockAppsScript() {
     ScriptApp,
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: (s) => ({ body: s, setMimeType() { return this; } }) },
     Utilities: { formatDate: (d) => d.toISOString().slice(0, 10) },
+    Logger: { log: (m) => { logs.push(m); } },
   });
-  return { sheets, ctx, triggers, order };
+  return { sheets, ctx, triggers, order, logs };
 }
 
 test('Apps Script: only changed tabs are rewritten, shrinking tabs leave no stale rows', () => {
@@ -475,4 +477,30 @@ test('Apps Script: withdrawing an out-of-stock item writes a negative balance to
   assert.equal(post({ action: 'load' }).state.items.find((i) => i.id === id).available_qty, -3);
   assert.equal(post({ action: 'stock', payload: { item_id: id, type: 'receive', qty: 10 }, pin: '1234' }).ok, true);
   assert.equal(cell(), '7');
+});
+
+test('Apps Script: resetForLaunch clears history and zeroes stock but keeps items and departments', () => {
+  const { sheets, ctx, logs } = mockAppsScript();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
+  ctx.setup();
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  post({ action: 'createRequest', payload: { borrower_name: 'ทดลอง', department: 'ICU', type: 'withdraw', items: [{ item_id: 2, qty: 3 }] } });
+  post({ action: 'createRequest', payload: { borrower_name: 'ทดลอง', department: 'ER', type: 'borrow', due_date: DUE, items: [{ item_id: 4, qty: 1 }] } });
+  post({ action: 'saveItem', payload: { id: 5, code: 'NSO-005', name: 'ชื่อที่แก้แล้ว', category: 'เวชภัณฑ์มิใช่ยา', unit: 'กล่อง', min_qty: 7, location: 'ห้อง 2', kind: 'both', active: 1 }, pin: '1234' });
+  const items = sheets['อุปกรณ์'].data.length;
+  const depts = sheets['หน่วยงาน'].data.length;
+  ctx.resetForLaunch();
+  assert.match(logs.at(-1), /ลบใบเบิก\/ยืม 2 ใบ/);
+  for (const t of ['ประวัติการเบิก', 'รายการในคำขอ', 'ประวัติสต็อก', 'รายการเบิก-ยืม', 'พัสดุที่ถูกยืมอยู่']) assert.equal(sheets[t].data.length, 1, t + ' เหลือแค่หัวตาราง');
+  assert.equal(sheets['อุปกรณ์'].data.length, items);
+  assert.equal(sheets['หน่วยงาน'].data.length, depts);
+  const st = post({ action: 'load', pin: '1234' }).state;
+  assert.ok(st.items.every((i) => i.available_qty === 0 && i.total_qty === 0));
+  assert.equal(st.requests.length + st.movements.length + st.request_items.length, 0);
+  const edited = st.items.find((i) => i.id === 5);
+  assert.deepEqual([edited.name, edited.unit, edited.min_qty, edited.location], ['ชื่อที่แก้แล้ว', 'กล่อง', 7, 'ห้อง 2']);
+  // ใช้งานต่อได้ทันที: เลขที่เริ่มใหม่ และเบิกของที่ยอดเป็น 0 ได้ (ติดลบ)
+  const w = post({ action: 'createRequest', payload: { borrower_name: 'คนแรก', department: 'ICU', type: 'withdraw', items: [{ item_id: 2, qty: 1 }] } });
+  assert.equal(w.ok, true);
+  assert.match(post({ action: 'load', pin: '1234' }).state.requests[0].request_no, /^WD\d\d-001$/);
 });

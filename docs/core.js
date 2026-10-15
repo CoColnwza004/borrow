@@ -487,7 +487,18 @@ var BorrowCore = (function () {
     return db;
   }
 
-  return { TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  // เริ่มใช้งานจริง: ล้างใบเบิก/ใบยืมและประวัติสต็อกทั้งหมด ตั้งยอดทุกรายการเป็น 0
+  // เก็บรายชื่อพัสดุ (ชื่อ รหัส หน่วย หมวดหมู่ ที่เก็บ จุดเตือน) รายชื่อแผนก และหมวดหมู่ไว้เหมือนเดิม
+  function resetForLaunch(db) {
+    var cleared = { requests: db.requests.length, movements: db.movements.length };
+    db.requests = [];
+    db.request_items = [];
+    db.movements = [];
+    db.items.forEach(function (i) { i.available_qty = 0; i.total_qty = 0; });
+    return cleared;
+  }
+
+  return { resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;
