@@ -68,14 +68,30 @@ const ICON = {
 
 // ===================== Data layer =====================
 // โหมดทดลอง: เก็บใน localStorage / โหมดจริง: เรียก Google Apps Script
+// ข้อความบอกสาเหตุที่พบบ่อยเมื่อเชื่อม Apps Script ไม่ได้ ให้เจ้าหน้าที่แก้ได้เอง
+const DEPLOY_HINT = 'ตรวจใน Apps Script: Deploy → Manage deployments → "ดำเนินการในฐานะ" = ฉัน (Me) และ "ผู้ที่มีสิทธิ์เข้าถึง" = ทุกคน (Anyone)';
 async function remote(action, payload) {
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // text/plain เพื่อไม่ให้ติด CORS preflight
-    body: JSON.stringify({ action, payload, pin: state.pin }),
-  });
-  if (!res.ok) throw new Error('เชื่อมต่อ Google Sheets ไม่สำเร็จ (' + res.status + ')');
-  const data = await res.json();
+  let res;
+  try {
+    res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // text/plain เพื่อไม่ให้ติด CORS preflight
+      body: JSON.stringify({ action, payload, pin: state.pin }),
+    });
+  } catch {
+    // Google ส่งหน้าเข้าสู่ระบบแทนข้อมูล (สิทธิ์ไม่ใช่ Anyone) หรืออินเทอร์เน็ตหลุด
+    throw new Error(navigator.onLine === false ? 'ไม่มีการเชื่อมต่ออินเทอร์เน็ต' : 'เชื่อมต่อ Google Sheets ไม่ได้ — ' + DEPLOY_HINT);
+  }
+  if (!res.ok) throw new Error('เชื่อมต่อ Google Sheets ไม่สำเร็จ (' + res.status + ') — ' + DEPLOY_HINT);
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(/doPost|function not found|ไม่พบฟังก์ชัน/i.test(text)
+      ? 'Apps Script ไม่มีฟังก์ชัน doPost — วางโค้ด AllInOne.gs ให้ครบทั้งไฟล์ บันทึก แล้ว Deploy ใหม่'
+      : 'Apps Script ตอบกลับไม่ใช่ข้อมูลของระบบ — ' + DEPLOY_HINT);
+  }
   if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
   if (data.sheet) state.sheet = data.sheet; // ลิงก์ Google Sheet ส่งมาเฉพาะคำขอที่มี PIN เจ้าหน้าที่
   return data;
