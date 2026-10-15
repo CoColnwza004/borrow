@@ -134,6 +134,7 @@ const store = {
       state.db = demoView(0);
     } else {
       state.db = BorrowCore.normalize((await remote('load')).state);
+      state.syncedAt = new Date();
       if (!state.pin) lsSet(CACHE_KEY, JSON.stringify(state.db));
     }
   },
@@ -406,11 +407,11 @@ function loginHud() {
 }
 
 // ===================== Routing =====================
-// ผู้ใช้ทั่วไปเห็นหน้าแรก + หน้าเบิกพัสดุ หน้าอื่นเปิดได้หลังเข้าสู่ระบบเจ้าหน้าที่
+// ผู้ใช้ทั่วไปเห็นหน้าแรก หน้าเบิกพัสดุ และพัสดุคงเหลือ (ดูอย่างเดียว) หน้าอื่นเปิดได้หลังเข้าสู่ระบบเจ้าหน้าที่
 const ROUTES = {
   home: { title: 'หน้าแรก', render: renderHome },
   request: { title: 'เบิกพัสดุ', render: renderRequestForm },
-  items: { title: 'พัสดุคงเหลือ', render: renderItems, admin: true },
+  items: { title: 'พัสดุคงเหลือ', render: renderItems },
   requests: { title: 'ประวัติเบิก', render: renderRequests, admin: true },
   dashboard: { title: 'ภาพรวม', render: renderDashboard, admin: true },
   movements: { title: 'ประวัติสต็อก', render: renderMovements, admin: true },
@@ -430,7 +431,7 @@ function renderNav() {
   const links = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['requests', 'ประวัติเบิก', overdue], ['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['sheet', 'Google Sheet'], ['settings', 'ตั้งค่า']];
   const cur = currentRoute();
   const a = ([k, label, n]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur ? 'active' : ''}">${label}${n ? `<span class="badge">${n}</span>` : ''}</a>`;
-  $('#nav-links').innerHTML = (isAdmin() ? links : links.slice(0, 2)).map(a).join('');
+  $('#nav-links').innerHTML = (isAdmin() ? links : links.slice(0, 3)).map(a).join('');
   fitNav();
 }
 
@@ -567,18 +568,48 @@ async function route() {
 
 // โหมด Google Sheets: ดึงข้อมูลล่าสุดเบื้องหลัง แล้ววาดใหม่ถ้ามีการแก้ไข (จากเครื่องอื่นหรือแก้ในชีตโดยตรง)
 // หน้าฟอร์มเบิก/ยืม วาดเฉพาะรายการพัสดุใหม่ ข้อมูลที่กรอกไว้ไม่หาย
-async function syncFromSheet() {
-  if (DEMO || modalOpen()) return;
+// หน้าพัสดุคงเหลือ: วาดเฉพาะตารางใหม่ (ช่องค้นหา/ตัวกรองที่กำลังใช้ไม่หาย)
+let redrawItems = null;
+let syncing = false;
+const liveText = () => state.syncedAt
+  ? 'อัปเดตอัตโนมัติ · ล่าสุด ' + state.syncedAt.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' น.'
+  : 'กำลังดึงยอดล่าสุด…';
+function showLive(busy) {
+  const live = $('#live');
+  if (!live) return;
+  live.classList.toggle('busy', !!busy);
+  $('#live-text').textContent = busy ? 'กำลังดึงยอดล่าสุด…' : liveText();
+}
+async function syncFromSheet({ manual = false } = {}) {
+  if (DEMO || modalOpen() || syncing) return;
   const key = currentRoute();
+  syncing = true;
+  showLive(true);
   try {
     await store.load();
     const snap = JSON.stringify(state.db);
-    if (snap === lastSnapshot) return;
+    if (snap === lastSnapshot) { if (manual) toast('ยอดเป็นปัจจุบันแล้ว'); return; }
     lastSnapshot = snap;
     if (modalOpen() || currentRoute() !== key) return;
-    if (key === 'request') redrawPickList?.(); else render();
-  } catch (e) { toast(e.message, true); }
+    if (key === 'request') redrawPickList?.();
+    else if (key === 'items' && redrawItems) redrawItems();
+    else render();
+  } catch (e) { toast(e.message, true); } finally {
+    syncing = false;
+    showLive(false);
+  }
 }
+// ดึงยอดจาก Google Sheet ทุก 45 วินาทีขณะมีคนใช้งานหน้าเว็บอยู่ (แท็บเปิดอยู่และมีการแตะ/เลื่อนภายใน 5 นาที)
+// หยุดเองเมื่อไม่มีใครใช้ เพื่อไม่ให้ใช้โควตา Apps Script เกินจำเป็น
+let lastActive = Date.now();
+['pointerdown', 'keydown', 'scroll', 'touchstart', 'mousemove'].forEach((ev) =>
+  addEventListener(ev, () => { lastActive = Date.now(); }, { passive: true, capture: true }));
+setInterval(() => {
+  const idle = Date.now() - lastActive;
+  if (document.visibilityState !== 'visible' || idle > 5 * 60e3 || idle < 2000) return; // ไม่ดึงระหว่างกำลังกดปุ่ม
+  // เฉพาะหน้าที่วาดใหม่ได้โดยไม่ทำให้สิ่งที่กำลังพิมพ์หาย
+  if (['home', 'request', 'items', 'dashboard'].includes(currentRoute())) syncFromSheet();
+}, 45e3);
 // กลับมาที่แท็บ / แอปบนมือถือ → ดึงยอดล่าสุด
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncFromSheet(); });
 window.addEventListener('hashchange', route);
@@ -595,10 +626,9 @@ function renderHome(page) {
   const ready = items.filter((i) => i.available_qty > 0);
   const low = items.filter(isLow);
   const todayTh = new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long' });
-  // ตัวเลขกดดูรายละเอียดได้เฉพาะเจ้าหน้าที่ (หน้าพัสดุคงเหลือ)
-  const stat = (v, l, q = '', warn = false) => isAdmin()
-    ? `<a href="#/items${q}" class="${warn ? 'warn' : ''}"><span class="v">${v}</span><span class="l">${l}</span></a>`
-    : `<div class="${warn ? 'warn' : ''}"><span class="v">${v}</span><span class="l">${l}</span></div>`;
+  // กดตัวเลขเพื่อดูหน้าพัสดุคงเหลือ
+  const stat = (v, l, q = '', warn = false) =>
+    `<a href="#/items${q}" class="${warn ? 'warn' : ''}"><span class="v">${v}</span><span class="l">${l}</span></a>`;
   page.insertAdjacentHTML('beforeend', `
     <section class="hero">
       <p class="eyebrow">${esc(CONFIG.HOSPITAL_NAME || 'ระบบพัสดุ')} <span class="eyebrow-date">· ${esc(todayTh)}</span></p>
@@ -1046,18 +1076,21 @@ function renderItems(page) {
   const params = hashParams();
   page.insertAdjacentHTML('beforeend', `
     <div class="page-head-row">
-      <div class="page-head"><h1>พัสดุคงเหลือ</h1><p class="lead">ยอดคงเหลือล่าสุดจาก Google Sheet</p></div>
+      <div class="page-head"><h1>พัสดุคงเหลือ</h1><p class="lead">ยอดคงเหลือจาก Google Sheet อัปเดตให้อัตโนมัติ</p></div>
       ${isAdmin() ? '<button class="btn primary" id="btn-add">+ เพิ่มพัสดุ</button>' : ''}
     </div>
+    ${DEMO ? '' : `<div class="live" id="live"><span class="live-dot" aria-hidden="true"></span>
+      <span id="live-text">${liveText()}</span>
+      <button type="button" class="btn sm" id="live-refresh">รีเฟรช</button></div>`}
     <div class="toolbar">
       <div class="search">${ICON.search}<input type="search" id="f-q" placeholder="ค้นหาชื่อ รหัส หรือสถานที่เก็บ" value="${esc(params.get('q') || '')}"></div>
       <select id="f-cat" style="width:auto">${options(state.db.categories, params.get('cat'), 'ทุกหมวดหมู่')}</select>
-      <div class="segmented" id="f-kind">
+      ${isAdmin() ? `<div class="segmented" id="f-kind">
         <button data-kind="">ทั้งหมด</button><button data-kind="withdraw">เบิกได้</button><button data-kind="borrow">ยืมได้</button>
-      </div>
+      </div>` : ''}
       <label class="check"><input type="checkbox" id="f-low" ${params.get('low') === '1' ? 'checked' : ''}> ใกล้หมด</label>
       <span class="spacer"></span>
-      <button class="btn" id="btn-export">ส่งออก CSV</button>
+      ${isAdmin() ? '<button class="btn" id="btn-export">ส่งออก CSV</button>' : ''}
     </div>
     <div class="item-grid" id="items-grid"></div>`);
   let kind = params.get('kind') || '';
@@ -1080,10 +1113,17 @@ function renderItems(page) {
   const actionBtns = (i) => BorrowCore.allows(i, 'withdraw')
     ? `<a class="btn sm primary" href="#/request?item=${i.id}" ${i.active ? '' : 'hidden'}>เบิก</a>` : '';
 
+  // จำยอดที่แสดงอยู่ เมื่อดึงจาก Google Sheet แล้วยอดเปลี่ยน การ์ดนั้นจะกะพริบให้เห็น
+  let shown = null;
   const draw = () => {
     $$('#f-kind button').forEach((b) => b.classList.toggle('active', b.dataset.kind === kind));
-    $('#items-grid').innerHTML = filtered().map((i) => `
-      <div class="item-card${i.available_qty <= 0 ? ' out' : ''}" data-item="${i.id}">
+    const prev = shown;
+    shown = {};
+    $('#items-grid').innerHTML = filtered().map((i) => {
+      shown[i.id] = i.available_qty;
+      const changed = prev && i.id in prev && prev[i.id] !== i.available_qty;
+      return `
+      <div class="item-card${i.available_qty <= 0 ? ' out' : ''}${changed ? ' changed' : ''}" data-item="${i.id}">
         <div class="top">
           <span class="pick-icon ${i.kind === 'borrow' ? 'borrow' : ''}">${i.kind === 'borrow' ? ICON.borrow : ICON.box}</span>
           <div style="flex:1;min-width:0"><div class="name">${esc(i.name)}</div><div class="code">${esc(i.code)} · ${esc(i.category || 'ไม่ระบุหมวด')}</div></div>
@@ -1097,7 +1137,8 @@ function renderItems(page) {
         <div class="qty"><b>${fmtNum(i.available_qty)}</b><span>${esc(i.unit)} คงเหลือ</span><span class="spacer"></span>
           <span class="actions">${actionBtns(i)}</span></div>
         ${stockBar(i)}
-      </div>`).join('') || '<div class="card empty" style="grid-column:1/-1">ไม่พบรายการ</div>';
+      </div>`;
+    }).join('') || '<div class="card empty" style="grid-column:1/-1">ไม่พบรายการ</div>';
     bindRowClicks($('#items-grid'));
     $$('#items-grid a.btn').forEach((a) => a.addEventListener('click', (e) => e.stopPropagation()));
   };
@@ -1106,10 +1147,12 @@ function renderItems(page) {
   $('#f-cat').addEventListener('change', draw);
   $('#f-low').addEventListener('change', draw);
   $$('#f-kind button').forEach((b) => b.addEventListener('click', () => { kind = b.dataset.kind; draw(); }));
-  $('#btn-export').addEventListener('click', () => downloadCsv('stock',
+  $('#btn-export')?.addEventListener('click', () => downloadCsv('stock',
     ['รหัส', 'ชื่อ', 'หมวดหมู่', 'หน่วย', 'ประเภท', 'จำนวนทั้งหมด', 'คงเหลือ', 'ถูกยืม', 'จุดสั่งซื้อขั้นต่ำ', 'สถานที่เก็บ'],
     filtered().map((i) => [i.code, i.name, i.category, i.unit, KINDS[i.kind], i.total_qty, i.available_qty, i.borrowed_qty, i.min_qty, i.location])));
   if (isAdmin()) $('#btn-add').addEventListener('click', () => itemForm(null));
+  $('#live-refresh')?.addEventListener('click', () => syncFromSheet({ manual: true }));
+  redrawItems = draw;
   draw();
 }
 
