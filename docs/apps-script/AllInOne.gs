@@ -288,9 +288,23 @@ var BorrowCore = (function () {
       db[t] = (db[t] || []).filter(function (r) { return TABLES[t].some(function (c) { return str(r[c]) !== ''; }); })
         .map(function (r) {
           var o = {};
-          TABLES[t].forEach(function (c) { o[c] = NUMERIC.indexOf(c) >= 0 ? Number(r[c] || 0) : str(r[c]); });
+          TABLES[t].forEach(function (c) {
+            // แถวที่เพิ่มในชีตเองแล้วเว้นช่อง active ไว้ = เปิดใช้งาน
+            if (c === 'active' && str(r[c]) === '') { o[c] = 1; return; }
+            o[c] = NUMERIC.indexOf(c) >= 0 ? Number(r[c] || 0) : str(r[c]);
+          });
           return o;
         });
+    });
+    // พัสดุที่เพิ่มเป็นแถวใหม่ในชีตโดยตรง: ไม่ต้องใส่ id เอง (ว่าง/ซ้ำ = ระบบตั้งเลขถัดไปให้ และเขียนกลับตอนบันทึกครั้งถัดไป)
+    var seen = {};
+    var maxId = 0;
+    db.items.forEach(function (i) { if (i.id > maxId) maxId = i.id; });
+    db.items.forEach(function (i) {
+      if (!(i.id > 0) || i.id % 1 || seen[i.id]) i.id = ++maxId;
+      seen[i.id] = true;
+      if (!i.name) i.name = i.code || 'พัสดุ #' + i.id;
+      if (!i.unit) i.unit = 'ชิ้น';
     });
     // ชีตเวอร์ชันก่อนไม่มีคอลัมน์ kind / type
     db.items.forEach(function (i) { if (!KINDS[i.kind]) i.kind = 'both'; });

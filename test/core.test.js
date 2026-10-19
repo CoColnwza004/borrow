@@ -504,3 +504,30 @@ test('Apps Script: resetForLaunch clears history and zeroes stock but keeps item
   assert.equal(w.ok, true);
   assert.match(post({ action: 'load', pin: '1234' }).state.requests[0].request_no, /^WD\d\d-001$/);
 });
+
+test('Apps Script: an item row typed straight into the sheet (no id/active/unit) is picked up and can be withdrawn', () => {
+  const { sheets, ctx } = mockAppsScript();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
+  ctx.setup();
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  const inv = sheets['อุปกรณ์'];
+  const h = inv.data[0];
+  const row = (vals) => h.map((c) => (c in vals ? String(vals[c]) : ''));
+  // เจ้าหน้าที่พิมพ์แถวใหม่ท้ายตาราง: ใส่แค่รหัส ชื่อ คงเหลือ
+  inv.data.push(row({ code: 'NSO-287', name: 'ถุงมือไนไตรล์ M', available_qty: 50 }));
+  // แถวที่คัดลอกมาแล้ว id ซ้ำกับของเดิม
+  inv.data.push(row({ id: 2, code: 'NSO-288', name: 'ผ้าก๊อซ 3x3', unit: 'ห่อ', available_qty: 10, active: 1, kind: 'withdraw' }));
+  const st = post({ action: 'load' }).state;
+  const glove = st.items.find((i) => i.code === 'NSO-287');
+  const gauze = st.items.find((i) => i.code === 'NSO-288');
+  assert.deepEqual([glove.id, glove.active, glove.unit, glove.available_qty, glove.kind], [287, 1, 'ชิ้น', 50, 'both']);
+  assert.equal(gauze.id, 288);
+  assert.equal(st.items.find((i) => i.id === 2).code, 'NSO-002'); // ของเดิมไม่เปลี่ยน
+  const w = post({ action: 'createRequest', payload: { borrower_name: 'ก', department: 'ICU', type: 'withdraw', items: [{ item_id: 287, qty: 5 }, { item_id: 288, qty: 1 }] } });
+  assert.equal(w.ok, true, w.error);
+  // id ที่ระบบตั้งให้ถูกเขียนกลับลงชีต
+  const back = (code) => inv.data.find((r) => r[h.indexOf('code')] === code);
+  assert.deepEqual([back('NSO-287')[0], back('NSO-287')[h.indexOf('available_qty')]], ['287', '45']);
+  assert.deepEqual([back('NSO-288')[0], back('NSO-288')[h.indexOf('available_qty')]], ['288', '9']);
+  assert.equal(inv.data.filter((r, i) => i > 0 && r[0] === '2').length, 1);
+});
