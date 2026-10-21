@@ -1558,9 +1558,101 @@ function renderSettings(page) {
   });
 }
 
+// ===================== วิธีใช้งาน (ป๊อปอัปสอนใช้งาน) =====================
+// แสดงเองครั้งแรกที่อุปกรณ์นี้เปิดเว็บ เปิดดูอีกได้ที่ปุ่ม ? มุมขวาบน ภาพประกอบอยู่ใน docs/tour/
+const TOUR_KEY = 'tour-seen-v1';
+const TOUR = [
+  { img: '1-home', t: 'ยินดีต้อนรับสู่ระบบเบิกพัสดุ', d: 'เบิกพัสดุได้ง่าย ๆ ใน 4 ขั้นตอน ไม่ต้องเขียนใบเบิกเอง ระบบออกใบเบิกเป็นไฟล์ PDF ให้อัตโนมัติ' },
+  { img: '2-start', t: 'ขั้นที่ 1 · กด "เบิกพัสดุ"', d: 'ที่หน้าแรกกดการ์ด เบิกพัสดุ (หรือเมนู เบิกพัสดุ ด้านบน)' },
+  { img: '3-form', t: 'ขั้นที่ 2 · กรอกชื่อและเลือกแผนก', d: 'ใส่ชื่อ-นามสกุล แล้วเลือกแผนกของคุณ ครั้งต่อไประบบจำไว้ให้' },
+  { img: '4-pick', t: 'ขั้นที่ 3 · เลือกพัสดุและจำนวน', d: 'พิมพ์ค้นหาหรือเลื่อนหา กด "+ เลือก" แล้วปรับจำนวนด้วยปุ่ม − +', note: '(พัสดุที่ขึ้นว่า "หมด" ก็กดเลือกเบิกได้ ระบบจะบันทึกยอดในคลังเป็นติดลบไว้ก่อน)' },
+  { img: '5-confirm', t: 'ขั้นที่ 4 · กด "ยืนยันการเบิก"', d: 'ตรวจจำนวนรายการด้านล่าง แล้วกดปุ่มสีฟ้า ยืนยันการเบิก' },
+  { img: '6-pdf', t: 'เสร็จแล้ว! บันทึกใบเบิก PDF', d: 'จะได้เลขที่เอกสาร กดปุ่มบันทึก/ดาวน์โหลด PDF เพื่อเก็บไว้พิมพ์และลงลายมือชื่อ' },
+  { img: '7-stock', t: 'ดูยอดพัสดุคงเหลือ', d: 'เมนู พัสดุคงเหลือ แสดงยอดในคลังล่าสุด อัปเดตให้อัตโนมัติ เปิดวิธีใช้งานนี้อีกครั้งได้ที่ปุ่ม ? มุมขวาบน' },
+];
+function tourSeen() { try { return !!localStorage.getItem(TOUR_KEY); } catch { return !!sessionStorage.getItem?.(TOUR_KEY); } }
+function markTourSeen() { try { localStorage.setItem(TOUR_KEY, '1'); } catch { try { sessionStorage.setItem(TOUR_KEY, '1'); } catch { /* ignore */ } } }
+function showTour() {
+  if ($('dialog.tour')) return;
+  let i = 0;
+  const d = document.createElement('dialog');
+  d.className = 'tour';
+  d.setAttribute('aria-label', 'วิธีใช้งาน');
+  d.innerHTML = `
+    <button type="button" class="icon-btn tour-x" aria-label="ปิดวิธีใช้งาน"><svg viewBox="0 0 24 24"><path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6 6.4 5Z"/></svg></button>
+    <div class="tour-shot"><img alt="" width="393" height="460"></div>
+    <div class="tour-body" aria-live="polite">
+      <p class="tour-step"></p>
+      <h3 class="tour-title"></h3>
+      <p class="tour-text"></p>
+      <p class="tour-note"></p>
+    </div>
+    <div class="tour-dots" aria-hidden="true">${TOUR.map(() => '<i></i>').join('')}</div>
+    <div class="tour-actions">
+      <button type="button" class="btn lg" id="tour-back"></button>
+      <button type="button" class="btn primary lg" id="tour-next"></button>
+    </div>`;
+  document.body.append(d);
+  const img = $('img', d);
+  const close = () => {
+    markTourSeen();
+    if (!motionOK()) { d.close(); d.remove(); return; }
+    d.classList.add('closing');
+    setTimeout(() => { d.close(); d.remove(); }, 220);
+  };
+  const draw = (dir = 0) => {
+    const s = TOUR[i];
+    img.src = `tour/${s.img}.jpg`;
+    img.alt = s.t;
+    $('.tour-step', d).textContent = `${i + 1} / ${TOUR.length}`;
+    $('.tour-title', d).textContent = s.t;
+    $('.tour-text', d).textContent = s.d;
+    $('.tour-note', d).textContent = s.note || '';
+    $('.tour-note', d).hidden = !s.note;
+    $$('.tour-dots i', d).forEach((dot, k) => dot.classList.toggle('on', k === i));
+    $('#tour-back', d).textContent = i ? 'ย้อนกลับ' : 'ข้าม';
+    $('#tour-next', d).textContent = i === TOUR.length - 1 ? 'เริ่มใช้งาน' : 'ถัดไป';
+    if (TOUR[i + 1]) new Image().src = `tour/${TOUR[i + 1].img}.jpg`; // โหลดภาพถัดไปรอไว้
+    if (dir && motionOK()) {
+      [$('.tour-shot', d), $('.tour-body', d)].forEach((el) => el.animate(
+        [{ opacity: 0, transform: `translateX(${dir * 24}px)` }, { opacity: 1, transform: 'none' }],
+        { duration: 280, easing: 'cubic-bezier(.22,1,.36,1)' }));
+    }
+  };
+  const go = (n) => { if (n < 0) return close(); if (n >= TOUR.length) return close(); const dir = n > i ? 1 : -1; i = n; draw(dir); };
+  $('#tour-next', d).addEventListener('click', () => go(i + 1));
+  $('#tour-back', d).addEventListener('click', () => (i ? go(i - 1) : close()));
+  $('.tour-x', d).addEventListener('click', close);
+  d.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+  d.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') go(i + 1);
+    if (e.key === 'ArrowLeft' && i) go(i - 1);
+  });
+  // ปัดซ้าย/ขวาบนมือถือ
+  let sx = null;
+  d.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
+  d.addEventListener('touchend', (e) => {
+    if (sx === null) return;
+    const dx = e.changedTouches[0].clientX - sx;
+    sx = null;
+    if (Math.abs(dx) > 50) { if (dx < 0) go(i + 1); else if (i) go(i - 1); }
+  });
+  draw();
+  d.showModal();
+  $('#tour-next', d).focus();
+}
+$('#btn-help').addEventListener('click', showTour);
+// เปิดเองเฉพาะครั้งแรกของอุปกรณ์นี้ (ไม่แสดงซ้อนหน้าต่างอื่น)
+function autoTour() {
+  if (tourSeen() || navigator.webdriver) return;
+  if (modalOpen() || $('.hud')) { setTimeout(autoTour, 1500); return; }
+  showTour();
+}
+
 // ===================== Boot =====================
 (async () => {
   renderMode();
+  setTimeout(autoTour, 800);
   $('#page').innerHTML = '<div class="skel" role="status"><span class="vh">กำลังโหลดข้อมูล...</span><i class="sk sk-h1"></i><i class="sk sk-lead"></i><div class="sk-grid"><i class="sk sk-card"></i><i class="sk sk-card"></i></div></div>';
   // เปิดหน้าทันทีจากข้อมูลที่เก็บไว้ครั้งก่อน แล้วดึงยอดล่าสุดจาก Google Sheets ตามมา (ฟอร์มที่กรอกไว้ไม่หาย)
   if (!DEMO && !state.pin) {
