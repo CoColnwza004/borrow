@@ -4,6 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const Core = require('../docs/core.js');
+const SEED = require('../docs/seed-data.js');
+// ข้อมูลพัสดุจริง (docs/seed-data.js): จำนวนรายการ และยอดตั้งต้นของพัสดุตาม id
+const N = SEED.items.length;
+const Q = (id) => SEED.items[id - 1][4];
 
 const admin = { isAdmin: true };
 const user = { isAdmin: false };
@@ -186,7 +190,7 @@ test('Apps Script: only changed tabs are rewritten, shrinking tabs leave no stal
   assert.ok(!sheets['หน่วยงาน'].data.some((r) => r[0] === 'ICU'));
   const reloaded = post({ action: 'load', pin: '1234' }).state;
   assert.equal(reloaded.departments.length, 21);
-  assert.equal(reloaded.items.find((i) => i.id === 2).available_qty, 724);
+  assert.equal(reloaded.items.find((i) => i.id === 2).available_qty, Q(2) - 1);
 });
 
 test('Apps Script: old "คำขอยืม" tab is renamed to "ประวัติการเบิก" and keeps its data', () => {
@@ -219,7 +223,7 @@ test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () =
   assert.throws(() => ctx.setup(), /SeedData/);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/seed-data.js'), 'utf8'), ctx);
   ctx.setup();
-  assert.equal(sheets['อุปกรณ์'].data.length, 287);
+  assert.equal(sheets['อุปกรณ์'].data.length, N + 1);
   assert.equal(sheets['หน่วยงาน'].data.length, 23);
   assert.deepEqual(JSON.parse(JSON.stringify(sheets['พัสดุที่ถูกยืมอยู่'].data)), [['เลขที่', 'วันที่ยืม', 'ผู้ยืม', 'แผนก', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'จำนวนที่ยังไม่คืน', 'หน่วย', 'กำหนดคืน']]);
   ctx.setup(); // ยังไม่มีการเบิก/ยืม รันซ้ำได้
@@ -241,7 +245,7 @@ test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () =
   assert.equal(create.state.movements.length, 0);
   const pub = JSON.parse(ctx.doGet().body).state;
   assert.equal(pub.requests.length, 0);
-  assert.equal(pub.items.length, 286);
+  assert.equal(pub.items.length, N);
   assert.equal(pub.departments.length, 22);
   assert.equal(post({ action: 'load', pin: 'wrong' }).state.requests.length, 0);
   // ลิงก์ Google Sheet ส่งให้เฉพาะเจ้าหน้าที่
@@ -249,29 +253,31 @@ test('Apps Script: setup + doPost round-trip through mocked Google Sheets', () =
   assert.equal(post({ action: 'load', pin: '1234' }).sheet.url, 'https://docs.google.com/spreadsheets/d/TEST/edit');
   // reload from "sheet" text values (เจ้าหน้าที่เห็นครบ)
   const loaded = post({ action: 'load', pin: '1234' }).state;
-  assert.equal(loaded.items.find((i) => i.id === 2).available_qty, 723);
+  assert.equal(loaded.items.find((i) => i.id === 2).available_qty, Q(2) - 2);
   assert.equal(loaded.items.find((i) => i.id === 2).kind, 'both');
-  assert.equal(loaded.items.find((i) => i.id === 4).available_qty, 59);
+  assert.equal(loaded.items.find((i) => i.id === 4).available_qty, Q(4) - 1);
   assert.equal(loaded.departments.find((d) => d.name === 'ICU').full_name, 'งานการพยาบาลผู้ป่วยหนัก');
   assert.deepEqual(loaded.requests.sort((a, b) => a.id - b.id).map((r) => [r.type, r.status]), [['withdraw', 'issued'], ['borrow', 'borrowed']]);
   const ret = post({ action: 'returnItems', payload: { id: borrow.result, items: [{ item_id: 4, returned_qty: 1 }] }, pin: '1234' });
   assert.equal(ret.ok, true);
-  assert.equal(ret.state.items.find((i) => i.id === 4).available_qty, 60);
+  assert.equal(ret.state.items.find((i) => i.id === 4).available_qty, Q(4));
 });
 
-test('seed data: stock NSO list and departments', () => {
-  const SEED = require('../docs/seed-data.js');
+test('seed data: stock list from the 21 Oct 2569 file and departments', () => {
   const db = Core.seed(new Date(), SEED);
-  assert.equal(db.items.length, 286);
+  assert.equal(db.items.length, 301);
   assert.equal(db.departments.length, 22);
-  assert.equal(new Set(db.items.map((i) => i.code)).size, 286);
-  assert.equal(new Set(db.items.map((i) => i.name)).size, 286);
-  assert.equal(db.items.reduce((s, i) => s + i.available_qty, 0), 21015);
+  assert.equal(new Set(db.items.map((i) => i.code)).size, 301);
+  assert.equal(new Set(db.items.map((i) => i.name)).size, 301);
+  assert.equal(db.items.reduce((s, i) => s + i.available_qty, 0), 14690);
+  assert.deepEqual([db.items[0].code, db.items[300].code], ['NSO-001', 'NSO-301']);
   const byName = (n) => db.items.find((i) => i.name === n);
-  assert.equal(byName('350 ml water humidifier').available_qty, 725);
-  assert.equal(byName('BP print (ม้วน)').available_qty, 555);
-  assert.equal(byName('เอี๊ยมพลาสติก แขนยาวผูกหลัง').available_qty, 0);
-  assert.equal(byName('เอี๊ยมพลาสติก แขนยาวผูกหลัง').min_qty, 250); // ใช้ 1500 ใน 6 เดือน
+  assert.equal(byName('3 -ways').available_qty, 50);
+  assert.equal(byName('Bag Suction Liner (1500 ml)(ER,ICU)').available_qty, 1350);
+  assert.equal(byName('BP print (ม้วน)').available_qty, 187);
+  assert.equal(byName('เอี๊ยมพลาสติก แขนยาวผูกหลัง').available_qty, 770);
+  assert.equal(byName('เอี๊ยมพลาสติก แขนยาวผูกหลัง').min_qty, 250); // จุดเตือนเดิมยังอยู่
+  assert.equal(byName('สายพานด้านล่าง(Supply)').available_qty, 0); // วรรณยุกต์ซ้ำในไฟล์ถูกแก้แล้ว
   assert.ok(byName('น้ำยาไฮโดรเจนเปอร์ออกไซด์'));
   assert.ok(db.items.every((i) => !/ า| [\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/.test(i.name)), 'Thai vowels repaired');
   assert.deepEqual(db.departments[0], { name: 'ICU', full_name: 'งานการพยาบาลผู้ป่วยหนัก' });
@@ -284,11 +290,11 @@ test('Apps Script AllInOne.gs: up to date and works as the only file', () => {
   const { sheets, ctx } = mockAppsScript();
   vm.runInContext(file, ctx);
   ctx.setup();
-  assert.equal(sheets['อุปกรณ์'].data.length, 287);
+  assert.equal(sheets['อุปกรณ์'].data.length, N + 1);
   const res = JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify({ action: 'createRequest',
     payload: { borrower_name: 'ทดสอบ', department: 'ER', type: 'withdraw', items: [{ item_id: 2, qty: 5 }] } }) } }).body);
   assert.equal(res.ok, true);
-  assert.equal(res.state.items.find((i) => i.id === 2).available_qty, 720);
+  assert.equal(res.state.items.find((i) => i.id === 2).available_qty, Q(2) - 5);
 });
 
 test('core: stock edited directly in the sheet (available_qty only) keeps working', () => {
@@ -368,7 +374,7 @@ test('Apps Script: daily trigger and page loads apply automatic returns', () => 
   const b = post({ action: 'createRequest', payload: { borrower_name: 'ก', department: 'ICU', type: 'borrow', due_date: DUE, items: [{ item_id: 4, qty: 5 }] } });
   assert.equal(b.ok, true);
   const qty = () => Number(sheets['อุปกรณ์'].data.find((row) => row[0] === '4')[6]);
-  assert.equal(qty(), 55);
+  assert.equal(qty(), Q(4) - 5);
   const logRow = sheets['รายการเบิก-ยืม'].data[1];
   assert.deepEqual([logRow[2], logRow[3], logRow[6], logRow[7], logRow[8]], ['ยืม', 'ก', 'Airway 100mm', '5', 'ชิ้น']);
   // จำลองว่าถึงวันคืนแล้ว: แก้วันคืนในชีตเป็นเมื่อวาน
@@ -376,14 +382,14 @@ test('Apps Script: daily trigger and page loads apply automatic returns', () => 
   const dueCol = req.data[0].indexOf('due_date');
   req.data[1][dueCol] = '2020-01-01';
   ctx.autoReturnDaily();
-  assert.equal(qty(), 60);
+  assert.equal(qty(), Q(4));
   assert.equal(req.data.find((r) => r[3] === 'ก')[req.data[0].indexOf('status')], 'returned');
   // ใบที่สอง: ไม่มี trigger ทำงาน แต่มีคนเปิดเว็บ (load) ก็คืนให้เช่นกัน
   post({ action: 'createRequest', payload: { borrower_name: 'ข', department: 'ER', type: 'borrow', due_date: DUE, items: [{ item_id: 4, qty: 2 }] } });
-  assert.equal(qty(), 58);
+  assert.equal(qty(), Q(4) - 2);
   req.data.find((r) => r[3] === 'ข')[dueCol] = '2020-01-01'; // แถวล่าสุดอยู่บน
   JSON.parse(ctx.doGet().body);
-  assert.equal(qty(), 60);
+  assert.equal(qty(), Q(4));
 });
 
 test('core: request numbers are short (WD69-001) and count up within the Buddhist year', () => {
@@ -514,20 +520,45 @@ test('Apps Script: an item row typed straight into the sheet (no id/active/unit)
   const h = inv.data[0];
   const row = (vals) => h.map((c) => (c in vals ? String(vals[c]) : ''));
   // เจ้าหน้าที่พิมพ์แถวใหม่ท้ายตาราง: ใส่แค่รหัส ชื่อ คงเหลือ
-  inv.data.push(row({ code: 'NSO-287', name: 'ถุงมือไนไตรล์ M', available_qty: 50 }));
+  inv.data.push(row({ code: 'NEW-1', name: 'ถุงมือไนไตรล์ M', available_qty: 50 }));
   // แถวที่คัดลอกมาแล้ว id ซ้ำกับของเดิม
-  inv.data.push(row({ id: 2, code: 'NSO-288', name: 'ผ้าก๊อซ 3x3', unit: 'ห่อ', available_qty: 10, active: 1, kind: 'withdraw' }));
+  inv.data.push(row({ id: 2, code: 'NEW-2', name: 'ผ้าก๊อซ 3x3', unit: 'ห่อ', available_qty: 10, active: 1, kind: 'withdraw' }));
   const st = post({ action: 'load' }).state;
-  const glove = st.items.find((i) => i.code === 'NSO-287');
-  const gauze = st.items.find((i) => i.code === 'NSO-288');
-  assert.deepEqual([glove.id, glove.active, glove.unit, glove.available_qty, glove.kind], [287, 1, 'ชิ้น', 50, 'both']);
-  assert.equal(gauze.id, 288);
+  const glove = st.items.find((i) => i.code === 'NEW-1');
+  const gauze = st.items.find((i) => i.code === 'NEW-2');
+  assert.deepEqual([glove.id, glove.active, glove.unit, glove.available_qty, glove.kind], [N + 1, 1, 'ชิ้น', 50, 'both']);
+  assert.equal(gauze.id, N + 2);
   assert.equal(st.items.find((i) => i.id === 2).code, 'NSO-002'); // ของเดิมไม่เปลี่ยน
-  const w = post({ action: 'createRequest', payload: { borrower_name: 'ก', department: 'ICU', type: 'withdraw', items: [{ item_id: 287, qty: 5 }, { item_id: 288, qty: 1 }] } });
+  const w = post({ action: 'createRequest', payload: { borrower_name: 'ก', department: 'ICU', type: 'withdraw', items: [{ item_id: N + 1, qty: 5 }, { item_id: N + 2, qty: 1 }] } });
   assert.equal(w.ok, true, w.error);
   // id ที่ระบบตั้งให้ถูกเขียนกลับลงชีต
   const back = (code) => inv.data.find((r) => r[h.indexOf('code')] === code);
-  assert.deepEqual([back('NSO-287')[0], back('NSO-287')[h.indexOf('available_qty')]], ['287', '45']);
-  assert.deepEqual([back('NSO-288')[0], back('NSO-288')[h.indexOf('available_qty')]], ['288', '9']);
+  assert.deepEqual([back('NEW-1')[0], back('NEW-1')[h.indexOf('available_qty')]], [String(N + 1), '45']);
+  assert.deepEqual([back('NEW-2')[0], back('NEW-2')[h.indexOf('available_qty')]], [String(N + 2), '9']);
   assert.equal(inv.data.filter((r, i) => i > 0 && r[0] === '2').length, 1);
+});
+
+test('Apps Script: loadNewStock replaces every item with the new stock file and keeps departments', () => {
+  const { sheets, ctx, logs } = mockAppsScript();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
+  // ชีตเดิม: รายการพัสดุชุดเก่า 3 รายการ + แผนกที่เพิ่มเอง + มีประวัติเบิก
+  const OLD = { departments: [['ICU', 'งานการพยาบาลผู้ป่วยหนัก'], ['คลินิกพิเศษ', 'แผนกที่เพิ่มเอง']], categories: ['เก่า'],
+    items: [['OLD-1', 'ของเก่า 1', 'เก่า', 'ชิ้น', 5, 0, '', 'both'], ['OLD-2', 'ของเก่า 2', 'เก่า', 'ชิ้น', 9, 0, '', 'both'], ['OLD-3', 'ของเก่า 3', 'เก่า', 'ชิ้น', 1, 0, '', 'both']] };
+  ctx.saveDb_(Core.seed(new Date(), OLD));
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  assert.equal(post({ action: 'createRequest', payload: { borrower_name: 'ก', department: 'คลินิกพิเศษ', type: 'withdraw', items: [{ item_id: 1, qty: 2 }] } }).ok, true);
+  ctx.loadNewStock();
+  assert.match(logs.at(-1), /301 รายการ \(เดิม 3 รายการ, ลบใบเบิก\/ยืม 1 ใบ\)/);
+  const st = post({ action: 'load', pin: '1234' }).state;
+  assert.equal(st.items.length, N);
+  assert.deepEqual(st.items.map((i) => [i.code, i.name, i.available_qty]), SEED.items.map((x) => [x[0], x[1], x[4]]));
+  assert.equal(st.requests.length + st.request_items.length, 0);
+  assert.deepEqual(st.departments.map((d) => d.name), ['ICU', 'คลินิกพิเศษ']); // แผนกเดิมอยู่ครบ
+  assert.ok(st.categories.some((c) => c.name === 'เวชภัณฑ์มิใช่ยา'));
+  for (const t of ['ประวัติการเบิก', 'รายการเบิก-ยืม']) assert.equal(sheets[t].data.length, 1);
+  assert.equal(sheets['อุปกรณ์'].data.length, N + 1);
+  // เบิกได้ทันทีด้วยรหัสใหม่
+  const w = post({ action: 'createRequest', payload: { borrower_name: 'ข', department: 'ICU', type: 'withdraw', items: [{ item_id: 1, qty: 3 }] } });
+  assert.equal(w.ok, true);
+  assert.equal(post({ action: 'load' }).state.items[0].available_qty, Q(1) - 3);
 });

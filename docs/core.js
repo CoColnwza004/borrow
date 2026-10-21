@@ -512,7 +512,22 @@ var BorrowCore = (function () {
     return cleared;
   }
 
-  return { resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  // แทนที่รายการพัสดุทั้งหมดด้วยไฟล์ Stock ใหม่ (SEED_DATA): ล้างใบเบิก/ใบยืมและประวัติสต็อก
+  // พัสดุและยอดคงเหลือเป็นไปตามไฟล์ (บันทึกเป็น "รับเข้า ยอดยกมาเริ่มต้น") เก็บรายชื่อแผนกเดิมไว้
+  function replaceStock(db, data, now) {
+    var fresh = seed(now, { departments: [], categories: [], items: data.items });
+    var before = { items: db.items.length, requests: db.requests.length };
+    db.items = fresh.items;
+    db.movements = fresh.movements;
+    db.requests = [];
+    db.request_items = [];
+    (data.categories || []).forEach(function (n) {
+      if (!find(db.categories, function (c) { return c.name === n; })) db.categories.push({ name: n });
+    });
+    return before;
+  }
+
+  return { replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

@@ -80,6 +80,26 @@ function resetForLaunch() {
   }
 }
 
+/**
+ * ล้างสต็อกเดิมทั้งหมด แล้วใส่รายการพัสดุและยอดคงเหลือตามไฟล์ Stock ล่าสุด (SEED_DATA ในไฟล์นี้)
+ * รัน 1 ครั้งจากหน้า Apps Script (เลือก loadNewStock แล้วกด เรียกใช้)
+ * ล้างประวัติการเบิก/ยืมและประวัติสต็อกด้วย · รายชื่อแผนกอยู่ครบ · ย้อนกลับได้ที่ ไฟล์ → ประวัติเวอร์ชัน
+ */
+function loadNewStock() {
+  if (typeof SEED_DATA === 'undefined') throw new Error('ไม่พบข้อมูล SEED_DATA กรุณาวางไฟล์ AllInOne.gs ให้ครบทั้งไฟล์');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var db = loadDb_();
+    var before = BorrowCore.replaceStock(db, SEED_DATA, new Date());
+    saveDb_(db);
+    Logger.log('ใส่สต็อกใหม่เรียบร้อย: ' + db.items.length + ' รายการ (เดิม ' + before.items + ' รายการ, ลบใบเบิก/ยืม ' + before.requests +
+      ' ใบ) จาก ' + SEED_DATA.source + ' · แผนก ' + db.departments.length + ' แผนกอยู่ครบ');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 /** ทำงานอัตโนมัติทุกวันจาก installDailyTrigger() */
 function autoReturnDaily() {
   var lock = LockService.getScriptLock();
