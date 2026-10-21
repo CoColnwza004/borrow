@@ -44,7 +44,8 @@ repo มีไฟล์ [`netlify.toml`](netlify.toml) อยู่แล้ว 
   และคัดลอก `AllInOne.gs` จากหน้าไฟล์บน GitHub (กด Raw ขณะล็อกอิน) แทนลิงก์ raw สาธารณะ
 - ใช้ Netlify แล้วไม่ต้องใช้ GitHub Pages (ปิดได้ที่ Settings → Pages) จะได้มีเว็บเดียว
 
-### ทางเลือก: เผยแพร่ด้วย Cloudflare (ฟรี)
+### เผยแพร่ด้วย Cloudflare (ใช้งานอยู่ตอนนี้)
+เว็บจริงอยู่บน Cloudflare ที่เชื่อมกับ GitHub แล้ว ทุกครั้งที่รวมงานเข้า branch หลัก (`claude/magical-hamilton-g35q6e`) Cloudflare จะ build และอัปเดตเว็บให้เอง (ประมาณ 1–2 นาที) ดูสถานะได้ที่ Workers & Pages → โปรเจกต์ → Deployments
 repo มี [`wrangler.jsonc`](wrangler.jsonc) (เผยแพร่โฟลเดอร์ `docs/` แบบไฟล์ล้วน) และ [`scripts/cf-headers.js`](scripts/cf-headers.js)
 ซึ่งสร้างส่วนหัวความปลอดภัย/แคช (`docs/_headers`) จาก `netlify.toml` ตอน deploy จึงตรงกับ Netlify เสมอ และไม่ชนกันถ้ายังเปิด Netlify ไว้
 1. เข้า https://dash.cloudflare.com → สมัคร/ล็อกอิน (แผน **Free**)
