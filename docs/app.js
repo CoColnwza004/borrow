@@ -1559,8 +1559,7 @@ function renderSettings(page) {
 }
 
 // ===================== วิธีใช้งาน (ป๊อปอัปสอนใช้งาน) =====================
-// แสดงเองครั้งแรกที่อุปกรณ์นี้เปิดเว็บ เปิดดูอีกได้ที่ปุ่ม ? มุมขวาบน ภาพประกอบอยู่ใน docs/tour/
-const TOUR_KEY = 'tour-seen-v1';
+// แสดงเองทุกครั้งที่เปิดเว็บ (ปิดได้ทันทีด้วยปุ่ม ปิด) เปิดดูอีกได้ที่ปุ่ม ? มุมขวาบน ภาพประกอบอยู่ใน docs/tour/
 const TOUR = [
   { img: '1-home', t: 'ยินดีต้อนรับสู่ระบบเบิกพัสดุ', d: 'เบิกพัสดุได้ง่าย ๆ ใน 4 ขั้นตอน ไม่ต้องเขียนใบเบิกเอง ระบบออกใบเบิกเป็นไฟล์ PDF ให้อัตโนมัติ' },
   { img: '2-start', t: 'ขั้นที่ 1 · กด "เบิกพัสดุ"', d: 'ที่หน้าแรกกดการ์ด เบิกพัสดุ (หรือเมนู เบิกพัสดุ ด้านบน)' },
@@ -1570,8 +1569,6 @@ const TOUR = [
   { img: '6-pdf', t: 'เสร็จแล้ว! บันทึกใบเบิก PDF', d: 'จะได้เลขที่เอกสาร กดปุ่มบันทึก/ดาวน์โหลด PDF เพื่อเก็บไว้พิมพ์และลงลายมือชื่อ' },
   { img: '7-stock', t: 'ดูยอดพัสดุคงเหลือ', d: 'เมนู พัสดุคงเหลือ แสดงยอดในคลังล่าสุด อัปเดตให้อัตโนมัติ เปิดวิธีใช้งานนี้อีกครั้งได้ที่ปุ่ม ? มุมขวาบน' },
 ];
-function tourSeen() { try { return !!localStorage.getItem(TOUR_KEY); } catch { return !!sessionStorage.getItem?.(TOUR_KEY); } }
-function markTourSeen() { try { localStorage.setItem(TOUR_KEY, '1'); } catch { try { sessionStorage.setItem(TOUR_KEY, '1'); } catch { /* ignore */ } } }
 function showTour() {
   if ($('dialog.tour')) return;
   let i = 0;
@@ -1579,7 +1576,7 @@ function showTour() {
   d.className = 'tour';
   d.setAttribute('aria-label', 'วิธีใช้งาน');
   d.innerHTML = `
-    <button type="button" class="icon-btn tour-x" aria-label="ปิดวิธีใช้งาน"><svg viewBox="0 0 24 24"><path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6 6.4 5Z"/></svg></button>
+    <button type="button" class="tour-x" aria-label="ปิดวิธีใช้งาน"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6 6.4 5Z"/></svg>ปิด</button>
     <div class="tour-shot"><img alt="" width="393" height="460"></div>
     <div class="tour-body" aria-live="polite">
       <p class="tour-step"></p>
@@ -1595,7 +1592,6 @@ function showTour() {
   document.body.append(d);
   const img = $('img', d);
   const close = () => {
-    markTourSeen();
     if (!motionOK()) { d.close(); d.remove(); return; }
     d.classList.add('closing');
     setTimeout(() => { d.close(); d.remove(); }, 220);
@@ -1642,9 +1638,9 @@ function showTour() {
   $('#tour-next', d).focus();
 }
 $('#btn-help').addEventListener('click', showTour);
-// เปิดเองเฉพาะครั้งแรกของอุปกรณ์นี้ (ไม่แสดงซ้อนหน้าต่างอื่น)
+// เปิดเองทุกครั้งที่เข้าเว็บ (ไม่แสดงซ้อนหน้าต่างอื่น · ข้ามเมื่อเป็นการทดสอบอัตโนมัติ)
 function autoTour() {
-  if (tourSeen() || navigator.webdriver) return;
+  if (navigator.webdriver) return;
   if (modalOpen() || $('.hud')) { setTimeout(autoTour, 1500); return; }
   showTour();
 }
