@@ -63,6 +63,9 @@ const ICON = {
   chev: '<svg viewBox="0 0 24 24"><path d="M9.3 6.7 10.7 5.3 17.4 12l-6.7 6.7-1.4-1.4 5.3-5.3-5.3-5.3Z"/></svg>',
   doc: '<svg viewBox="0 0 24 24"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm7 1.5V9h5.5L13 3.5ZM8 13v2h8v-2H8Zm0 4v2h5v-2H8Z"/></svg>',
   sheet: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Zm-1 1.8L18.2 9H13V3.8ZM7 11h10v8H7v-8Zm1.5 1.5v1.5h3v-1.5h-3Zm4.5 0v1.5h2.5v-1.5H13Zm-4.5 3V17h3v-1.5h-3Zm4.5 0V17h2.5v-1.5H13Z"/></svg>',
+  book: '<svg viewBox="0 0 24 24"><path d="M5 3h11a3 3 0 0 1 3 3v15H7a2 2 0 0 1-2-2V3Zm2 14v2h10v-2H7Zm0-12v10h10V6a1 1 0 0 0-1-1H7Zm2 2h6v2H9V7Zm0 3h6v2H9v-2Z"/></svg>',
+  share: '<svg viewBox="0 0 24 24"><path d="M12 2.6 7.3 7.3l1.4 1.4L11 6.4V15h2V6.4l2.3 2.3 1.4-1.4L12 2.6ZM5 10v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V10h-3v2h1v8H7v-8h1v-2H5Z"/></svg>',
+  dots: '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>',
   ext: '<svg viewBox="0 0 24 24"><path d="M14 3h7v7h-2V6.4l-9.3 9.3-1.4-1.4L17.6 5H14V3ZM5 5h6v2H5v12h12v-6h2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/></svg>',
 };
 
@@ -417,6 +420,7 @@ const ROUTES = {
   movements: { title: 'ประวัติสต็อก', render: renderMovements, admin: true },
   settings: { title: 'ตั้งค่า', render: renderSettings, admin: true },
   sheet: { title: 'Google Sheet', render: renderSheet, admin: true },
+  help: { title: 'วิธีใช้งาน', render: renderHelp },
 };
 
 function currentRoute() {
@@ -428,10 +432,10 @@ const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
 function renderNav() {
   const reqs = requestsView();
   const overdue = reqs.filter((r) => r.is_overdue).length;
-  const links = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['requests', 'ประวัติเบิก', overdue], ['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['sheet', 'Google Sheet'], ['settings', 'ตั้งค่า']];
+  const links = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['help', 'วิธีใช้งาน'], ['requests', 'ประวัติเบิก', overdue], ['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['sheet', 'Google Sheet'], ['settings', 'ตั้งค่า']];
   const cur = currentRoute();
   const a = ([k, label, n]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur ? 'active' : ''}">${label}${n ? `<span class="badge">${n}</span>` : ''}</a>`;
-  $('#nav-links').innerHTML = (isAdmin() ? links : links.slice(0, 3)).map(a).join('');
+  $('#nav-links').innerHTML = (isAdmin() ? links.filter(([k]) => k !== 'help') : links.slice(0, 4)).map(a).join('');
   fitNav();
 }
 
@@ -635,6 +639,7 @@ function renderHome(page) {
       <h1>เบิกพัสดุ<br><span class="gradient-text">ง่าย ๆ ด้วยคลิกเดียว</span></h1>
       <p class="lead">เลือกพัสดุ กรอกชื่อและแผนก แล้วรับใบเบิกเป็นไฟล์ PDF ได้ทันที</p>
     </section>
+    ${helpNotice()}
     <div class="choice-grid single">
       <a class="choice withdraw" href="#/request">
         <span class="choice-icon">${ICON.withdraw}</span>
@@ -672,6 +677,7 @@ function renderRequestForm(page) {
         <p class="eyebrow">${esc(CONFIG.HOSPITAL_NAME || 'ระบบพัสดุ')} <span class="eyebrow-date">· ${esc(todayTh)}</span></p>
         <h1 id="rf-title">เบิกพัสดุ</h1>
         <p class="lead" id="rf-lead">เลือกพัสดุ กรอกชื่อและแผนก แล้วรับใบเบิกเป็นไฟล์ PDF ได้ทันที</p>
+        ${helpNotice(true)}
       </div>
       <aside class="group slip">
         <div class="slip-head">
@@ -1024,7 +1030,9 @@ function showSuccess(id) {
         <button class="btn lg" id="pdf-skip">ไม่ใช่ตอนนี้</button>
         <button class="btn primary lg" id="pdf-save" disabled>${PdfDoc.isIOS ? 'บันทึก PDF' : 'ดาวน์โหลด PDF'}</button>
       </div>
+      <a class="help-link" href="#/help?s=save" data-close-help>${ICON.book} วิธีบันทึกและพิมพ์ใบเบิกบน iPhone / Android</a>
     </div>`);
+  $('[data-close-help]', body).addEventListener('click', (e) => { e.preventDefault(); closeModal(); setTimeout(() => { location.hash = '#/help?s=save'; }, 240); });
   let blob = null;
   const fileName = PdfDoc.fileName(r);
   PdfDoc.build(r, CONFIG.HOSPITAL_NAME).then((b) => {
@@ -1558,6 +1566,151 @@ function renderSettings(page) {
   });
 }
 
+// ===================== หน้าวิธีใช้งาน =====================
+// แถบแจ้งเตือนให้อ่านวิธีใช้งาน (หน้าแรกเป็นการ์ดใหญ่ หน้าเบิกเป็นแถบเล็ก)
+function helpNotice(slim = false) {
+  return slim
+    ? `<a class="help-notice slim" href="#/help">${ICON.book}<span><b>ใช้งานครั้งแรก?</b> อ่านวิธีเบิก เลือกหลายรายการ และบันทึก/พิมพ์ PDF</span><span class="help-go">อ่านเลย ›</span></a>`
+    : `<a class="help-notice" href="#/help">
+        <span class="help-ic" aria-hidden="true">${ICON.book}</span>
+        <span class="help-txt"><b>โปรดอ่านวิธีใช้งานก่อนเบิกพัสดุ</b>
+          <span>ขั้นตอนการเบิก · เบิกหลายรายการในใบเดียว · วิธีบันทึกและพิมพ์ใบเบิกบน iPhone และ Android</span></span>
+        <span class="btn help-btn">อ่านวิธีใช้งาน</span>
+      </a>`;
+}
+
+const DEVICE = PdfDoc.isIOS ? 'ios' : /Android/i.test(navigator.userAgent) ? 'android' : 'pc';
+// ขั้นตอนบันทึก/พิมพ์ PDF แยกตามอุปกรณ์ (ตรงกับการทำงานของปุ่มใน pdf.js)
+const SAVE_GUIDE = {
+  ios: {
+    label: 'iPhone / iPad', short: 'iPhone',
+    save: [
+      'หลังกด <b>ยืนยันการเบิก</b> รอจนปุ่ม <span class="kbd primary">บันทึก PDF</span> เป็นสีฟ้า (ระบบกำลังทำใบเบิก 1–3 วินาที)',
+      `แตะ <span class="kbd primary">บันทึก PDF</span> หน้าต่าง <b>แชร์</b> ของ iPhone จะเลื่อนขึ้นมาจากด้านล่าง`,
+      'เลื่อนรายการด้านล่างลงมา แล้วแตะ <span class="kbd">บันทึกไปยังไฟล์</span> (Save to Files)',
+      'เลือกที่เก็บ เช่น <b>บน iPhone ของฉัน</b> → โฟลเดอร์ <b>Downloads</b> (หรือ iCloud Drive) แล้วแตะ <span class="kbd">บันทึก</span> มุมขวาบน',
+      'เปิดดูไฟล์ได้ทุกเมื่อที่แอป <b>ไฟล์</b> (Files) ไอคอนโฟลเดอร์สีฟ้า → ชื่อไฟล์คือเลขที่ใบเบิก เช่น WD69-001.pdf',
+    ],
+    print: [
+      `แตะ <span class="kbd primary">บันทึก PDF</span> แล้วในหน้าต่างแชร์ เลื่อนลงมาแตะ <span class="kbd">พิมพ์</span> (Print)`,
+      'แตะ <span class="kbd">เครื่องพิมพ์</span> แล้วเลือกเครื่องพิมพ์ของหน่วยงาน (ต้องเป็นเครื่องที่รองรับ AirPrint และ iPhone ต่อ Wi-Fi เดียวกับเครื่องพิมพ์)',
+      'ตั้ง <b>จำนวนสำเนา</b> (แนะนำ 2 ชุด: ผู้เบิก 1 ชุด เจ้าหน้าที่พัสดุ 1 ชุด)',
+      'แตะ <span class="kbd primary">พิมพ์</span> มุมขวาบน',
+      `ถ้าบันทึกไฟล์ไว้แล้ว: เปิดแอป <b>ไฟล์</b> → แตะไฟล์ใบเบิก → แตะไอคอนแชร์ <span class="kbd icon">${ICON.share}</span> มุมซ้ายล่าง → <span class="kbd">พิมพ์</span>`,
+    ],
+    tips: [
+      'ถ้าเปิดเว็บจากลิงก์ใน <b>LINE</b> ให้แตะ <span class="kbd icon">' + ICON.dots + '</span> หรือ <span class="kbd">⋯</span> มุมบน → <b>เปิดใน Safari</b> ก่อน ปุ่มบันทึกจะทำงานได้ถูกต้อง',
+      'ส่งไฟล์ให้หัวหน้าหรือเจ้าหน้าที่ทาง LINE ได้: ในหน้าต่างแชร์แตะไอคอน <b>LINE</b> แล้วเลือกห้องแชต',
+    ],
+  },
+  android: {
+    label: 'Android', short: 'Android',
+    save: [
+      'หลังกด <b>ยืนยันการเบิก</b> รอจนปุ่ม <span class="kbd primary">ดาวน์โหลด PDF</span> เป็นสีฟ้า (ระบบกำลังทำใบเบิก 1–3 วินาที)',
+      'แตะ <span class="kbd primary">ดาวน์โหลด PDF</span> Chrome จะดาวน์โหลดไฟล์ทันที และขึ้นแถบแจ้งด้านล่างจอว่าดาวน์โหลดเสร็จแล้ว',
+      'แตะ <span class="kbd">เปิด</span> ในแถบนั้นเพื่อดูใบเบิกได้ทันที (ถ้าแถบหายไปแล้ว ดูขั้นถัดไป)',
+      `ไฟล์อยู่ในโฟลเดอร์ <b>ดาวน์โหลด</b> (Download): เปิดแอป <b>Files</b> / <b>ไฟล์ของฉัน</b> → ดาวน์โหลด หรือใน Chrome แตะ <span class="kbd icon">${ICON.dots}</span> มุมขวาบน → <b>ดาวน์โหลด</b>`,
+      'ชื่อไฟล์คือเลขที่ใบเบิก เช่น WD69-001.pdf',
+    ],
+    print: [
+      'เปิดไฟล์ใบเบิก (แตะ <span class="kbd">เปิด</span> หลังดาวน์โหลด หรือแตะไฟล์ในโฟลเดอร์ดาวน์โหลด) ไฟล์จะเปิดในแอปดู PDF เช่น Google Drive',
+      `แตะ <span class="kbd icon">${ICON.dots}</span> มุมขวาบน → <span class="kbd">พิมพ์</span> (บางรุ่นอยู่ในเมนู <b>แชร์</b> → <b>พิมพ์</b>)`,
+      'แตะแถบชื่อเครื่องพิมพ์ด้านบน → เลือกเครื่องพิมพ์ของหน่วยงาน (มือถือต้องต่อ Wi-Fi เดียวกับเครื่องพิมพ์)',
+      'ตั้ง <b>จำนวนสำเนา</b> (แนะนำ 2 ชุด) แล้วแตะปุ่ม <span class="kbd primary">พิมพ์</span> (ไอคอนเครื่องพิมพ์สีน้ำเงิน)',
+      'ถ้าไม่เห็นเครื่องพิมพ์: เข้า <b>การตั้งค่า</b> → ค้นหา “การพิมพ์” → เปิด <b>บริการพิมพ์เริ่มต้น</b> หรือติดตั้งแอปเสริมของยี่ห้อเครื่องพิมพ์',
+    ],
+    tips: [
+      'ถ้าเปิดเว็บจากลิงก์ใน <b>LINE</b> ให้แตะ <span class="kbd icon">' + ICON.dots + '</span> มุมบน → <b>เปิดในเบราว์เซอร์อื่น / Chrome</b> ก่อน จะดาวน์โหลดไฟล์ได้',
+      'ส่งไฟล์ให้หัวหน้าหรือเจ้าหน้าที่: เปิดไฟล์ → แชร์ → LINE',
+    ],
+  },
+  pc: {
+    label: 'คอมพิวเตอร์', short: 'คอม',
+    save: [
+      'หลังกด <b>ยืนยันการเบิก</b> รอจนปุ่ม <span class="kbd primary">ดาวน์โหลด PDF</span> เป็นสีฟ้า',
+      'คลิก <span class="kbd primary">ดาวน์โหลด PDF</span> จะมีหน้าต่างให้เลือกที่เก็บไฟล์ (Chrome/Edge) เลือกโฟลเดอร์แล้วกด <span class="kbd">บันทึก</span> · เบราว์เซอร์อื่นจะบันทึกลงโฟลเดอร์ ดาวน์โหลด อัตโนมัติ',
+    ],
+    print: [
+      'ดับเบิลคลิกเปิดไฟล์ใบเบิก แล้วกด <span class="kbd">Ctrl</span> + <span class="kbd">P</span> (Mac: <span class="kbd">⌘</span> + <span class="kbd">P</span>)',
+      'เลือกเครื่องพิมพ์ ขนาดกระดาษ A4 จำนวน 2 ชุด แล้วกด <span class="kbd primary">พิมพ์</span>',
+    ],
+    tips: [],
+  },
+};
+
+function renderHelp(page) {
+  const want = hashParams().get('s');
+  let dev = DEVICE;
+  const step = (n, t, d, img, note) => `
+    <li class="help-step">
+      <img src="tour/${img}.jpg" alt="${esc(t)}" width="393" height="460" loading="lazy">
+      <div><span class="help-n">${n}</span><h3>${t}</h3><p>${d}</p>${note ? `<p class="tour-note">${note}</p>` : ''}</div>
+    </li>`;
+  page.insertAdjacentHTML('beforeend', `
+    <div class="page-head"><h1>วิธีใช้งาน</h1>
+      <p class="lead">เบิกพัสดุผ่านเว็บใน 4 ขั้นตอน และวิธีบันทึก/พิมพ์ใบเบิกบน iPhone และ Android</p></div>
+    <nav class="help-toc" aria-label="หัวข้อ">
+      <button type="button" data-go="h-steps">ขั้นตอนการเบิก</button>
+      <button type="button" data-go="h-multi">เบิกหลายรายการ</button>
+      <button type="button" data-go="h-save">บันทึกและพิมพ์ PDF</button>
+      <button type="button" data-tour>ดูแบบสไลด์</button>
+    </nav>
+    <section class="card help-sec" id="h-steps">
+      <h2>ขั้นตอนการเบิกพัสดุ</h2>
+      <ol class="help-steps">
+        ${step(1, 'กด "เบิกพัสดุ"', 'ที่หน้าแรกกดการ์ด <b>เบิกพัสดุ</b> หรือเมนู <b>เบิกพัสดุ</b> ด้านบน', '2-start')}
+        ${step(2, 'กรอกชื่อและเลือกแผนก', 'ใส่ <b>ชื่อ-นามสกุล</b> และเลือก <b>แผนก</b> ของคุณ (หมายเหตุไม่บังคับ) ครั้งต่อไประบบจำชื่อและแผนกไว้ให้', '3-form')}
+        ${step(3, 'เลือกพัสดุและจำนวน', 'พิมพ์ค้นหา (เช่น airway, ถุงมือ หรือรหัส NSO-010) หรือแตะตัวอักษร A–Z เพื่อข้ามไปหมวดนั้น กด <b>+ เลือก</b> แล้วปรับจำนวนด้วยปุ่ม <b>−</b> <b>+</b> (ปุ่มถังขยะ = เอาออก)', '4-pick', '(พัสดุที่ขึ้นว่า "หมด" ก็กดเลือกเบิกได้ ระบบจะบันทึกยอดในคลังเป็นติดลบไว้ก่อน)')}
+        ${step(4, 'กด "ยืนยันการเบิก"', 'ตรวจจำนวนรายการและจำนวนชิ้นที่แถบด้านล่าง แล้วกดปุ่มสีฟ้า <b>ยืนยันการเบิก</b>', '5-confirm')}
+        ${step(5, 'รับใบเบิก PDF', 'จะได้ <b>เลขที่เอกสาร</b> (เช่น WD69-001) และปุ่มบันทึกใบเบิก ดูวิธีบันทึกและพิมพ์ด้านล่าง', '6-pdf')}
+      </ol>
+    </section>
+    <section class="card help-sec" id="h-multi">
+      <h2>เบิกหลายรายการในใบเบิกเดียว</h2>
+      <div class="help-split">
+        <img src="tour/4b-multi.jpg" alt="เลือกพัสดุ 3 รายการในใบเบิกเดียว" width="393" height="460" loading="lazy">
+        <ul class="help-list">
+          <li><b>เลือกได้หลายรายการ ไม่จำกัด</b> กด <b>+ เลือก</b> ที่พัสดุทุกชิ้นที่ต้องการ ก่อนกดยืนยัน</li>
+          <li>ปรับจำนวนของ<b>แต่ละรายการ</b>แยกกันได้ด้วยปุ่ม − +</li>
+          <li>แถบด้านล่างบอกจำนวนรวม เช่น <b>3 รายการ · 5 ชิ้น</b></li>
+          <li>กดแถบ <b>ที่เลือก</b> เพื่อดูเฉพาะรายการที่เลือกไว้ ตรวจให้ครบก่อนยืนยัน</li>
+          <li>กด <b>ยืนยันการเบิก</b> ครั้งเดียว จะได้ <b>ใบเบิก 1 ใบ</b> ที่มีครบทุกรายการ ไม่ต้องส่งทีละชิ้น</li>
+        </ul>
+      </div>
+    </section>
+    <section class="card help-sec" id="h-save">
+      <h2>บันทึกและพิมพ์ใบเบิก (PDF)</h2>
+      <p class="muted">เลือกอุปกรณ์ที่ใช้อยู่ (ระบบเลือกให้ตามเครื่องนี้แล้ว)</p>
+      <div class="segmented big" id="help-dev" role="tablist">
+        ${Object.entries(SAVE_GUIDE).map(([k, g]) => `<button type="button" role="tab" data-dev="${k}"><span class="l-long">${g.label}</span><span class="l-short" aria-hidden="true">${g.short}</span></button>`).join('')}
+      </div>
+      <div id="help-dev-body"></div>
+    </section>
+    <div class="help-end">
+      <a class="btn primary lg" href="#/request">เริ่มเบิกพัสดุ</a>
+      <p class="muted small">ลืมบันทึกไฟล์หรือไฟล์หาย แจ้งเจ้าหน้าที่พัสดุพร้อมเลขที่ใบเบิก เจ้าหน้าที่ดาวน์โหลดใบเบิกให้ใหม่ได้จากหน้าประวัติเบิก</p>
+    </div>`);
+  const drawDev = () => {
+    const g = SAVE_GUIDE[dev];
+    $$('#help-dev button').forEach((b) => { b.classList.toggle('active', b.dataset.dev === dev); b.setAttribute('aria-selected', String(b.dataset.dev === dev)); });
+    $('#help-dev-body').innerHTML = `
+      <div class="help-cols">
+        <div class="help-box"><h3><span class="help-badge">1</span>บันทึกไฟล์ลงเครื่อง</h3><ol class="help-ol">${g.save.map((x) => `<li>${x}</li>`).join('')}</ol></div>
+        <div class="help-box"><h3><span class="help-badge">2</span>พิมพ์ใบเบิก</h3><ol class="help-ol">${g.print.map((x) => `<li>${x}</li>`).join('')}</ol></div>
+      </div>
+      ${g.tips.length ? `<div class="help-tips"><b>เคล็ดลับ</b><ul>${g.tips.map((x) => `<li>${x}</li>`).join('')}</ul></div>` : ''}`;
+  };
+  $$('#help-dev button').forEach((b) => b.addEventListener('click', () => { dev = b.dataset.dev; drawDev(); }));
+  drawDev();
+  const go = (id) => {
+    const el = document.getElementById(id);
+    if (el) window.scrollTo({ top: el.getBoundingClientRect().top + scrollY - $('#nav-bar').offsetHeight - 12, behavior: motionOK() ? 'smooth' : 'auto' });
+  };
+  $$('.help-toc [data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
+  $('.help-toc [data-tour]').addEventListener('click', showTour);
+  if (want === 'save') requestAnimationFrame(() => go('h-save'));
+}
+
 // ===================== วิธีใช้งาน (ป๊อปอัปสอนใช้งาน) =====================
 // แสดงเองทุกครั้งที่เปิดเว็บ (ปิดได้ทันทีด้วยปุ่ม ปิด) เปิดดูอีกได้ที่ปุ่ม ? มุมขวาบน ภาพประกอบอยู่ใน docs/tour/
 const TOUR = [
@@ -1565,9 +1718,10 @@ const TOUR = [
   { img: '2-start', t: 'ขั้นที่ 1 · กด "เบิกพัสดุ"', d: 'ที่หน้าแรกกดการ์ด เบิกพัสดุ (หรือเมนู เบิกพัสดุ ด้านบน)' },
   { img: '3-form', t: 'ขั้นที่ 2 · กรอกชื่อและเลือกแผนก', d: 'ใส่ชื่อ-นามสกุล แล้วเลือกแผนกของคุณ ครั้งต่อไประบบจำไว้ให้' },
   { img: '4-pick', t: 'ขั้นที่ 3 · เลือกพัสดุและจำนวน', d: 'พิมพ์ค้นหาหรือเลื่อนหา กด "+ เลือก" แล้วปรับจำนวนด้วยปุ่ม − +', note: '(พัสดุที่ขึ้นว่า "หมด" ก็กดเลือกเบิกได้ ระบบจะบันทึกยอดในคลังเป็นติดลบไว้ก่อน)' },
+  { img: '4b-multi', t: 'เลือกได้หลายรายการในใบเบิกเดียว', d: 'กด "+ เลือก" ได้หลายรายการ และปรับจำนวนแต่ละรายการได้ แล้วกดยืนยันครั้งเดียว จะได้ใบเบิก 1 ใบที่มีครบทุกรายการ', note: 'กดแถบ "ที่เลือก" เพื่อตรวจรายการทั้งหมดก่อนยืนยัน' },
   { img: '5-confirm', t: 'ขั้นที่ 4 · กด "ยืนยันการเบิก"', d: 'ตรวจจำนวนรายการด้านล่าง แล้วกดปุ่มสีฟ้า ยืนยันการเบิก' },
-  { img: '6-pdf', t: 'เสร็จแล้ว! บันทึกใบเบิก PDF', d: 'จะได้เลขที่เอกสาร กดปุ่มบันทึก/ดาวน์โหลด PDF เพื่อเก็บไว้พิมพ์และลงลายมือชื่อ' },
-  { img: '7-stock', t: 'ดูยอดพัสดุคงเหลือ', d: 'เมนู พัสดุคงเหลือ แสดงยอดในคลังล่าสุด อัปเดตให้อัตโนมัติ เปิดวิธีใช้งานนี้อีกครั้งได้ที่ปุ่ม ? มุมขวาบน' },
+  { img: '6-pdf', t: 'เสร็จแล้ว! บันทึกใบเบิก PDF', d: 'จะได้เลขที่เอกสาร กดปุ่ม บันทึก PDF (iPhone) หรือ ดาวน์โหลด PDF (Android/คอม) เพื่อเก็บไว้พิมพ์และลงลายมือชื่อ', link: ['#/help?s=save', 'ดูวิธีบันทึกและพิมพ์บน iPhone / Android แบบละเอียด'] },
+  { img: '7-stock', t: 'ดูยอดพัสดุคงเหลือ', d: 'เมนู พัสดุคงเหลือ แสดงยอดในคลังล่าสุด อัปเดตให้อัตโนมัติ เปิดวิธีใช้งานนี้อีกครั้งได้ที่ปุ่ม ? มุมขวาบน', link: ['#/help', 'อ่านวิธีใช้งานฉบับเต็ม (เมนู วิธีใช้งาน)'] },
 ];
 function showTour() {
   if ($('dialog.tour')) return;
@@ -1583,6 +1737,7 @@ function showTour() {
       <h3 class="tour-title"></h3>
       <p class="tour-text"></p>
       <p class="tour-note"></p>
+      <a class="tour-link" href="#/help"></a>
     </div>
     <div class="tour-dots" aria-hidden="true">${TOUR.map(() => '<i></i>').join('')}</div>
     <div class="tour-actions">
@@ -1605,6 +1760,9 @@ function showTour() {
     $('.tour-text', d).textContent = s.d;
     $('.tour-note', d).textContent = s.note || '';
     $('.tour-note', d).hidden = !s.note;
+    const tl = $('.tour-link', d);
+    tl.hidden = !s.link;
+    if (s.link) { tl.href = s.link[0]; tl.textContent = s.link[1] + ' →'; }
     $$('.tour-dots i', d).forEach((dot, k) => dot.classList.toggle('on', k === i));
     $('#tour-back', d).textContent = i ? 'ย้อนกลับ' : 'ข้าม';
     $('#tour-next', d).textContent = i === TOUR.length - 1 ? 'เริ่มใช้งาน' : 'ถัดไป';
@@ -1619,6 +1777,7 @@ function showTour() {
   $('#tour-next', d).addEventListener('click', () => go(i + 1));
   $('#tour-back', d).addEventListener('click', () => (i ? go(i - 1) : close()));
   $('.tour-x', d).addEventListener('click', close);
+  $('.tour-link', d).addEventListener('click', (e) => { e.preventDefault(); const h = e.currentTarget.getAttribute('href'); close(); setTimeout(() => { location.hash = h; }, 240); });
   d.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
   d.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowRight') go(i + 1);
