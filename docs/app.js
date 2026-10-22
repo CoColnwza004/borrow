@@ -1910,7 +1910,7 @@ function primeSound() {
   } catch { audioCtx = null; }
 }
 function alertSignal() {
-  if (motionOK()) navigator.vibrate?.([90, 60, 90]);
+  buzz([90, 60, 90]);
   if (!audioCtx || audioCtx.state !== 'running') return;
   try {
     const t = audioCtx.currentTime;
@@ -1933,6 +1933,32 @@ function autoTour() {
   if (navigator.webdriver) return;
   if (modalOpen() || $('.hud')) { setTimeout(autoTour, 1500); return; }
   showTour();
+  buzzWhenTouched($('dialog.tour'));
+}
+// สั่นเบา ๆ เตือนว่ามีป๊อปอัป · Android ใช้ Vibration API · iPhone (iOS 18+) ไม่มี API นี้
+// จึงใช้สวิตช์ของ Safari ที่ทำให้เครื่องสั่นสั้น ๆ เมื่อถูกแตะ · ทั้งสองแบบต้องเกิดระหว่างที่ผู้ใช้แตะจอ
+const BUZZ = [70, 60, 70];
+function buzz(pattern = BUZZ) {
+  if (!motionOK()) return;
+  if (navigator.vibrate) { navigator.vibrate(pattern); return; }
+  if (!PdfDoc.isIOS) return;
+  const l = document.createElement('label');
+  l.setAttribute('aria-hidden', 'true');
+  l.style.display = 'none';
+  l.innerHTML = '<input type="checkbox" switch>';
+  document.head.append(l);
+  l.click();
+  l.remove();
+}
+// เบราว์เซอร์ยอมให้เว็บสั่นได้หลังผู้ใช้แตะหน้าเว็บแล้วเท่านั้น: ถ้าแตะแล้วสั่นทันที ไม่งั้นสั่นตอนแตะครั้งแรก (ยกเว้นแตะปุ่มปิด)
+function buzzWhenTouched(d) {
+  if (!d) return;
+  if (navigator.vibrate && navigator.userActivation?.hasBeenActive) { buzz(); return; }
+  const once = (e) => {
+    document.removeEventListener('click', once, true);
+    if (d.isConnected && !e.target.closest('.tour-x')) buzz();
+  };
+  document.addEventListener('click', once, true);
 }
 
 // ===================== Boot =====================
