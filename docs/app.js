@@ -67,6 +67,7 @@ const ICON = {
   share: '<svg viewBox="0 0 24 24"><path d="M12 2.6 7.3 7.3l1.4 1.4L11 6.4V15h2V6.4l2.3 2.3 1.4-1.4L12 2.6ZM5 10v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V10h-3v2h1v8H7v-8h1v-2H5Z"/></svg>',
   dots: '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>',
   ext: '<svg viewBox="0 0 24 24"><path d="M14 3h7v7h-2V6.4l-9.3 9.3-1.4-1.4L17.6 5H14V3ZM5 5h6v2H5v12h12v-6h2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/></svg>',
+  bell: '<svg viewBox="0 0 24 24"><path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>',
 };
 
 // ===================== Data layer =====================
@@ -931,6 +932,7 @@ function renderRequestForm(page) {
     if (!data.department) { flag(form.department); throw new Error('กรุณาเลือกแผนก'); }
     const items = Object.entries(state.picks).map(([item_id, qty]) => ({ item_id: Number(item_id), qty }));
     if (!items.length) throw new Error('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
+    primeSound();
     const btn = $('#rf-submit');
     btn.disabled = true;
     btn.classList.add('busy');
@@ -1030,9 +1032,21 @@ function showSuccess(id) {
         <button class="btn lg" id="pdf-skip">ไม่ใช่ตอนนี้</button>
         <button class="btn primary lg" id="pdf-save" disabled>${PdfDoc.isIOS ? 'บันทึก PDF' : 'ดาวน์โหลด PDF'}</button>
       </div>
-      <a class="help-link" href="#/help?s=save" data-close-help>${ICON.book} วิธีบันทึกและพิมพ์ใบเบิกบน iPhone / Android</a>
+      <button type="button" class="save-alert" id="save-demo">
+        <span class="save-alert-ic" aria-hidden="true">${ICON.bell}</span>
+        <span class="save-alert-txt"><b>สำคัญ! อย่าลืมบันทึกใบเบิก</b><span>ดูภาพสาธิตวิธีบันทึกและพิมพ์ (iPhone · Android)</span></span>
+        <span class="save-alert-go">ดูวิธี ›</span>
+      </button>
+      <a class="help-link" href="#/help?s=save" data-close-help>${ICON.book} อ่านวิธีบันทึกและพิมพ์แบบละเอียด</a>
     </div>`);
   $('[data-close-help]', body).addEventListener('click', (e) => { e.preventDefault(); closeModal(); setTimeout(() => { location.hash = '#/help?s=save'; }, 240); });
+  $('#save-demo', body).addEventListener('click', () => showSaveGuide(true));
+  // สัญญาณเตือน: เสียง + สั่น แล้วเด้งภาพสาธิตวิธีบันทึกขึ้นมาเอง (มือถือ · ข้ามเมื่อเป็นการทดสอบอัตโนมัติ)
+  setTimeout(() => {
+    if (!$('#save-demo') || !modalOpen()) return;
+    alertSignal();
+    if (DEVICE !== 'pc' && !navigator.webdriver) showSaveGuide(true);
+  }, 1100);
   let blob = null;
   const fileName = PdfDoc.fileName(r);
   PdfDoc.build(r, CONFIG.HOSPITAL_NAME).then((b) => {
@@ -1680,7 +1694,12 @@ function renderHelp(page) {
     </section>
     <section class="card help-sec" id="h-save">
       <h2>บันทึกและพิมพ์ใบเบิก (PDF)</h2>
-      <p class="muted">เลือกอุปกรณ์ที่ใช้อยู่ (ระบบเลือกให้ตามเครื่องนี้แล้ว)</p>
+      <button type="button" class="save-alert" data-save-demo>
+        <span class="save-alert-ic" aria-hidden="true">${ICON.bell}</span>
+        <span class="save-alert-txt"><b>ดูภาพสาธิตวิธีบันทึกไฟล์</b><span>สไลด์ภาพทีละขั้น สำหรับ iPhone และ Android</span></span>
+        <span class="save-alert-go">ดูภาพ ›</span>
+      </button>
+      <p class="muted">หรืออ่านขั้นตอนแบบข้อความ เลือกอุปกรณ์ที่ใช้อยู่ (ระบบเลือกให้ตามเครื่องนี้แล้ว)</p>
       <div class="segmented big" id="help-dev" role="tablist">
         ${Object.entries(SAVE_GUIDE).map(([k, g]) => `<button type="button" role="tab" data-dev="${k}"><span class="l-long">${g.label}</span><span class="l-short" aria-hidden="true">${g.short}</span></button>`).join('')}
       </div>
@@ -1708,6 +1727,7 @@ function renderHelp(page) {
   };
   $$('.help-toc [data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
   $('.help-toc [data-tour]').addEventListener('click', showTour);
+  $('[data-save-demo]').addEventListener('click', () => showSaveGuide());
   if (want === 'save') requestAnimationFrame(() => go('h-save'));
 }
 
@@ -1720,18 +1740,22 @@ const TOUR = [
   { img: '4-pick', t: 'ขั้นที่ 3 · เลือกพัสดุและจำนวน', d: 'พิมพ์ค้นหาหรือเลื่อนหา กด "+ เลือก" แล้วปรับจำนวนด้วยปุ่ม − +', note: '(พัสดุที่ขึ้นว่า "หมด" ก็กดเลือกเบิกได้ ระบบจะบันทึกยอดในคลังเป็นติดลบไว้ก่อน)' },
   { img: '4b-multi', t: 'เลือกได้หลายรายการในใบเบิกเดียว', d: 'กด "+ เลือก" ได้หลายรายการ และปรับจำนวนแต่ละรายการได้ แล้วกดยืนยันครั้งเดียว จะได้ใบเบิก 1 ใบที่มีครบทุกรายการ', note: 'กดแถบ "ที่เลือก" เพื่อตรวจรายการทั้งหมดก่อนยืนยัน' },
   { img: '5-confirm', t: 'ขั้นที่ 4 · กด "ยืนยันการเบิก"', d: 'ตรวจจำนวนรายการด้านล่าง แล้วกดปุ่มสีฟ้า ยืนยันการเบิก' },
-  { img: '6-pdf', t: 'เสร็จแล้ว! บันทึกใบเบิก PDF', d: 'จะได้เลขที่เอกสาร กดปุ่ม บันทึก PDF (iPhone) หรือ ดาวน์โหลด PDF (Android/คอม) เพื่อเก็บไว้พิมพ์และลงลายมือชื่อ', link: ['#/help?s=save', 'ดูวิธีบันทึกและพิมพ์บน iPhone / Android แบบละเอียด'] },
+  { img: '6-pdf', t: 'เสร็จแล้ว! บันทึกใบเบิก PDF', d: 'จะได้เลขที่เอกสาร กดปุ่ม บันทึก PDF (iPhone) หรือ ดาวน์โหลด PDF (Android/คอม) เพื่อเก็บไว้พิมพ์และลงลายมือชื่อ', link: ['#save-demo', 'ดูภาพสาธิตวิธีบันทึกไฟล์ iPhone / Android'] },
   { img: '7-stock', t: 'ดูยอดพัสดุคงเหลือ', d: 'เมนู พัสดุคงเหลือ แสดงยอดในคลังล่าสุด อัปเดตให้อัตโนมัติ เปิดวิธีใช้งานนี้อีกครั้งได้ที่ปุ่ม ? มุมขวาบน', link: ['#/help', 'อ่านวิธีใช้งานฉบับเต็ม (เมนู วิธีใช้งาน)'] },
 ];
-function showTour() {
-  if ($('dialog.tour')) return;
+// ป๊อปอัปสไลด์ภาพทีละขั้น ใช้ทั้ง "วิธีใช้งาน" และ "วิธีบันทึกใบเบิก"
+// steps() คืนรายการขั้น { img, t, d, s?, note?, link? } · head = HTML เพิ่มเหนือภาพ · onClose เรียกทุกครั้งที่ปิด
+function slideDialog({ cls = '', label, steps, head = '', tag = '', finish = 'เริ่มใช้งาน', onClose }) {
+  if ($('dialog.tour')) return null;
   let i = 0;
+  let list = steps();
   const d = document.createElement('dialog');
-  d.className = 'tour';
-  d.setAttribute('aria-label', 'วิธีใช้งาน');
+  d.className = `tour ${cls}`.trim();
+  d.setAttribute('aria-label', label);
   d.innerHTML = `
-    <button type="button" class="tour-x" aria-label="ปิดวิธีใช้งาน"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6 6.4 5Z"/></svg>ปิด</button>
-    <div class="tour-shot"><img alt="" width="393" height="460"></div>
+    <button type="button" class="tour-x" aria-label="ปิด${label}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6 6.4 5Z"/></svg>ปิด</button>
+    ${head}
+    <div class="tour-shot"><img alt="" width="393" height="460">${tag ? `<span class="tour-tag">${tag}</span>` : ''}</div>
     <div class="tour-body" aria-live="polite">
       <p class="tour-step"></p>
       <h3 class="tour-title"></h3>
@@ -1739,23 +1763,27 @@ function showTour() {
       <p class="tour-note"></p>
       <a class="tour-link" href="#/help"></a>
     </div>
-    <div class="tour-dots" aria-hidden="true">${TOUR.map(() => '<i></i>').join('')}</div>
+    <div class="tour-dots" aria-hidden="true"></div>
     <div class="tour-actions">
       <button type="button" class="btn lg" id="tour-back"></button>
       <button type="button" class="btn primary lg" id="tour-next"></button>
     </div>`;
   document.body.append(d);
   const img = $('img', d);
+  let closed = false;
   const close = () => {
-    if (!motionOK()) { d.close(); d.remove(); return; }
+    if (closed) return;
+    closed = true;
+    const done = () => { d.close(); d.remove(); onClose?.(); };
+    if (!motionOK()) return done();
     d.classList.add('closing');
-    setTimeout(() => { d.close(); d.remove(); }, 220);
+    setTimeout(done, 220);
   };
   const draw = (dir = 0) => {
-    const s = TOUR[i];
+    const s = list[i];
     img.src = `tour/${s.img}.jpg`;
     img.alt = s.t;
-    $('.tour-step', d).textContent = `${i + 1} / ${TOUR.length}`;
+    $('.tour-step', d).textContent = `${i + 1} / ${list.length}${s.s ? ` · ${s.s}` : ''}`;
     $('.tour-title', d).textContent = s.t;
     $('.tour-text', d).textContent = s.d;
     $('.tour-note', d).textContent = s.note || '';
@@ -1763,21 +1791,28 @@ function showTour() {
     const tl = $('.tour-link', d);
     tl.hidden = !s.link;
     if (s.link) { tl.href = s.link[0]; tl.textContent = s.link[1] + ' →'; }
-    $$('.tour-dots i', d).forEach((dot, k) => dot.classList.toggle('on', k === i));
+    const dots = $('.tour-dots', d);
+    if (dots.children.length !== list.length) dots.innerHTML = list.map(() => '<i></i>').join('');
+    [...dots.children].forEach((dot, k) => dot.classList.toggle('on', k === i));
     $('#tour-back', d).textContent = i ? 'ย้อนกลับ' : 'ข้าม';
-    $('#tour-next', d).textContent = i === TOUR.length - 1 ? 'เริ่มใช้งาน' : 'ถัดไป';
-    if (TOUR[i + 1]) new Image().src = `tour/${TOUR[i + 1].img}.jpg`; // โหลดภาพถัดไปรอไว้
+    $('#tour-next', d).textContent = i === list.length - 1 ? finish : 'ถัดไป';
+    if (list[i + 1]) new Image().src = `tour/${list[i + 1].img}.jpg`; // โหลดภาพถัดไปรอไว้
     if (dir && motionOK()) {
       [$('.tour-shot', d), $('.tour-body', d)].forEach((el) => el.animate(
         [{ opacity: 0, transform: `translateX(${dir * 24}px)` }, { opacity: 1, transform: 'none' }],
         { duration: 280, easing: 'cubic-bezier(.22,1,.36,1)' }));
     }
   };
-  const go = (n) => { if (n < 0) return close(); if (n >= TOUR.length) return close(); const dir = n > i ? 1 : -1; i = n; draw(dir); };
+  const go = (n) => { if (n < 0 || n >= list.length) return close(); const dir = n > i ? 1 : -1; i = n; draw(dir); };
   $('#tour-next', d).addEventListener('click', () => go(i + 1));
   $('#tour-back', d).addEventListener('click', () => (i ? go(i - 1) : close()));
   $('.tour-x', d).addEventListener('click', close);
-  $('.tour-link', d).addEventListener('click', (e) => { e.preventDefault(); const h = e.currentTarget.getAttribute('href'); close(); setTimeout(() => { location.hash = h; }, 240); });
+  $('.tour-link', d).addEventListener('click', (e) => {
+    e.preventDefault();
+    const h = e.currentTarget.getAttribute('href');
+    close();
+    setTimeout(() => { if (h === '#save-demo') showSaveGuide(); else location.hash = h; }, 240);
+  });
   d.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
   d.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowRight') go(i + 1);
@@ -1795,6 +1830,102 @@ function showTour() {
   draw();
   d.showModal();
   $('#tour-next', d).focus();
+  return { d, reset: () => { list = steps(); i = 0; draw(1); } };
+}
+function showTour() {
+  slideDialog({ label: 'วิธีใช้งาน', steps: () => TOUR });
+}
+
+// ===================== ภาพสาธิตวิธีบันทึกใบเบิก =====================
+// ภาพจำลองหน้าจอ iPhone / Android อยู่ใน docs/tour/save/ · เด้งขึ้นเองหลังเบิกสำเร็จ พร้อมเสียงเตือน + สั่น
+const LINE_NOTE = 'เปิดจากลิงก์ใน LINE? แตะ ⋯ มุมบน → เปิดใน Safari / Chrome ก่อน';
+const SAVE_DEMO = {
+  ios: [
+    { img: 'save/ios-1-button', s: 'บันทึกไฟล์', t: 'แตะปุ่ม "บันทึก PDF"', d: 'หลังเบิกเสร็จ รอจนปุ่มเป็นสีฟ้า (1–3 วินาที) แล้วแตะ บันทึก PDF', note: LINE_NOTE },
+    { img: 'save/ios-2-share', s: 'บันทึกไฟล์', t: 'แตะ "บันทึกไปยังไฟล์"', d: 'หน้าต่างแชร์จะเลื่อนขึ้นมาจากด้านล่าง เลื่อนลงแล้วแตะ บันทึกไปยังไฟล์ (Save to Files)' },
+    { img: 'save/ios-3-save', s: 'บันทึกไฟล์', t: 'เลือกโฟลเดอร์ แล้วแตะ "บันทึก"', d: 'เลือก บน iPhone ของฉัน → Downloads แล้วแตะ บันทึก มุมขวาบน' },
+    { img: 'save/ios-4-filesapp', s: 'บันทึกไฟล์', t: 'เปิดดูไฟล์ได้ที่แอป "ไฟล์"', d: 'ไฟล์อยู่ในโฟลเดอร์ Downloads ชื่อตามเลขที่ใบเบิก เช่น WD69-001.pdf' },
+    { img: 'save/ios-5-print', s: 'พิมพ์', t: 'ต้องการพิมพ์: แตะ "พิมพ์"', d: 'แตะ บันทึก PDF อีกครั้ง แล้วในหน้าต่างแชร์แตะ พิมพ์' },
+    { img: 'save/ios-6-printopts', s: 'พิมพ์', t: 'เลือกเครื่องพิมพ์ แล้วแตะ "พิมพ์"', d: 'เลือกเครื่องพิมพ์ของหน่วยงาน (Wi-Fi เดียวกัน) ตั้ง 2 สำเนา แล้วแตะ พิมพ์ มุมขวาบน' },
+  ],
+  android: [
+    { img: 'save/and-1-button', s: 'บันทึกไฟล์', t: 'แตะปุ่ม "ดาวน์โหลด PDF"', d: 'หลังเบิกเสร็จ รอจนปุ่มเป็นสีฟ้า (1–3 วินาที) แล้วแตะ ดาวน์โหลด PDF', note: LINE_NOTE },
+    { img: 'save/and-2-download', s: 'บันทึกไฟล์', t: 'ดาวน์โหลดเสร็จ แตะ "เปิด"', d: 'แถบด้านล่างจอบอกว่าดาวน์โหลดแล้ว แตะ เปิด เพื่อดูใบเบิก' },
+    { img: 'save/and-3-files', s: 'บันทึกไฟล์', t: 'ไฟล์อยู่ในโฟลเดอร์ "ดาวน์โหลด"', d: 'เปิดแอป Files / ไฟล์ของฉัน → ดาวน์โหลด ชื่อไฟล์คือเลขที่ใบเบิก เช่น WD69-001.pdf' },
+    { img: 'save/and-4-menu', s: 'พิมพ์', t: 'ต้องการพิมพ์: แตะ ⋮ → "พิมพ์"', d: 'เปิดไฟล์ใบเบิก แตะ ⋮ มุมขวาบน แล้วแตะ พิมพ์' },
+    { img: 'save/and-5-print', s: 'พิมพ์', t: 'เลือกเครื่องพิมพ์ แล้วแตะปุ่มพิมพ์', d: 'แตะแถบด้านบนเลือกเครื่องพิมพ์ของหน่วยงาน ตั้ง 2 สำเนา แล้วแตะปุ่มเครื่องพิมพ์สีน้ำเงิน' },
+  ],
+};
+// fromSuccess = เปิดจากหน้าเบิกสำเร็จ: ปิดแล้วชี้ไปที่ปุ่มบันทึก PDF
+function showSaveGuide(fromSuccess = false) {
+  let dev = DEVICE === 'android' ? 'android' : 'ios';
+  const ui = slideDialog({
+    cls: 'save-guide',
+    label: 'วิธีบันทึกใบเบิก',
+    tag: 'ภาพจำลอง',
+    finish: fromSuccess ? 'เข้าใจแล้ว ไปบันทึก' : 'เข้าใจแล้ว',
+    steps: () => SAVE_DEMO[dev],
+    head: `
+      <div class="save-head" role="alert">
+        <span class="save-bell" aria-hidden="true">${ICON.bell}</span>
+        <div><b>สำคัญ! บันทึกใบเบิกก่อนปิดหน้านี้</b><span>ดูภาพสาธิตทีละขั้น ใช้เวลาไม่ถึง 1 นาที</span></div>
+      </div>
+      <div class="save-bar">
+        <div class="segmented save-dev" role="tablist" aria-label="อุปกรณ์">
+          <button type="button" role="tab" data-dev="ios">iPhone</button>
+          <button type="button" role="tab" data-dev="android">Android</button>
+        </div>
+      </div>`,
+    onClose: fromSuccess ? pointToSave : null,
+  });
+  if (!ui) return;
+  $('.save-bar', ui.d).append($('.tour-x', ui.d)); // ปุ่มปิดอยู่แถวเดียวกับแถบเลือกอุปกรณ์ หัวข้อสีแดงจะได้ไม่ถูกบัง
+  const mark = () => $$('.save-dev button', ui.d).forEach((b) => {
+    b.classList.toggle('active', b.dataset.dev === dev);
+    b.setAttribute('aria-selected', String(b.dataset.dev === dev));
+  });
+  $$('.save-dev button', ui.d).forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.dev === dev) return;
+    dev = b.dataset.dev;
+    mark();
+    ui.reset();
+  }));
+  mark();
+}
+// กระพริบปุ่มบันทึก PDF ในหน้าเบิกสำเร็จ
+function pointToSave() {
+  const b = $('#pdf-save');
+  if (!b || !modalOpen()) return;
+  b.classList.remove('attn');
+  void b.offsetWidth;
+  b.classList.add('attn');
+  b.scrollIntoView({ block: 'nearest' });
+}
+// เสียงเตือนสั้น ๆ (ติ๊ง-ต่อง) — iPhone อนุญาตให้เล่นเสียงได้ต่อเมื่อเปิดระหว่างการแตะ จึงเตรียมไว้ตอนกดยืนยันการเบิก
+let audioCtx = null;
+function primeSound() {
+  try {
+    audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch { audioCtx = null; }
+}
+function alertSignal() {
+  if (motionOK()) navigator.vibrate?.([90, 60, 90]);
+  if (!audioCtx || audioCtx.state !== 'running') return;
+  try {
+    const t = audioCtx.currentTime;
+    [[880, 0], [660, 0.2]].forEach(([f, at]) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(0.2, t + at + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.45);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t + at);
+      o.stop(t + at + 0.5);
+    });
+  } catch { /* ไม่มีเสียงก็ไม่เป็นไร */ }
 }
 $('#btn-help').addEventListener('click', showTour);
 // เปิดเองทุกครั้งที่เข้าเว็บ (ไม่แสดงซ้อนหน้าต่างอื่น · ข้ามเมื่อเป็นการทดสอบอัตโนมัติ)
