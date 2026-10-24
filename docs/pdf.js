@@ -37,7 +37,7 @@ const PdfDoc = (() => {
   // r = requestView() จาก app.js (มี items พร้อมชื่อ/หน่วย) · staff = ชื่อเจ้าหน้าที่พัสดุในช่องลงชื่อ
   function template(r, org, staff) {
     const rows = r.items.map((l, i) => `<tr>
-      <td class="c">${i + 1}</td><td class="nw">${esc(l.code)}</td><td>${esc(l.name)}</td>
+      <td class="c">${i + 1}</td><td>${esc(l.code)}</td><td>${esc(l.name)}</td>
       <td class="r">${Number(l.qty).toLocaleString('th-TH')}</td><td class="c">${esc(l.unit)}</td><td></td></tr>`);
     for (let i = rows.length; i < MIN_ROWS; i++) rows.push('<tr class="blank"><td></td><td></td><td></td><td></td><td></td><td></td></tr>');
     const dept = esc(r.department_full || r.department);
@@ -46,8 +46,8 @@ const PdfDoc = (() => {
     const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.created_at || '');
     const signDate = ymd ? `${Number(ymd[3])} / ${Number(ymd[2])} / ${Number(ymd[1]) + 543}` : '........ / ........ / ........';
     const sign = (role, name) => `<div class="pdf-sign-box">
-      <div>ลงชื่อ .............................. ${role}</div>
-      <div>( ${name ? esc(name) : '..............................'} )</div>
+      <div>ลงชื่อ .......................................... ${role}</div>
+      <div>( ${name ? esc(name) : '..........................................'} )</div>
       <div>วันที่ ${signDate}</div></div>`;
     return `<div class="pdf-page">
       <div class="pdf-head">
@@ -71,7 +71,7 @@ const PdfDoc = (() => {
     </div>`;
   }
 
-  // ภาษาไทยไม่เว้นวรรคระหว่างคำ html2canvas จึงตัดบรรทัดภาษาไทยไม่ได้ (ข้อความทั้งก้อนถูกวาดซ้อนกันบรรทัดเดียว)
+  // ภาษาไทยไม่เว้นวรรคระหว่างคำ html2canvas จึงตัดบรรทัดภาษาไทยไม่ได้ (ข้อความที่ขึ้นบรรทัดใหม่ถูกวาดซ้อนกันบรรทัดเดียว)
   // ใส่ตัวแบ่งคำที่มองไม่เห็น (U+200B) ระหว่างคำด้วยตัวตัดคำภาษาไทยของเบราว์เซอร์ ก่อนวาด
   const THAI = /[\u0E00-\u0E7F]/;
   function markThaiWords(root) {
@@ -86,8 +86,7 @@ const PdfDoc = (() => {
   // แปลง HTML เป็น PDF (A4) margin = [บน, ซ้าย, ล่าง, ขวา] หน่วย มม.
   async function render(html, { margin = 0, pageNumbers = false } = {}) {
     await loadLib();
-    // ฟอนต์เอกสาร TH Sarabun New (ปกติ + ตัวหนา) ต้องโหลดเสร็จก่อนวาด ไม่งั้นได้ฟอนต์สำรอง
-    await Promise.all(['400 21px "TH Sarabun New"', '700 21px "TH Sarabun New"'].map((f) => document.fonts.load(f).catch(() => null)));
+    await Promise.all(['400 16px Sarabun', '600 16px Sarabun', '700 16px Sarabun'].map((f) => document.fonts.load(f).catch(() => null)));
     const stage = document.createElement('div');
     stage.className = 'pdf-stage';
     stage.innerHTML = html;
@@ -146,7 +145,7 @@ const PdfDoc = (() => {
       <h2 class="pdf-h2">1. พัสดุที่ถูกเบิก <span>(เรียงจากจำนวนมากไปน้อย)</span></h2>
       <table class="pdf-grid"><thead><tr><th style="width:7%">ลำดับ</th><th style="width:12%">รหัส</th><th>รายการ</th>
         <th style="width:12%">จำนวน</th><th style="width:10%">หน่วย</th><th style="width:11%">จำนวนใบ</th></tr></thead>
-        <tbody>${sum.withdrawn.map((x, i) => `<tr><td class="c">${i + 1}</td><td class="nw">${esc(x.code)}</td><td>${esc(x.name)}</td>
+        <tbody>${sum.withdrawn.map((x, i) => `<tr><td class="c">${i + 1}</td><td>${esc(x.code)}</td><td>${esc(x.name)}</td>
           <td class="r">${num(x.qty)}</td><td class="c">${esc(x.unit)}</td><td class="r">${num(x.times)}</td></tr>`).join('') || empty(6)}</tbody></table>
 
       <h2 class="pdf-h2">2. สรุปตามแผนก <span>(เรียงจากจำนวนมากไปน้อย)</span></h2>
@@ -157,15 +156,15 @@ const PdfDoc = (() => {
       <h2 class="pdf-h2">3. รายการใบเบิกทั้งหมด</h2>
       <table class="pdf-grid pdf-small"><thead><tr><th style="width:17%">วันเวลาที่เบิก</th><th style="width:12%">เลขที่</th>
         <th style="width:17%">ผู้เบิก</th><th style="width:12%">แผนก</th><th>พัสดุ</th></tr></thead>
-        <tbody>${sum.requests.map((r) => `<tr><td>${esc(thaiDateTime(r.created_at))}</td><td class="nw">${esc(r.request_no)}</td>
+        <tbody>${sum.requests.map((r) => `<tr><td>${esc(thaiDateTime(r.created_at)).replace(/ (\d{1,2}:\d{2}(:\d{2})?)$/, '<br>$1')}</td><td>${esc(r.request_no)}</td>
           <td>${esc(r.borrower_name)}</td><td>${esc(r.department)}</td>
           <td>${extra.lines(r).map((l) => `${esc(l.name)} ×${num(l.qty)}`).join(', ')}</td></tr>`).join('') || empty(5)}</tbody></table>
 
       <div class="pdf-sign pdf-keep">
-        <div class="pdf-sign-box"><div>ลงชื่อ .............................. ผู้จัดทำรายงาน</div>
-          <div>( .............................. )</div><div>วันที่ ........ / ........ / ........</div></div>
-        <div class="pdf-sign-box"><div>ลงชื่อ .............................. หัวหน้างานพัสดุ</div>
-          <div>( .............................. )</div><div>วันที่ ........ / ........ / ........</div></div>
+        <div class="pdf-sign-box"><div>ลงชื่อ .......................................... ผู้จัดทำรายงาน</div>
+          <div>( .......................................... )</div><div>วันที่ ........ / ........ / ........</div></div>
+        <div class="pdf-sign-box"><div>ลงชื่อ .......................................... หัวหน้างานพัสดุ</div>
+          <div>( .......................................... )</div><div>วันที่ ........ / ........ / ........</div></div>
       </div>
     </div>`;
   }
