@@ -524,6 +524,7 @@ function render(enter = false) {
   const page = $('#page');
   page.classList.remove('enter');
   page.innerHTML = '';
+  $('.scroll-hint')?.remove();
   if (DEMO) {
     page.insertAdjacentHTML('beforeend', '<div class="banner">โหมดทดลอง — ข้อมูลเก็บเฉพาะในเบราว์เซอร์เครื่องนี้ เชื่อม Google Sheets ตามคู่มือใน README เพื่อใช้ร่วมกันทุกเครื่อง</div>');
   }
@@ -1729,6 +1730,28 @@ function renderHelp(page) {
   $('.help-toc [data-tour]').addEventListener('click', showTour);
   $('[data-save-demo]').addEventListener('click', () => showSaveGuide());
   if (want === 'save') requestAnimationFrame(() => go('h-save'));
+  scrollHint();
+}
+
+// ปุ่มลูกศรลอยด้านล่างจอ บอกว่าเลื่อนลงอ่านต่อได้ · เลื่อนแล้วย่อเหลือแค่ลูกศร · ถึงท้ายหน้าแล้วหายไป
+// แตะ = เลื่อนลงทีละประมาณ 3/4 จอ · อยู่นอก #page (กันตำแหน่งเพี้ยนระหว่างแอนิเมชันเปลี่ยนหน้า) ลบทิ้งใน render()
+function scrollHint() {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'scroll-hint';
+  b.setAttribute('aria-label', 'เลื่อนลงอ่านต่อ');
+  b.innerHTML = '<span class="scroll-hint-txt">เลื่อนลงอ่านต่อ</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.7 8.3 5.3 9.7 12 16.4l6.7-6.7-1.4-1.4-5.3 5.3-5.3-5.3Z"/></svg>';
+  document.body.append(b);
+  const update = () => {
+    if (!b.isConnected) { removeEventListener('scroll', update); removeEventListener('resize', update); return; }
+    const left = document.documentElement.scrollHeight - (scrollY + innerHeight);
+    b.classList.toggle('gone', left < 140);
+    b.classList.toggle('mini', scrollY > 160);
+  };
+  addEventListener('scroll', update, { passive: true });
+  addEventListener('resize', update);
+  b.addEventListener('click', () => scrollBy({ top: Math.round(innerHeight * 0.75), behavior: motionOK() ? 'smooth' : 'auto' }));
+  update();
 }
 
 // ===================== วิธีใช้งาน (ป๊อปอัปสอนใช้งาน) =====================
