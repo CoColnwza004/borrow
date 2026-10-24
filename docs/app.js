@@ -8,12 +8,12 @@ const DEMO_KEY = 'supply-demo-db-v3';
 const DEMO_PIN = '1234';
 // สต็อก/แผนกล่าสุด (ข้อมูลสาธารณะเท่านั้น) เก็บไว้ในเครื่อง เพื่อเปิดหน้าได้ทันทีโดยไม่ต้องรอ Google Sheets
 const CACHE_KEY = 'supply-public-cache-v1';
-const { STATUS, MOVE, TYPES, KINDS } = BorrowCore;
+const { STATUS, MOVE } = BorrowCore;
 
 const state = {
   db: null,
   pin: sessionStorage.getItem('pin') || '',
-  // ฟอร์มเบิก/ยืม: จำนวนที่เลือกต่อพัสดุ { [item_id]: qty }
+  // ฟอร์มเบิก: จำนวนที่เลือกต่อพัสดุ { [item_id]: qty }
   picks: {},
 };
 
@@ -29,11 +29,6 @@ const motionOK = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
 // เด้งเบา ๆ เมื่อค่าเปลี่ยน (เช่น จำนวนในแถบยืนยัน)
 const bump = (el) => { if (!el || !motionOK()) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); };
 
-function addDays(n) {
-  const d = new Date();
-  d.setDate(d.getDate() + n);
-  return BorrowCore.ymd(d);
-}
 // th-TH แสดงปี พ.ศ. อัตโนมัติ
 function fmtDate(s) {
   if (!s) return '-';
@@ -42,7 +37,9 @@ function fmtDate(s) {
 function fmtDateTime(s) {
   if (!s) return '-';
   const d = new Date(s.replace(' ', 'T'));
-  return isNaN(d) ? s : d.toLocaleString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  // วันเวลาที่เบิกแสดงถึงวินาที (ข้อมูลเก่าที่ไม่มีวินาทีแสดงแค่นาที)
+  const sec = /\d{2}:\d{2}:\d{2}/.test(s);
+  return isNaN(d) ? s : d.toLocaleString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit', ...(sec ? { second: '2-digit' } : {}) });
 }
 
 // ไอคอนปุ่มจำนวน (คมชัด อยู่กึ่งกลางพอดี)
@@ -58,7 +55,6 @@ const TOAST_IC = {
 const ICON = {
   box: '<svg viewBox="0 0 24 24"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Zm0 2.3L18.7 8 12 11.7 5.3 8 12 4.3ZM5 9.7l6 3.3v6.6l-6-3.3V9.7Zm8 9.9V13l6-3.3v6.6l-6 3.3Z"/></svg>',
   withdraw: '<svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2Zm7-3 6-6-1.4-1.4-3.6 3.6V3h-2v10.2L7.4 9.6 6 11l6 6Z"/></svg>',
-  borrow: '<svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8Z"/></svg>',
   search: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 14 15.5l.3.3v.8l5 5 1.5-1.5-5-5Zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9Z"/></svg>',
   chev: '<svg viewBox="0 0 24 24"><path d="M9.3 6.7 10.7 5.3 17.4 12l-6.7 6.7-1.4-1.4 5.3-5.3-5.3-5.3Z"/></svg>',
   doc: '<svg viewBox="0 0 24 24"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm7 1.5V9h5.5L13 3.5ZM8 13v2h8v-2H8Zm0 4v2h5v-2H8Z"/></svg>',
@@ -134,7 +130,6 @@ const store = {
     if (DEMO) {
       if (typeof SEED_DATA === 'undefined') await loadScript('seed-data.js');
       demoDb = demoLoad();
-      if (BorrowCore.autoReturnDue(demoDb, new Date())) demoSave(demoDb);
       state.db = demoView(0);
     } else {
       state.db = BorrowCore.normalize((await remote('load')).state);
@@ -147,7 +142,6 @@ const store = {
     try {
       if (DEMO) {
         const db = structuredClone(demoDb); // ถ้า error กลางทาง ข้อมูลเดิมไม่เสีย
-        BorrowCore.autoReturnDue(db, new Date());
         const result = BorrowCore.run(db, action, payload, { isAdmin: state.pin === DEMO_PIN });
         demoDb = db;
         demoSave(db);
@@ -165,13 +159,7 @@ const store = {
 
 // ===================== Derived views =====================
 function itemsView() {
-  return state.db.items.map((i) => ({ ...i, borrowed_qty: borrowedQty(i.id) })).sort((a, b) => a.code.localeCompare(b.code));
-}
-// จำนวนที่ถูกยืมอยู่ (ยังไม่คืน) — ไม่นับของที่เบิกไปแล้ว
-function borrowedQty(itemId) {
-  const open = new Set(state.db.requests.filter((r) => r.status === 'borrowed').map((r) => r.id));
-  return state.db.request_items.filter((l) => l.item_id === itemId && open.has(l.request_id))
-    .reduce((s, l) => s + l.qty - l.returned_qty - l.lost_qty, 0);
+  return state.db.items.slice().sort((a, b) => a.code.localeCompare(b.code));
 }
 function itemById(id) {
   return state.db.items.find((i) => i.id === Number(id));
@@ -184,8 +172,6 @@ function requestView(r) {
   return {
     ...r,
     items: lines,
-    is_overdue: r.status === 'borrowed' && !!r.due_date && r.due_date < today(),
-    days_overdue: Math.round((new Date(today()) - new Date(r.due_date)) / 86400000),
     item_summary: lines.map((l) => `${l.name} ×${l.qty}`).join(', '),
     department_full: deptFull(r.department),
   };
@@ -264,18 +250,14 @@ function options(list, selected, blank) {
   return (blank ? `<option value="">${blank}</option>` : '') +
     list.map((x) => `<option ${x.name === selected ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
 }
-function statusPill(r) {
-  if (r.is_overdue) return '<span class="pill overdue">เกินกำหนดคืน</span>';
-  if (r.status === 'returned' && r.note.includes(BorrowCore.AUTO_RETURN_NOTE)) return '<span class="pill returned">คืนอัตโนมัติ</span>';
-  return `<span class="pill ${r.status}">${STATUS[r.status]}</span>`;
-}
-const typePill = (t) => `<span class="pill ${t}">${TYPES[t]}</span>`;
+const statusPill = (r) => `<span class="pill ${r.status}">${STATUS[r.status] || esc(r.status)}</span>`;
 function movePill(m) {
-  const cls = m.qty > 0 ? 'in' : m.type === 'lost' ? 'out' : m.type === 'withdraw' ? 'withdraw' : 'borrow';
-  return `<span class="pill ${cls}">${MOVE[m.type]}</span>`;
+  const cls = m.qty > 0 ? 'in' : m.type === 'withdraw' ? 'withdraw' : 'out';
+  return `<span class="pill ${cls}">${MOVE[m.type] || esc(m.type)}</span>`;
 }
+// แถบระดับสต็อก: เต็มเมื่อมีของตั้งแต่ 2 เท่าของจุดสั่งซื้อขึ้นไป
 function stockBar(i) {
-  const max = Math.max(i.total_qty, i.available_qty, 1);
+  const max = Math.max(i.min_qty * 2, i.available_qty, 1);
   const pct = Math.max(0, Math.round((i.available_qty / max) * 100));
   return `<div class="bar ${i.available_qty <= 0 ? 'empty-stock' : isLow(i) ? 'low' : ''}"><span style="width:${pct}%"></span></div>`;
 }
@@ -410,6 +392,17 @@ function loginHud() {
   };
 }
 
+// ปุ่มกระจก (Liquid Glass): แสงวงกลมตามตำแหน่งเมาส์ (เฉพาะอุปกรณ์ที่มีเมาส์)
+if (matchMedia('(hover: hover) and (pointer: fine)').matches) {
+  addEventListener('pointermove', (e) => {
+    const b = e.target.closest?.('.btn');
+    if (!b) return;
+    const r = b.getBoundingClientRect();
+    b.style.setProperty('--mx', `${Math.round(e.clientX - r.left)}px`);
+    b.style.setProperty('--my', `${Math.round(e.clientY - r.top)}px`);
+  }, { passive: true });
+}
+
 // ===================== Routing =====================
 // ผู้ใช้ทั่วไปเห็นหน้าแรก หน้าเบิกพัสดุ และพัสดุคงเหลือ (ดูอย่างเดียว) หน้าอื่นเปิดได้หลังเข้าสู่ระบบเจ้าหน้าที่
 const ROUTES = {
@@ -431,9 +424,7 @@ function currentRoute() {
 const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
 
 function renderNav() {
-  const reqs = requestsView();
-  const overdue = reqs.filter((r) => r.is_overdue).length;
-  const links = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['help', 'วิธีใช้งาน'], ['requests', 'ประวัติเบิก', overdue], ['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['sheet', 'Google Sheet'], ['settings', 'ตั้งค่า']];
+  const links = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['help', 'วิธีใช้งาน'], ['requests', 'ประวัติเบิก'], ['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['sheet', 'Google Sheet'], ['settings', 'ตั้งค่า']];
   const cur = currentRoute();
   const a = ([k, label, n]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur ? 'active' : ''}">${label}${n ? `<span class="badge">${n}</span>` : ''}</a>`;
   $('#nav-links').innerHTML = (isAdmin() ? links.filter(([k]) => k !== 'help') : links.slice(0, 4)).map(a).join('');
@@ -573,7 +564,7 @@ async function route() {
 }
 
 // โหมด Google Sheets: ดึงข้อมูลล่าสุดเบื้องหลัง แล้ววาดใหม่ถ้ามีการแก้ไข (จากเครื่องอื่นหรือแก้ในชีตโดยตรง)
-// หน้าฟอร์มเบิก/ยืม วาดเฉพาะรายการพัสดุใหม่ ข้อมูลที่กรอกไว้ไม่หาย
+// หน้าฟอร์มเบิก วาดเฉพาะรายการพัสดุใหม่ ข้อมูลที่กรอกไว้ไม่หาย
 // หน้าพัสดุคงเหลือ: วาดเฉพาะตารางใหม่ (ช่องค้นหา/ตัวกรองที่กำลังใช้ไม่หาย)
 let redrawItems = null;
 let syncing = false;
@@ -628,7 +619,7 @@ function refresh() {
 
 // ===================== Home =====================
 function renderHome(page) {
-  const items = state.db.items.filter((i) => i.active && BorrowCore.allows(i, 'withdraw'));
+  const items = state.db.items.filter((i) => i.active);
   const ready = items.filter((i) => i.available_qty > 0);
   const low = items.filter(isLow);
   const todayTh = new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -657,7 +648,7 @@ function renderHome(page) {
     </div>`);
 }
 
-// ===================== Request form (เบิก / ยืม) =====================
+// ===================== Request form (เบิก) =====================
 let redrawPickList = null;
 const MAX_QTY = 9999;
 let rfObservers = [];
@@ -666,10 +657,9 @@ function renderRequestForm(page) {
   rfObservers.forEach((o) => o.disconnect());
   rfObservers = [];
   const params = hashParams();
-  const type = 'withdraw'; // เว็บนี้เปิดให้เบิกอย่างเดียว (ข้อมูลใบยืมเดิมยังอยู่ในระบบให้เจ้าหน้าที่ดูได้)
   // มาจากปุ่ม "เบิก" ในหน้าพัสดุคงเหลือ: เลือกรายการนั้นไว้ให้
   const pre = itemById(params.get('item'));
-  if (pre && BorrowCore.allows(pre, type) && pre.active && !state.picks[pre.id]) state.picks[pre.id] = 1;
+  if (pre && pre.active && !state.picks[pre.id]) state.picks[pre.id] = 1;
   if (params.toString()) history.replaceState(null, '', '#/request');
   const todayTh = new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -736,25 +726,13 @@ function renderRequestForm(page) {
     $$('button', az).forEach((b) => { const m = b.dataset.jump === idx; b.classList.toggle('on', m); if (m) on = b; });
     if (on) az.scrollTo({ left: on.offsetLeft - (az.clientWidth - on.offsetWidth) / 2, behavior: motionOK() ? 'smooth' : 'auto' });
   }
-  const allowed = () => itemsView().filter((i) => i.active && BorrowCore.allows(i, type));
-
-  function applyType() {
-    form.dataset.type = type;
-    $('#rf-submit').className = 'btn lg primary';
-    // ตัดพัสดุที่เบิกไม่ได้ (เช่น ครุภัณฑ์สำหรับยืม) ออกจากรายการที่เลือก
-    for (const id of Object.keys(state.picks)) {
-      const i = itemById(id);
-      if (!i || !BorrowCore.allows(i, type)) delete state.picks[id];
-    }
-    drawList();
-  }
+  const allowed = () => itemsView().filter((i) => i.active);
 
   function drawSummary() {
     const chosen = Object.entries(state.picks).map(([id, q]) => ({ item: itemById(id), q })).filter((x) => x.item);
-    const verb = type === 'withdraw' ? 'เบิก' : 'ยืม';
     $('#rf-count').textContent = chosen.length ? `${chosen.length} รายการ · ${fmtNum(chosen.reduce((s, x) => s + x.q, 0))} ชิ้น` : 'ยังไม่ได้เลือกพัสดุ';
-    $('#rf-detail').textContent = chosen.length ? chosen.map((x) => `${x.item.name} ×${x.q}`).join(', ') : `เลือกพัสดุที่ต้องการ${verb}จากรายการด้านบน`;
-    $('#rf-submit').textContent = `ยืนยันการ${verb}`;
+    $('#rf-detail').textContent = chosen.length ? chosen.map((x) => `${x.item.name} ×${x.q}`).join(', ') : 'เลือกพัสดุที่ต้องการเบิกจากรายการด้านบน';
+    $('#rf-submit').textContent = 'ยืนยันการเบิก';
     form.classList.toggle('has-picks', chosen.length > 0);
     // ใบเบิกด้านขวา (จอกว้าง): รายการที่เลือกพร้อมปุ่มปรับจำนวน
     $('#rf-slip').innerHTML = chosen.length
@@ -839,7 +817,7 @@ function renderRequestForm(page) {
           ? E(ICON.search, `ไม่พบ "${qv}" ในรายการที่มีของ`, '', '<button type="button" class="btn sm" data-show-set="all">ค้นในทั้งหมด</button><button type="button" class="btn sm plain" data-clear-q>ล้างคำค้น</button>')
           : q
             ? E(ICON.search, `ไม่พบ "${qv}"`, 'ลองพิมพ์ชื่อสั้นลง หรือค้นด้วยรหัส เช่น NSO-010', '<button type="button" class="btn sm plain" data-clear-q>ล้างคำค้น</button>')
-            : E(ICON.box, 'ยังไม่มีพัสดุสำหรับประเภทนี้', '', ''));
+            : E(ICON.box, 'ยังไม่มีรายการพัสดุ', '', ''));
     wasEmpty = !items.length;
     drawSummary();
     if (spy) { spy.disconnect(); rfObservers = rfObservers.filter((o) => o !== spy); spy = null; }
@@ -884,7 +862,7 @@ function renderRequestForm(page) {
     const x0 = a.left + a.width / 2, y0 = a.top + a.height / 2;
     const dx = b.left + 12 - x0, dy = b.top + b.height / 2 - y0;
     const o = document.createElement('i');
-    o.className = 'fly' + (type === 'borrow' ? ' borrow' : '');
+    o.className = 'fly';
     o.innerHTML = '<i></i>';
     o.style.left = x0 + 'px';
     o.style.top = y0 + 'px';
@@ -907,7 +885,9 @@ function renderRequestForm(page) {
     const inp = e.target.closest('[data-qty]');
     if (inp) setQty(inp.dataset.qty, inp.value);
   });
-  $('#rf-q').addEventListener('input', drawList);
+  // พิมพ์ค้นหาเร็ว ๆ วาดรายการใหม่ครั้งเดียวต่อเฟรม (ไม่วาด 301 แถวทุกตัวอักษร)
+  let qFrame = 0;
+  $('#rf-q').addEventListener('input', () => { cancelAnimationFrame(qFrame); qFrame = requestAnimationFrame(drawList); });
   $$('#rf-show button').forEach((b) => b.addEventListener('click', () => { show = b.dataset.show; drawList(); }));
   // กดตัวอักษร → เลื่อนไปที่กลุ่มนั้น (เผื่อความสูงแถบเมนูและแถบค้นหาที่ติดอยู่ด้านบน)
   $('#rf-az').addEventListener('click', (e) => {
@@ -940,7 +920,8 @@ function renderRequestForm(page) {
     try {
       let id;
       try {
-        id = await store.act('createRequest', { ...data, type, items });
+        // type: 'withdraw' ให้ Apps Script เวอร์ชันเก่า (ก่อนตัดระบบยืม) ยังรับใบเบิกได้จนกว่าจะอัปเดต
+        id = await store.act('createRequest', { ...data, type: 'withdraw', items });
       } catch (err) {
         // Apps Script เวอร์ชันเก่ายังไม่ให้เบิกของที่หมด (ยอดติดลบ)
         if (/คงเหลือไม่พอ/.test(err.message)) {
@@ -962,20 +943,21 @@ function renderRequestForm(page) {
     }
   }));
 
-  applyType();
+  // ตัดรายการที่ถูกลบ/ปิดใช้งานออกจากที่เลือกไว้
+  for (const id of Object.keys(state.picks)) if (!itemById(id)?.active) delete state.picks[id];
+  drawList();
 }
 
 // ===================== Google Sheet (เจ้าหน้าที่) =====================
 // ลิงก์ไปชีตที่เว็บเชื่อมอยู่: Apps Script ส่ง URL มาให้เฉพาะคำขอที่มี PIN (หรือใส่ SHEET_URL ใน config.js เอง)
 const SHEET_TABS = [
-  ['รายการเบิก-ยืม', 'ทุกรายการที่ถูกเบิก/ยืม 1 แถวต่อพัสดุ: วันที่ เลขที่ ผู้ขอ แผนก ชื่อพัสดุ จำนวน (ล่าสุดอยู่บน)', 'view'],
+  ['รายการเบิก', 'ทุกรายการที่ถูกเบิก 1 แถวต่อพัสดุ: วันที่เวลา เลขที่ ผู้เบิก แผนก ชื่อพัสดุ จำนวน (ล่าสุดอยู่บน)', 'view'],
   ['อุปกรณ์', 'รายชื่อพัสดุและยอดคงเหลือ แก้คอลัมน์ available_qty (คงเหลือ) ชื่อ หน่วย ที่เก็บ ได้ · เพิ่มพัสดุใหม่: พิมพ์แถวใหม่ท้ายตาราง ใส่ code, name, unit, available_qty (เว้น id ว่างไว้ ระบบตั้งให้)', 'edit'],
   ['หน่วยงาน', 'รายชื่อแผนกที่ให้เลือกในฟอร์ม เพิ่ม/แก้ได้', 'edit'],
   ['หมวดหมู่', 'หมวดหมู่ของพัสดุ', 'edit'],
   ['ประวัติสต็อก', 'ทุกการเคลื่อนไหวของสต็อก ใช้ตรวจสอบย้อนหลัง', 'keep'],
-  ['ประวัติการเบิก', 'ใบเบิกทั้งหมด 1 แถวต่อใบ ล่าสุดอยู่บน: เลขที่ วันที่ ผู้เบิก แผนก รายการพัสดุ จำนวนรวม สถานะ · คอลัมน์หัวสีเทาท้ายตารางเป็นข้อมูลระบบ', 'keep'],
-  ['รายการในคำขอ', 'ข้อมูลระบบ: พัสดุแต่ละชิ้นในใบเบิก/ใบยืม', 'keep'],
-  ['พัสดุที่ถูกยืมอยู่', 'ใบยืมเดิมที่ยังไม่คืน (ระบบสร้างใหม่ทุกครั้ง)', 'view'],
+  ['ประวัติการเบิก', 'ใบเบิกทั้งหมด 1 แถวต่อใบ ล่าสุดอยู่บน: เลขที่ วันที่เวลา ผู้เบิก แผนก รายการพัสดุ จำนวนรวม · คอลัมน์หัวสีเทาท้ายตารางเป็นข้อมูลระบบ', 'keep'],
+  ['รายการในคำขอ', 'ข้อมูลระบบ: พัสดุแต่ละชิ้นในใบเบิก', 'keep'],
 ];
 function renderSheet(page) {
   const sh = state.sheet || (CONFIG.SHEET_URL ? { url: CONFIG.SHEET_URL, name: '' } : null);
@@ -1013,19 +995,18 @@ function renderSheet(page) {
 }
 
 // ===================== Success + PDF =====================
-// สร้าง PDF รอไว้ก่อน แล้วถามผู้ใช้ว่าจะบันทึกลงเครื่องหรือไม่
+// สร้าง PDF รอไว้ก่อน กดบันทึกแล้วถามว่าต้องการคำแนะนำไหม → (ภาพสาธิต) → บันทึก → ป๊อปอัปกลางจอเมื่อบันทึกแล้ว
 function showSuccess(id) {
   const r = requestView(state.db.requests.find((x) => x.id === id));
-  const w = r.type === 'withdraw';
   const body = openModal('', `
-    <div class="success" data-type="${r.type}">
+    <div class="success">
       <span class="done" aria-hidden="true"><svg class="check-anim" viewBox="0 0 76 76"><circle cx="38" cy="38" r="34"/><path d="M23 39.5 33.5 50 54 28"/></svg></span>
-      <h2>${w ? 'เบิกพัสดุเรียบร้อย' : 'ยืมพัสดุเรียบร้อย'}</h2>
-      <p class="doc-no"><span class="doc-label">เลขที่เอกสาร</span><b class="doc-id">${esc(r.request_no)}</b><span>${r.items.length} รายการ${w ? '' : ` · คืนภายใน ${fmtDate(r.due_date)}`}</span></p>
+      <h2>เบิกพัสดุเรียบร้อย</h2>
+      <p class="doc-no"><span class="doc-label">เลขที่เอกสาร</span><b class="doc-id">${esc(r.request_no)}</b><span>${r.items.length} รายการ · ${esc(fmtDateTime(r.created_at))}</span></p>
       <div class="permission">
         <span class="file-icon">PDF</span>
         <div>
-          <p id="pdf-q">กำลังจัดทำ${w ? 'ใบเบิก' : 'ใบยืม'}พัสดุ...</p>
+          <p id="pdf-q">กำลังจัดทำใบเบิกพัสดุ...</p>
           <p class="muted" id="pdf-sub"><span class="spinner" style="width:12px;height:12px"></span> กรุณารอสักครู่</p>
         </div>
       </div>
@@ -1035,27 +1016,29 @@ function showSuccess(id) {
       </div>
       <button type="button" class="save-alert" id="save-demo">
         <span class="save-alert-ic" aria-hidden="true">${ICON.bell}</span>
-        <span class="save-alert-txt"><b>สำคัญ! อย่าลืมบันทึกใบเบิก</b><span>ดูภาพสาธิตวิธีบันทึกและพิมพ์ (iPhone · Android)</span></span>
+        <span class="save-alert-txt"><b>สำคัญ! อย่าลืมบันทึกใบเบิก</b><span>ดูภาพสาธิตวิธีบันทึกและพิมพ์ (iPhone · Android · คอม)</span></span>
         <span class="save-alert-go">ดูวิธี ›</span>
       </button>
       <a class="help-link" href="#/help?s=save" data-close-help>${ICON.book} อ่านวิธีบันทึกและพิมพ์แบบละเอียด</a>
     </div>`);
-  $('[data-close-help]', body).addEventListener('click', (e) => { e.preventDefault(); closeModal(); setTimeout(() => { location.hash = '#/help?s=save'; }, 240); });
-  $('#save-demo', body).addEventListener('click', () => showSaveGuide(true));
-  // สัญญาณเตือน: เสียง + สั่น แล้วเด้งภาพสาธิตวิธีบันทึกขึ้นมาเอง (มือถือ · ข้ามเมื่อเป็นการทดสอบอัตโนมัติ)
-  setTimeout(() => {
-    if (!$('#save-demo') || !modalOpen()) return;
-    alertSignal();
-    if (DEVICE !== 'pc' && !navigator.webdriver) showSaveGuide(true);
-  }, 1100);
   let blob = null;
   const fileName = PdfDoc.fileName(r);
-  PdfDoc.build(r, CONFIG.HOSPITAL_NAME).then((b) => {
+  // ต้องเรียกตรงจากการแตะของผู้ใช้ (ส่วนก่อน await แรก) เบราว์เซอร์จึงยอมเปิดหน้าต่างบันทึก/แชร์
+  const save = safe(async () => {
+    if (!blob) { toast('กำลังจัดทำไฟล์ PDF รอสักครู่แล้วกดบันทึกอีกครั้ง'); pointToSave(); return; }
+    if (await PdfDoc.save(blob, fileName)) {
+      closeModal();
+      savedPopup(fileName);
+    }
+  });
+  $('[data-close-help]', body).addEventListener('click', (e) => { e.preventDefault(); closeModal(); setTimeout(() => { location.hash = '#/help?s=save'; }, 240); });
+  $('#save-demo', body).addEventListener('click', () => showSaveGuide({ onFinish: save, point: true }));
+  // สัญญาณเตือนให้บันทึกใบเบิก: เสียงสั้น ๆ + สั่น
+  setTimeout(() => { if ($('#save-demo') && modalOpen()) alertSignal(); }, 1100);
+  PdfDoc.build(r, CONFIG.HOSPITAL_NAME, CONFIG.STAFF_NAME).then((b) => {
     blob = b;
     $('#pdf-q', body).innerHTML = `อนุญาตให้บันทึก <b>${esc(fileName)}</b> ลงในเครื่องนี้หรือไม่?`;
-    $('#pdf-sub', body).textContent = PdfDoc.isIOS
-      ? 'แตะ "บันทึก PDF" แล้วเลือก "บันทึกไปยังไฟล์" หรือ "พิมพ์" · ควรเก็บไฟล์ไว้ (เจ้าหน้าที่ออกให้ใหม่ได้)'
-      : 'ใช้พิมพ์และลงลายมือชื่อ' + (w ? 'ผู้เบิก' : 'ผู้ยืม') + 'และเจ้าหน้าที่พัสดุ · ควรเก็บไฟล์ไว้ (เจ้าหน้าที่ออกให้ใหม่ได้)';
+    $('#pdf-sub', body).textContent = 'ใช้พิมพ์และลงลายมือชื่อผู้เบิกและเจ้าหน้าที่พัสดุ · ควรเก็บไฟล์ไว้ (เจ้าหน้าที่ออกให้ใหม่ได้)';
     $('#pdf-save', body).disabled = false;
     $('.permission', body).classList.add('ready');
     $('#pdf-save', body).classList.add('ready');
@@ -1065,13 +1048,70 @@ function showSuccess(id) {
     $('#pdf-sub', body).textContent = e.message + ' — แจ้งเจ้าหน้าที่พัสดุให้ออกเอกสารจากหน้าประวัติ';
   });
   $('#pdf-skip', body).addEventListener('click', closeModal);
-  $('#pdf-save', body).addEventListener('click', safe(async () => {
-    if (!blob) return;
-    if (await PdfDoc.save(blob, fileName)) {
-      toast('บันทึกไฟล์ ' + fileName + ' แล้ว');
-      closeModal();
-    }
-  }));
+  $('#pdf-save', body).addEventListener('click', () => askGuide(save));
+}
+
+// หน้าต่างเล็กถามก่อนบันทึก: ใช่ = เปิดภาพสาธิต (ปุ่มสุดท้ายบันทึกไฟล์ให้) · ไม่ต้อง = บันทึกทันที
+function askGuide(save) {
+  if ($('dialog.ask')) return;
+  const d = document.createElement('dialog');
+  d.className = 'ask';
+  d.setAttribute('aria-labelledby', 'ask-t');
+  d.innerHTML = `
+    <span class="ask-ic" aria-hidden="true">${ICON.book}</span>
+    <h3 id="ask-t">ต้องการให้แนะนำวิธีการใช้งานหรือไม่?</h3>
+    <p>ดูภาพสาธิตวิธีบันทึกไฟล์และพิมพ์ใบเบิกทีละขั้น (iPhone · Android · คอมพิวเตอร์)</p>
+    <div class="ask-actions">
+      <button type="button" class="btn lg" data-ask="no">ไม่ต้อง บันทึกเลย</button>
+      <button type="button" class="btn primary lg" data-ask="yes">ใช่ แนะนำวิธี</button>
+    </div>`;
+  document.body.append(d);
+  const close = () => {
+    if (!motionOK()) { d.close(); d.remove(); return; }
+    d.classList.add('closing');
+    setTimeout(() => { d.close(); d.remove(); }, 180);
+  };
+  $('[data-ask="no"]', d).addEventListener('click', () => { close(); save(); });
+  $('[data-ask="yes"]', d).addEventListener('click', () => { close(); showSaveGuide({ onFinish: save, point: true }); });
+  d.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+  d.showModal();
+  $('[data-ask="yes"]', d).focus();
+}
+
+// ป๊อปอัปกลางจอเมื่อบันทึกไฟล์แล้ว (แตะเพื่อปิด หรือปิดเองใน 6 วินาที)
+function savedPopup(name) {
+  const where = {
+    ios: 'ถ้าเลือก "บันทึกไปยังไฟล์" เปิดดูได้ที่แอป ไฟล์ (Files) → Downloads',
+    android: 'ไฟล์อยู่ในโฟลเดอร์ ดาวน์โหลด (Download) เปิดได้ที่แอป Files / ไฟล์ของฉัน',
+    pc: 'ไฟล์อยู่ในโฟลเดอร์ที่เลือกไว้ (ปกติคือ ดาวน์โหลด / Downloads)',
+  }[DEVICE];
+  $('.hud')?.remove();
+  const el = document.createElement('div');
+  el.className = 'hud saved';
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-live', 'polite');
+  el.innerHTML = `<div class="hud-card" data-state="ok" tabindex="-1">
+      <span class="hud-ic ok" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="30"/><path d="M20 33.5 28.5 42 45 24"/></svg></span>
+      <h3>บันทึกไฟล์เรียบร้อย</h3>
+      <p class="saved-file"><span class="file-icon">PDF</span><b>${esc(name)}</b></p>
+      <p>${esc(where)}</p>
+      <button type="button" class="btn primary lg saved-ok">ตกลง</button>
+      <span class="hud-bar" aria-hidden="true"><i style="animation-duration:6s"></i></span>
+    </div>`;
+  document.body.append(el);
+  const close = () => {
+    if (!el.isConnected || el.classList.contains('out')) return;
+    clearTimeout(timer);
+    document.removeEventListener('keydown', onKey);
+    el.classList.add('out');
+    setTimeout(() => el.remove(), motionOK() ? 260 : 0);
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const timer = setTimeout(close, 6000);
+  $('.hud-card', el).addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
+  $('.saved-ok', el).focus({ preventScroll: true });
+  if (motionOK()) navigator.vibrate?.(30);
 }
 
 async function downloadPdf(r, btn) {
@@ -1079,12 +1119,12 @@ async function downloadPdf(r, btn) {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> กำลังสร้าง PDF';
   try {
-    const blob = await PdfDoc.build(r, CONFIG.HOSPITAL_NAME);
+    const blob = await PdfDoc.build(r, CONFIG.HOSPITAL_NAME, CONFIG.STAFF_NAME);
     // การสร้างอาจใช้เวลา เบราว์เซอร์อาจไม่ยอมเปิดหน้าต่างบันทึกโดยไม่มีการคลิกใหม่ จึงให้กดยืนยันอีกครั้ง
     btn.innerHTML = `${ICON.doc} บันทึก ${esc(PdfDoc.fileName(r))}`;
     btn.disabled = false;
     btn.onclick = safe(async () => {
-      if (await PdfDoc.save(blob, PdfDoc.fileName(r))) toast('บันทึกไฟล์แล้ว');
+      if (await PdfDoc.save(blob, PdfDoc.fileName(r))) { closeModal(); savedPopup(PdfDoc.fileName(r)); }
     });
     btn.classList.add('primary');
   } catch (e) {
@@ -1108,15 +1148,11 @@ function renderItems(page) {
     <div class="toolbar">
       <div class="search">${ICON.search}<input type="search" id="f-q" placeholder="ค้นหาชื่อ รหัส หรือสถานที่เก็บ" value="${esc(params.get('q') || '')}"></div>
       <select id="f-cat" style="width:auto">${options(state.db.categories, params.get('cat'), 'ทุกหมวดหมู่')}</select>
-      ${isAdmin() ? `<div class="segmented" id="f-kind">
-        <button data-kind="">ทั้งหมด</button><button data-kind="withdraw">เบิกได้</button><button data-kind="borrow">ยืมได้</button>
-      </div>` : ''}
       <label class="check"><input type="checkbox" id="f-low" ${params.get('low') === '1' ? 'checked' : ''}> ใกล้หมด</label>
       <span class="spacer"></span>
       ${isAdmin() ? '<button class="btn" id="btn-export">ส่งออก CSV</button>' : ''}
     </div>
     <div class="item-grid" id="items-grid"></div>`);
-  let kind = params.get('kind') || '';
 
   const filtered = () => {
     const q = $('#f-q').value.trim().toLowerCase();
@@ -1125,21 +1161,18 @@ function renderItems(page) {
     const qs = new URLSearchParams();
     if (q) qs.set('q', q);
     if (cat) qs.set('cat', cat);
-    if (kind) qs.set('kind', kind);
     if (low) qs.set('low', '1');
     history.replaceState(null, '', `#/items${qs.toString() ? '?' + qs : ''}`);
     return itemsView().filter((i) => (i.active || isAdmin()) &&
       (!q || [i.name, i.code, i.location].some((s) => s.toLowerCase().includes(q))) &&
-      (!cat || i.category === cat) && (!kind || BorrowCore.allows(i, kind)) && (!low || isLow(i)));
+      (!cat || i.category === cat) && (!low || isLow(i)));
   };
 
-  const actionBtns = (i) => BorrowCore.allows(i, 'withdraw')
-    ? `<a class="btn sm primary" href="#/request?item=${i.id}" ${i.active ? '' : 'hidden'}>เบิก</a>` : '';
+  const actionBtns = (i) => `<a class="btn sm primary" href="#/request?item=${i.id}" ${i.active ? '' : 'hidden'}>เบิก</a>`;
 
   // จำยอดที่แสดงอยู่ เมื่อดึงจาก Google Sheet แล้วยอดเปลี่ยน การ์ดนั้นจะกะพริบให้เห็น
   let shown = null;
   const draw = () => {
-    $$('#f-kind button').forEach((b) => b.classList.toggle('active', b.dataset.kind === kind));
     const prev = shown;
     shown = {};
     $('#items-grid').innerHTML = filtered().map((i) => {
@@ -1148,13 +1181,12 @@ function renderItems(page) {
       return `
       <div class="item-card${i.available_qty <= 0 ? ' out' : ''}${changed ? ' changed' : ''}" data-item="${i.id}">
         <div class="top">
-          <span class="pick-icon ${i.kind === 'borrow' ? 'borrow' : ''}">${i.kind === 'borrow' ? ICON.borrow : ICON.box}</span>
+          <span class="pick-icon">${ICON.box}</span>
           <div style="flex:1;min-width:0"><div class="name">${esc(i.name)}</div><div class="code">${esc(i.code)} · ${esc(i.category || 'ไม่ระบุหมวด')}</div></div>
         </div>
         ${(() => {
           const p = (i.available_qty < 0 ? `<span class="pill out">ติดลบ ${fmtNum(-i.available_qty)}</span>` : i.available_qty === 0 ? '<span class="pill out">หมด</span>' : isLow(i) ? '<span class="pill low">ใกล้หมด</span>' : '') +
-            (i.active ? '' : '<span class="pill">ปิดใช้งาน</span>') +
-            (i.borrowed_qty ? `<span class="pill borrow">ถูกยืม ${fmtNum(i.borrowed_qty)}</span>` : '');
+            (i.active ? '' : '<span class="pill">ปิดใช้งาน</span>');
           return p ? `<div class="item-pills">${p}</div>` : '';
         })()}
         <div class="qty"><b>${fmtNum(i.available_qty)}</b><span>${esc(i.unit)} คงเหลือ</span><span class="spacer"></span>
@@ -1169,10 +1201,9 @@ function renderItems(page) {
   $('#f-q').addEventListener('input', draw);
   $('#f-cat').addEventListener('change', draw);
   $('#f-low').addEventListener('change', draw);
-  $$('#f-kind button').forEach((b) => b.addEventListener('click', () => { kind = b.dataset.kind; draw(); }));
   $('#btn-export')?.addEventListener('click', () => downloadCsv('stock',
-    ['รหัส', 'ชื่อ', 'หมวดหมู่', 'หน่วย', 'ประเภท', 'จำนวนทั้งหมด', 'คงเหลือ', 'ถูกยืม', 'จุดสั่งซื้อขั้นต่ำ', 'สถานที่เก็บ'],
-    filtered().map((i) => [i.code, i.name, i.category, i.unit, KINDS[i.kind], i.total_qty, i.available_qty, i.borrowed_qty, i.min_qty, i.location])));
+    ['รหัส', 'ชื่อ', 'หมวดหมู่', 'หน่วย', 'คงเหลือ', 'จุดสั่งซื้อขั้นต่ำ', 'สถานที่เก็บ'],
+    filtered().map((i) => [i.code, i.name, i.category, i.unit, i.available_qty, i.min_qty, i.location])));
   if (isAdmin()) $('#btn-add').addEventListener('click', () => itemForm(null));
   $('#live-refresh')?.addEventListener('click', () => syncFromSheet({ manual: true }));
   redrawItems = draw;
@@ -1182,34 +1213,22 @@ function renderItems(page) {
 function showItem(id) {
   const i = itemsView().find((x) => x.id === id);
   if (!i) return;
-  const borrowers = requestsView().filter((r) => r.status === 'borrowed')
-    .flatMap((r) => r.items.filter((l) => l.item_id === id && l.qty > l.returned_qty + l.lost_qty)
-      .map((l) => ({ ...r, outstanding: l.qty - l.returned_qty - l.lost_qty })));
   const moves = state.db.movements.filter((m) => m.item_id === id).sort((a, b) => b.id - a.id).slice(0, 100);
   const body = openModal(i.name, `
     <dl class="info">
       <dt>รหัส</dt><dd>${esc(i.code)}</dd>
       <dt>หมวดหมู่</dt><dd>${esc(i.category || '-')}</dd>
-      <dt>ประเภท</dt><dd>${KINDS[i.kind]}</dd>
       <dt>คงเหลือในคลัง</dt><dd>${fmtNum(i.available_qty)} ${esc(i.unit)} ${isLow(i) ? '<span class="pill low">ต่ำกว่าจุดขั้นต่ำ</span>' : ''}</dd>
-      ${isAdmin() ? `<dt>ถูกยืมอยู่</dt><dd>${fmtNum(i.borrowed_qty)} ${esc(i.unit)}</dd>` : ''}
       <dt>จุดสั่งซื้อขั้นต่ำ</dt><dd>${fmtNum(i.min_qty)} ${esc(i.unit)}</dd>
       <dt>สถานที่เก็บ</dt><dd>${esc(i.location || '-')}</dd>
     </dl>
     <div class="toolbar">
-      ${BorrowCore.allows(i, 'withdraw') && i.active ? `<a class="btn primary" href="#/request?item=${i.id}" data-close>เบิกรายการนี้</a>` : ''}
+      ${i.active ? `<a class="btn primary" href="#/request?item=${i.id}" data-close>เบิกรายการนี้</a>` : ''}
       ${isAdmin() ? `<span class="spacer"></span><button class="btn ok" data-stock="receive">รับเข้า</button>
         <button class="btn" data-stock="adjust">ตรวจนับ</button>
         <button class="btn" data-stock="lost">ตัดชำรุด</button>
         <button class="btn" id="i-edit">แก้ไข</button>` : ''}
     </div>
-    ${borrowers.length ? `<h4>ผู้ที่กำลังยืม</h4>
-    <div class="sub-card table-wrap"><table>
-      <thead><tr><th>เลขที่</th><th>ผู้ยืม / แผนก</th><th>กำหนดคืน</th><th class="num">ค้างคืน</th></tr></thead>
-      <tbody>${borrowers.map((b) => `<tr class="clickable" data-request="${b.id}"><td>${esc(b.request_no)}</td>
-        <td>${esc(b.borrower_name)}<div class="muted small">${esc(b.department)}</div></td><td>${fmtDate(b.due_date)}</td>
-        <td class="num">${b.outstanding}</td></tr>`).join('')}</tbody>
-    </table></div>` : ''}
     ${isAdmin() ? `<h4>ประวัติสต็อก</h4>
     <div class="sub-card table-wrap"><table>
       <thead><tr><th>วันเวลา</th><th>ประเภท</th><th class="num">จำนวน</th><th class="num">คงเหลือ</th><th>อ้างอิง</th></tr></thead>
@@ -1227,18 +1246,16 @@ function showItem(id) {
 }
 
 function itemForm(item) {
-  const kindOpts = Object.entries(KINDS).map(([k, v]) => `<option value="${k}" ${(item?.kind || 'withdraw') === k ? 'selected' : ''}>${v}</option>`).join('');
   const body = openModal(item ? 'แก้ไขข้อมูลพัสดุ' : 'เพิ่มพัสดุใหม่', `
     <form id="item-form" class="fields">
       <label class="field">รหัสพัสดุ <span class="req">*</span><input name="code" required value="${esc(item?.code)}"></label>
       <label class="field">หน่วยนับ<input name="unit" value="${esc(item?.unit || 'ชิ้น')}"></label>
       <label class="field full">ชื่อพัสดุ <span class="req">*</span><input name="name" required value="${esc(item?.name)}"></label>
-      <label class="field">ประเภทการใช้งาน<select name="kind">${kindOpts}</select></label>
-      <label class="field">หมวดหมู่<select name="category">${options(state.db.categories, item?.category, '- ไม่ระบุ -')}</select></label>
+      <label class="field full">หมวดหมู่<select name="category">${options(state.db.categories, item?.category, '- ไม่ระบุ -')}</select></label>
       <label class="field">จุดสั่งซื้อขั้นต่ำ <span class="hint">(เตือนเมื่อคงเหลือ ≤)</span><input name="min_qty" type="number" min="0" value="${item?.min_qty ?? 0}"></label>
       ${item ? '' : '<label class="field">จำนวนเริ่มต้น<input name="initial_qty" type="number" min="0" value="0"></label>'}
       <label class="field ${item ? '' : 'full'}">สถานที่เก็บ<input name="location" value="${esc(item?.location)}"></label>
-      ${item ? `<label class="check full"><input type="checkbox" name="active" ${item.active ? 'checked' : ''}> เปิดใช้งาน (ให้เบิก/ยืมได้)</label>` : ''}
+      ${item ? `<label class="check full"><input type="checkbox" name="active" ${item.active ? 'checked' : ''}> เปิดใช้งาน (ให้เบิกได้)</label>` : ''}
       <div class="actions full"><button class="btn primary lg">บันทึก</button></div>
     </form>`);
   $('#item-form', body).addEventListener('submit', safe(async (e) => {
@@ -1256,7 +1273,7 @@ function stockForm(item, type) {
   const titles = { receive: 'รับเข้าสต็อก', adjust: 'ตรวจนับ / ปรับยอดคงเหลือ', lost: 'ตัดชำรุด / สูญหาย' };
   const field = type === 'adjust'
     ? `<label class="field full">ยอดคงเหลือในคลังที่นับได้จริง (${esc(item.unit)})<input name="counted_qty" type="number" min="0" required value="${item.available_qty}"></label>
-       <p class="muted small full">ยอดในระบบ ${fmtNum(item.available_qty)} ${esc(item.unit)} (ไม่รวม ${fmtNum(item.borrowed_qty)} ที่ถูกยืมอยู่)</p>`
+       <p class="muted small full">ยอดในระบบ ${fmtNum(item.available_qty)} ${esc(item.unit)}</p>`
     : `<label class="field full">จำนวน (${esc(item.unit)})<input name="qty" type="number" min="1" ${type === 'lost' ? `max="${item.available_qty}"` : ''} required></label>`;
   const body = openModal(`${titles[type]} · ${item.name}`, `
     <form id="stock-form" class="fields">
@@ -1276,9 +1293,9 @@ function stockForm(item, type) {
 // ===================== Requests (history) =====================
 function renderRequests(page) {
   let tab = hashParams().get('tab') || '';
-  const tabs = [['', 'ทั้งหมด'], ['withdraw', 'เบิก'], ['borrowed', 'กำลังยืม'], ['overdue', 'เกินกำหนด'], ['returned', 'คืนแล้ว']];
+  const tabs = [['', 'ทั้งหมด'], ['today', 'วันนี้'], ['month', 'เดือนนี้']];
   page.insertAdjacentHTML('beforeend', `
-    <div class="page-head"><h1>ประวัติเบิก</h1><p class="lead">ดูรายการย้อนหลังและดาวน์โหลดใบเบิก/ใบยืมเป็น PDF</p></div>
+    <div class="page-head"><h1>ประวัติเบิก</h1><p class="lead">ดูใบเบิกย้อนหลังและดาวน์โหลดใบเบิกเป็น PDF</p></div>
     <div class="toolbar">
       <div class="segmented" id="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}</div>
       <div class="search">${ICON.search}<input type="search" id="r-q" placeholder="ค้นหาเลขที่ ชื่อ แผนก หรือพัสดุ"></div>
@@ -1287,7 +1304,7 @@ function renderRequests(page) {
     </div>
     <section class="card"><ul class="rows" id="req-body"></ul></section>`);
 
-  const match = (r) => !tab || (tab === 'overdue' ? r.is_overdue : tab === 'withdraw' ? r.type === 'withdraw' : r.status === tab);
+  const match = (r) => !tab || r.created_at.startsWith(tab === 'today' ? today() : today().slice(0, 7));
   const filtered = () => {
     const q = $('#r-q').value.trim().toLowerCase();
     return requestsView().filter((r) => match(r) &&
@@ -1298,12 +1315,12 @@ function renderRequests(page) {
     history.replaceState(null, '', `#/requests${tab ? '?tab=' + tab : ''}`);
     $('#req-body').innerHTML = filtered().map((r) => `
       <li><div class="row" data-request="${r.id}">
-        <span class="pick-icon ${r.type === 'borrow' ? 'borrow' : ''}">${r.type === 'borrow' ? ICON.borrow : ICON.withdraw}</span>
+        <span class="pick-icon">${ICON.withdraw}</span>
         <div class="row-body">
           <div class="row-title">${esc(r.borrower_name)} <span class="muted small" style="font-weight:400">· ${esc(r.department)}</span></div>
           <div class="row-sub">${esc(r.request_no)} · ${esc(r.item_summary)}</div>
         </div>
-        <div class="row-end">${statusPill(r)}<span>${r.type === 'borrow' && r.status === 'borrowed' ? 'คืน ' + fmtDate(r.due_date) : fmtDate(r.created_at)}</span></div>
+        <div class="row-end"><span>${fmtDateTime(r.created_at)}</span></div>
         <span class="chev">${ICON.chev}</span>
       </div></li>`).join('') || '<li class="empty">ไม่พบรายการ</li>';
     bindRowClicks($('#req-body'));
@@ -1311,9 +1328,8 @@ function renderRequests(page) {
   $$('#tabs button').forEach((b) => b.addEventListener('click', () => { tab = b.dataset.tab; draw(); }));
   $('#r-q').addEventListener('input', draw);
   $('#r-export').addEventListener('click', () => downloadCsv('requests',
-    ['เลขที่', 'ประเภท', 'ชื่อ', 'แผนก', 'วันที่', 'กำหนดคืน', 'สถานะ', 'วันที่คืนครบ', 'รหัสพัสดุ', 'พัสดุ', 'จำนวน', 'คืนแล้ว', 'ชำรุด/สูญหาย'],
-    filtered().flatMap((r) => r.items.map((l) => [r.request_no, TYPES[r.type], r.borrower_name, r.department, r.borrow_date, r.due_date,
-      r.is_overdue ? 'เกินกำหนดคืน' : STATUS[r.status], r.returned_at, l.code, l.name, l.qty, l.returned_qty, l.lost_qty]))));
+    ['เลขที่', 'วันเวลาที่เบิก', 'ผู้เบิก', 'แผนก', 'หมายเหตุ', 'รหัสพัสดุ', 'พัสดุ', 'จำนวน', 'หน่วย'],
+    filtered().flatMap((r) => r.items.map((l) => [r.request_no, r.created_at, r.borrower_name, r.department, r.note, l.code, l.name, l.qty, l.unit]))));
   draw();
 }
 
@@ -1321,71 +1337,25 @@ function showRequest(id) {
   const raw = state.db.requests.find((r) => r.id === id);
   if (!raw) return;
   const r = requestView(raw);
-  const w = r.type === 'withdraw';
-  const outstanding = (l) => l.qty - l.returned_qty - l.lost_qty;
-  const canReturn = isAdmin() && r.status === 'borrowed';
-  const showReturned = !w && r.status !== 'pending';
-  const body = openModal(`${w ? 'ใบเบิก' : 'ใบยืม'} ${r.request_no}`, `
-    <div style="display:flex;gap:6px">${typePill(r.type)}${statusPill(r)}</div>
+  const body = openModal(`ใบเบิก ${r.request_no}`, `
     <dl class="info">
-      <dt>ชื่อ</dt><dd>${esc(r.borrower_name)} ${r.phone ? `(โทร ${esc(r.phone)})` : ''}</dd>
+      <dt>ผู้เบิก</dt><dd>${esc(r.borrower_name)} ${r.phone ? `(โทร ${esc(r.phone)})` : ''}</dd>
       <dt>แผนก</dt><dd>${esc(r.department_full)}</dd>
-      <dt>วันที่${w ? 'เบิก' : 'ยืม'}</dt><dd>${fmtDateTime(r.created_at)}</dd>
-      ${w ? '' : `<dt>กำหนดคืน</dt><dd>${fmtDate(r.due_date)}${r.is_overdue ? ` <span class="pill overdue">เกิน ${r.days_overdue} วัน</span>` : ''}</dd>`}
+      <dt>วันเวลาที่เบิก</dt><dd>${fmtDateTime(r.created_at)}</dd>
       ${r.purpose ? `<dt>วัตถุประสงค์</dt><dd>${esc(r.purpose)}</dd>` : ''}
       ${r.note ? `<dt>หมายเหตุ</dt><dd>${esc(r.note)}</dd>` : ''}
-      ${r.returned_at ? `<dt>คืนครบเมื่อ</dt><dd>${fmtDateTime(r.returned_at)}</dd>` : ''}
     </dl>
     <div class="sub-card table-wrap"><table>
-      <thead><tr><th>พัสดุ</th><th class="num">จำนวน</th>
-        ${showReturned ? '<th class="num">คืนแล้ว</th><th class="num">ชำรุด/หาย</th><th class="num">ค้างคืน</th>' : ''}
-        ${canReturn ? '<th>รับคืน</th><th>ชำรุด/หาย</th>' : r.status === 'pending' ? '<th class="num">คงเหลือในคลัง</th>' : ''}</tr></thead>
+      <thead><tr><th>พัสดุ</th><th class="num">จำนวน</th></tr></thead>
       <tbody>${r.items.map((l) => `<tr>
         <td>${esc(l.name)}<div class="muted small">${esc(l.code)}</div></td>
         <td class="num">${l.qty} ${esc(l.unit)}</td>
-        ${showReturned ? `<td class="num">${l.returned_qty}</td><td class="num">${l.lost_qty}</td><td class="num">${r.status === 'borrowed' ? outstanding(l) : '-'}</td>` : ''}
-        ${canReturn ? `
-          <td><input type="number" min="0" max="${outstanding(l)}" value="${outstanding(l)}" data-ret="${l.item_id}" ${outstanding(l) ? '' : 'disabled'}></td>
-          <td><input type="number" min="0" max="${outstanding(l)}" value="0" data-lost="${l.item_id}" ${outstanding(l) ? '' : 'disabled'}></td>`
-          : r.status === 'pending' ? `<td class="num ${l.available_qty < l.qty ? 'error' : ''}">${l.available_qty}</td>` : ''}
       </tr>`).join('')}</tbody>
     </table></div>
-    ${canReturn ? '<label class="field">หมายเหตุการคืน<input id="return-note" placeholder="เช่น สภาพปกติ / สายชำรุด"></label>' : ''}
     <div class="actions">
-      <button class="btn" id="rq-pdf">${ICON.doc} ดาวน์โหลด PDF</button>
-      <span class="spacer"></span>
-      ${r.status === 'pending' ? '<button class="btn" id="rq-cancel">ยกเลิกคำขอ</button>' : ''}
-      ${isAdmin() && r.status === 'pending' ? '<button class="btn danger" id="rq-reject">ไม่อนุมัติ</button><button class="btn ok" id="rq-approve">อนุมัติและจ่าย</button>' : ''}
-      ${canReturn ? '<button class="btn primary" id="rq-return">บันทึกรับคืน</button>' : ''}
-    </div>`, { wide: canReturn });
-
-  const done = (msg) => { toast(msg); refresh(); showRequest(id); };
+      <button class="btn primary" id="rq-pdf">${ICON.doc} ดาวน์โหลด PDF</button>
+    </div>`);
   $('#rq-pdf', body).addEventListener('click', safe(() => downloadPdf(r, $('#rq-pdf', body))), { once: true });
-  bindRowClicks(body);
-  $('#rq-cancel', body)?.addEventListener('click', safe(async () => {
-    if (!confirm('ยืนยันยกเลิกคำขอนี้?')) return;
-    await store.act('cancelRequest', { id });
-    done('ยกเลิกคำขอแล้ว');
-  }));
-  $('#rq-approve', body)?.addEventListener('click', safe(async () => {
-    await store.act('approve', { id });
-    done('อนุมัติและตัดสต็อกเรียบร้อย');
-  }));
-  $('#rq-reject', body)?.addEventListener('click', safe(async () => {
-    const note = prompt('เหตุผลที่ไม่อนุมัติ (ถ้ามี)');
-    if (note === null) return;
-    await store.act('reject', { id, note });
-    done('บันทึกไม่อนุมัติแล้ว');
-  }));
-  $('#rq-return', body)?.addEventListener('click', safe(async () => {
-    const items = r.items.map((l) => ({
-      item_id: l.item_id,
-      returned_qty: Number($(`[data-ret="${l.item_id}"]`, body).value) || 0,
-      lost_qty: Number($(`[data-lost="${l.item_id}"]`, body).value) || 0,
-    }));
-    await store.act('returnItems', { id, items, note: $('#return-note', body).value });
-    done('บันทึกรับคืนและคืนสต็อกเรียบร้อย');
-  }));
 }
 
 // ===================== สรุปรายเดือน (เจ้าหน้าที่) =====================
@@ -1398,20 +1368,20 @@ function showMonthlyReport() {
     <div class="actions"><button class="btn primary lg" id="mr-pdf">${ICON.doc} สร้าง PDF</button></div>`);
   let sum;
   const preview = () => {
-    sum = BorrowCore.monthlySummary(state.db, $('#mr-month', body).value, today());
+    sum = BorrowCore.monthlySummary(state.db, $('#mr-month', body).value);
     const t = sum.totals;
-    const top = (rows) => rows.slice(0, 5).map((x) => `<li>${esc(x.name)} <b>${fmtNum(x.qty)}</b> ${esc(x.unit)}</li>`).join('') || '<li class="muted">ไม่มี</li>';
+    const top = (rows, unit) => rows.slice(0, 5).map((x) => `<li>${esc(x.name)} <b>${fmtNum(unit ? x.qty : x.withdraw_qty)}</b> ${esc(unit ? x.unit : 'หน่วย')}</li>`).join('') || '<li class="muted">ไม่มี</li>';
     $('#mr-preview', body).innerHTML = `
       <div class="stats">
-        <div class="card stat"><span class="label">ใบเบิก</span><span class="value">${fmtNum(t.withdraw_docs)}</span><span class="sub">${fmtNum(t.withdraw_qty)} หน่วย</span></div>
-        <div class="card stat"><span class="label">ใบยืม</span><span class="value">${fmtNum(t.borrow_docs)}</span><span class="sub">${fmtNum(t.borrow_qty)} หน่วย</span></div>
-        <div class="card stat ${t.outstanding_qty ? 'warn' : ''}"><span class="label">ยังไม่คืน</span><span class="value">${fmtNum(t.outstanding_qty)}</span><span class="sub">เกินกำหนด ${fmtNum(t.overdue_docs)} ใบ</span></div>
+        <div class="card stat"><span class="label">ใบเบิก</span><span class="value">${fmtNum(t.withdraw_docs)}</span><span class="sub">ใบ</span></div>
+        <div class="card stat"><span class="label">จำนวนที่เบิก</span><span class="value">${fmtNum(t.withdraw_qty)}</span><span class="sub">หน่วย</span></div>
+        <div class="card stat"><span class="label">แผนกที่เบิก</span><span class="value">${fmtNum(sum.departments.length)}</span><span class="sub">แผนก</span></div>
       </div>
       <div class="grid-2" style="margin-top:14px">
-        <div><h4>เบิกมากที่สุด</h4><ol class="top-list">${top(sum.withdrawn)}</ol></div>
-        <div><h4>ยืมมากที่สุด</h4><ol class="top-list">${top(sum.borrowed)}</ol></div>
+        <div><h4>เบิกมากที่สุด</h4><ol class="top-list">${top(sum.withdrawn, true)}</ol></div>
+        <div><h4>แผนกที่เบิกมากที่สุด</h4><ol class="top-list">${top(sum.departments, false)}</ol></div>
       </div>
-      <p class="muted small">PDF มี: ยอดรวม · พัสดุที่ถูกเบิก · พัสดุที่ถูกยืม/คืน · สรุปตามแผนก · รายการเอกสารทั้งหมด ${fmtNum(sum.requests.length)} ใบ</p>`;
+      <p class="muted small">PDF มี: ยอดรวม · พัสดุที่ถูกเบิก · สรุปตามแผนก · รายการใบเบิกทั้งหมด ${fmtNum(sum.requests.length)} ใบ</p>`;
     const btn = $('#mr-pdf', body);
     btn.innerHTML = `${ICON.doc} สร้าง PDF`;
     btn.classList.add('primary');
@@ -1423,15 +1393,14 @@ function showMonthlyReport() {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> กำลังสร้าง PDF';
     try {
-      const d = new Date();
       const blob = await PdfDoc.buildReport(sum, CONFIG.HOSPITAL_NAME, {
-        generatedAt: `${today()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+        generatedAt: nowStamp(),
         deptFull,
         lines: (r) => requestView(r).items,
       });
       const name = PdfDoc.reportFileName(sum.month);
       btn.innerHTML = `${ICON.doc} บันทึก ${esc(name)}`;
-      btn.onclick = safe(async () => { if (await PdfDoc.save(blob, name)) toast('บันทึกไฟล์แล้ว'); });
+      btn.onclick = safe(async () => { if (await PdfDoc.save(blob, name)) { closeModal(); savedPopup(name); } });
     } catch (e) {
       btn.innerHTML = `${ICON.doc} สร้าง PDF`;
       throw e;
@@ -1442,28 +1411,35 @@ function showMonthlyReport() {
   $('#mr-month', body).addEventListener('change', preview);
   preview();
 }
+// เวลาปัจจุบันแบบที่บันทึกในระบบ เช่น 2026-10-24 09:15:42
+function nowStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${today()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
 
 // ===================== Dashboard (เจ้าหน้าที่) =====================
 function renderDashboard(page) {
   const items = itemsView().filter((i) => i.active);
   const reqs = requestsView();
   const low = items.filter(isLow);
-  const borrowing = reqs.filter((r) => r.status === 'borrowed');
-  const overdue = reqs.filter((r) => r.is_overdue).sort((a, b) => a.due_date.localeCompare(b.due_date));
   const month = today().slice(0, 7);
-  const withdrawnThisMonth = reqs.filter((r) => r.type === 'withdraw' && r.created_at.startsWith(month)).length;
+  const thisMonth = reqs.filter((r) => r.created_at.startsWith(month)).length;
+  const todayN = reqs.filter((r) => r.created_at.startsWith(today())).length;
+  const negative = items.filter((i) => i.available_qty < 0).length;
+  const recentReqs = reqs.slice(0, 8);
   const recent = state.db.movements.slice().sort((a, b) => b.id - a.id).slice(0, 10);
   page.insertAdjacentHTML('beforeend', `
     <div class="page-head-row">
-      <div class="page-head"><h1>ภาพรวม</h1><p class="lead">สรุปสต็อกและการเบิก-ยืม</p></div>
+      <div class="page-head"><h1>ภาพรวม</h1><p class="lead">สรุปสต็อกและการเบิกพัสดุ</p></div>
       <button class="btn primary" data-monthly>${ICON.doc} สรุปรายเดือน (PDF)</button>
     </div>
     <div class="stats">
       <a class="card stat" href="#/items"><span class="label">พัสดุในระบบ</span><span class="value">${fmtNum(items.length)}</span><span class="sub">รายการ</span></a>
-      <a class="card stat" href="#/requests?tab=withdraw"><span class="label">เบิกเดือนนี้</span><span class="value">${fmtNum(withdrawnThisMonth)}</span><span class="sub">ใบเบิก</span></a>
-      <a class="card stat" href="#/requests?tab=borrowed"><span class="label">กำลังถูกยืม</span><span class="value">${fmtNum(borrowing.length)}</span><span class="sub">ใบยืม</span></a>
+      <a class="card stat" href="#/requests?tab=today"><span class="label">เบิกวันนี้</span><span class="value">${fmtNum(todayN)}</span><span class="sub">ใบเบิก</span></a>
+      <a class="card stat" href="#/requests?tab=month"><span class="label">เบิกเดือนนี้</span><span class="value">${fmtNum(thisMonth)}</span><span class="sub">ใบเบิก</span></a>
       <a class="card stat warn" href="#/items?low=1"><span class="label">ใกล้หมด</span><span class="value">${fmtNum(low.length)}</span><span class="sub">รายการ</span></a>
-      <a class="card stat danger" href="#/requests?tab=overdue"><span class="label">เกินกำหนดคืน</span><span class="value">${fmtNum(overdue.length)}</span><span class="sub">ใบยืม</span></a>
+      <a class="card stat danger" href="#/items?low=1"><span class="label">ยอดติดลบ (ค้างจ่าย)</span><span class="value">${fmtNum(negative)}</span><span class="sub">รายการ</span></a>
     </div>
     <div class="grid-2">
       <section class="card">
@@ -1471,17 +1447,17 @@ function renderDashboard(page) {
         <div class="table-wrap"><table>
           <thead><tr><th>พัสดุ</th><th class="num">คงเหลือ</th><th class="num">ขั้นต่ำ</th></tr></thead>
           <tbody>${low.map((i) => `<tr class="clickable" data-item="${i.id}"><td>${esc(i.name)}<div class="muted small">${esc(i.code)}</div></td>
-            <td class="num"><span class="pill low">${fmtNum(i.available_qty)} ${esc(i.unit)}</span></td><td class="num">${fmtNum(i.min_qty)}</td></tr>`).join('') ||
+            <td class="num"><span class="pill ${i.available_qty < 0 ? 'out' : 'low'}">${fmtNum(i.available_qty)} ${esc(i.unit)}</span></td><td class="num">${fmtNum(i.min_qty)}</td></tr>`).join('') ||
             '<tr><td colspan="3" class="empty">สต็อกทุกรายการอยู่ในระดับปกติ</td></tr>'}</tbody>
         </table></div>
       </section>
       <section class="card">
-        <div class="card-head"><h3>เกินกำหนดคืน</h3><a href="#/requests?tab=overdue" class="link">ดูทั้งหมด</a></div>
+        <div class="card-head"><h3>ใบเบิกล่าสุด</h3><a href="#/requests" class="link">ดูทั้งหมด</a></div>
         <div class="table-wrap"><table>
-          <thead><tr><th>เลขที่ / ผู้ยืม</th><th>กำหนดคืน</th><th class="num">เกิน</th></tr></thead>
-          <tbody>${overdue.map((r) => `<tr class="clickable" data-request="${r.id}"><td>${esc(r.request_no)}<div class="muted small">${esc(r.borrower_name)} · ${esc(r.department)}</div></td>
-            <td>${fmtDate(r.due_date)}</td><td class="num"><span class="pill overdue">${r.days_overdue} วัน</span></td></tr>`).join('') ||
-            '<tr><td colspan="3" class="empty">ไม่มีรายการเกินกำหนด</td></tr>'}</tbody>
+          <thead><tr><th>เลขที่ / ผู้เบิก</th><th>วันเวลา</th><th class="num">รายการ</th></tr></thead>
+          <tbody>${recentReqs.map((r) => `<tr class="clickable" data-request="${r.id}"><td>${esc(r.request_no)}<div class="muted small">${esc(r.borrower_name)} · ${esc(r.department)}</div></td>
+            <td>${fmtDateTime(r.created_at)}</td><td class="num">${fmtNum(r.items.length)}</td></tr>`).join('') ||
+            '<tr><td colspan="3" class="empty">ยังไม่มีใบเบิก</td></tr>'}</tbody>
         </table></div>
       </section>
     </div>
@@ -1511,7 +1487,7 @@ function renderMovements(page) {
       <button class="btn" id="m-export">ส่งออก CSV</button>
     </div>
     <section class="card"><div class="table-wrap"><table>
-      <thead><tr><th>วันเวลา</th><th>พัสดุ</th><th>ประเภท</th><th class="num">จำนวน</th><th class="num">คงเหลือ</th><th class="num">ยอดรวม</th><th>อ้างอิง / หมายเหตุ</th></tr></thead>
+      <thead><tr><th>วันเวลา</th><th>พัสดุ</th><th>ประเภท</th><th class="num">จำนวน</th><th class="num">คงเหลือ</th><th>อ้างอิง / หมายเหตุ</th></tr></thead>
       <tbody id="m-body"></tbody>
     </table></div></section>`);
   const filtered = () => {
@@ -1524,14 +1500,14 @@ function renderMovements(page) {
       const i = itemById(m.item_id);
       return `<tr><td>${fmtDateTime(m.created_at)}</td><td>${esc(i?.name)}<div class="muted small">${esc(i?.code)}</div></td>
         <td>${movePill(m)}</td><td class="num">${m.qty > 0 ? '+' : ''}${fmtNum(m.qty)}</td>
-        <td class="num">${fmtNum(m.available_after)}</td><td class="num">${fmtNum(m.total_after)}</td>
+        <td class="num">${fmtNum(m.available_after)}</td>
         <td>${esc(m.request_no)} ${m.note ? `<div class="muted small">${esc(m.note)}</div>` : ''}</td></tr>`;
-    }).join('') || '<tr><td colspan="7" class="empty">ไม่พบรายการ</td></tr>';
+    }).join('') || '<tr><td colspan="6" class="empty">ไม่พบรายการ</td></tr>';
   };
   ['#m-item', '#m-type', '#m-from', '#m-to'].forEach((s) => $(s).addEventListener('change', draw));
   $('#m-export').addEventListener('click', () => downloadCsv('stock-movements',
-    ['วันเวลา', 'รหัส', 'พัสดุ', 'ประเภท', 'จำนวน', 'คงเหลือหลังทำรายการ', 'ยอดรวมหลังทำรายการ', 'เลขที่เอกสาร', 'หมายเหตุ'],
-    filtered().map((m) => [m.created_at, itemById(m.item_id)?.code, itemById(m.item_id)?.name, MOVE[m.type], m.qty, m.available_after, m.total_after, m.request_no, m.note])));
+    ['วันเวลา', 'รหัส', 'พัสดุ', 'ประเภท', 'จำนวน', 'คงเหลือหลังทำรายการ', 'เลขที่เอกสาร', 'หมายเหตุ'],
+    filtered().map((m) => [m.created_at, itemById(m.item_id)?.code, itemById(m.item_id)?.name, MOVE[m.type] || m.type, m.qty, m.available_after, m.request_no, m.note])));
   draw();
 }
 
@@ -1550,7 +1526,7 @@ function renderSettings(page) {
         '<tr><td class="empty">ยังไม่มีข้อมูล</td></tr>'}</tbody></table></div>
     </section>`;
   page.insertAdjacentHTML('beforeend', `
-    <div class="page-head"><h1>ตั้งค่า</h1><p class="lead">รายชื่อแผนกจะแสดงในฟอร์มเบิก/ยืม</p></div>
+    <div class="page-head"><h1>ตั้งค่า</h1><p class="lead">รายชื่อแผนกจะแสดงในฟอร์มเบิก</p></div>
     <div class="grid-2">${card('departments', 'แผนก')}${card('categories', 'หมวดหมู่พัสดุ')}</div>
     ${DEMO ? `<section class="card card-pad" style="display:flex;flex-direction:column;gap:12px;align-items:flex-start"><h3>โหมดทดลอง</h3>
       <p class="muted">ล้างข้อมูลที่ทดลองไว้ในเบราว์เซอร์นี้ แล้วกลับไปใช้ข้อมูลตัวอย่าง</p>
@@ -1768,7 +1744,8 @@ const TOUR = [
 ];
 // ป๊อปอัปสไลด์ภาพทีละขั้น ใช้ทั้ง "วิธีใช้งาน" และ "วิธีบันทึกใบเบิก"
 // steps() คืนรายการขั้น { img, t, d, s?, note?, link? } · head = HTML เพิ่มเหนือภาพ · onClose เรียกทุกครั้งที่ปิด
-function slideDialog({ cls = '', label, steps, head = '', tag = '', finish = 'เริ่มใช้งาน', onClose }) {
+// onFinish = กดปุ่มสุดท้าย (เรียกทันทีในจังหวะที่แตะ ใช้เปิดหน้าต่างบันทึกไฟล์ได้) แทน onClose
+function slideDialog({ cls = '', label, steps, head = '', tag = '', finish = 'เริ่มใช้งาน', onClose, onFinish }) {
   if ($('dialog.tour')) return null;
   let i = 0;
   let list = steps();
@@ -1826,7 +1803,13 @@ function slideDialog({ cls = '', label, steps, head = '', tag = '', finish = '�
         { duration: 280, easing: 'cubic-bezier(.22,1,.36,1)' }));
     }
   };
-  const go = (n) => { if (n < 0 || n >= list.length) return close(); const dir = n > i ? 1 : -1; i = n; draw(dir); };
+  const go = (n) => {
+    if (n >= list.length && onFinish) { onClose = null; close(); onFinish(); return; }
+    if (n < 0 || n >= list.length) return close();
+    const dir = n > i ? 1 : -1;
+    i = n;
+    draw(dir);
+  };
   $('#tour-next', d).addEventListener('click', () => go(i + 1));
   $('#tour-back', d).addEventListener('click', () => (i ? go(i - 1) : close()));
   $('.tour-x', d).addEventListener('click', close);
@@ -1860,7 +1843,7 @@ function showTour() {
 }
 
 // ===================== ภาพสาธิตวิธีบันทึกใบเบิก =====================
-// ภาพจำลองหน้าจอ iPhone / Android อยู่ใน docs/tour/save/ · เด้งขึ้นเองหลังเบิกสำเร็จ พร้อมเสียงเตือน + สั่น
+// ภาพจำลองหน้าจอ iPhone / Android / คอมพิวเตอร์ อยู่ใน docs/tour/save/ · เปิดเมื่อกด "ใช่" ตอนถามก่อนบันทึก PDF
 const LINE_NOTE = 'เปิดจากลิงก์ใน LINE? แตะ ⋯ มุมบน → เปิดใน Safari / Chrome ก่อน';
 const SAVE_DEMO = {
   ios: [
@@ -1878,15 +1861,23 @@ const SAVE_DEMO = {
     { img: 'save/and-4-menu', s: 'พิมพ์', t: 'ต้องการพิมพ์: แตะ ⋮ → "พิมพ์"', d: 'เปิดไฟล์ใบเบิก แตะ ⋮ มุมขวาบน แล้วแตะ พิมพ์' },
     { img: 'save/and-5-print', s: 'พิมพ์', t: 'เลือกเครื่องพิมพ์ แล้วแตะปุ่มพิมพ์', d: 'แตะแถบด้านบนเลือกเครื่องพิมพ์ของหน่วยงาน ตั้ง 2 สำเนา แล้วแตะปุ่มเครื่องพิมพ์สีน้ำเงิน' },
   ],
+  pc: [
+    { img: 'save/pc-1-button', s: 'บันทึกไฟล์', t: 'คลิกปุ่ม "ดาวน์โหลด PDF"', d: 'หลังเบิกเสร็จ รอจนปุ่มเป็นสีฟ้า (1–3 วินาที) แล้วคลิก ดาวน์โหลด PDF' },
+    { img: 'save/pc-2-savedialog', s: 'บันทึกไฟล์', t: 'เลือกโฟลเดอร์ แล้วกด "บันทึก"', d: 'Chrome / Edge เปิดหน้าต่างบันทึก เลือกโฟลเดอร์ เช่น Downloads แล้วกด บันทึก (เบราว์เซอร์อื่นบันทึกลง Downloads ให้เอง)' },
+    { img: 'save/pc-3-downloads', s: 'บันทึกไฟล์', t: 'เปิดไฟล์ใบเบิก', d: 'คลิกไอคอนดาวน์โหลดมุมขวาบนของเบราว์เซอร์ หรือเปิดโฟลเดอร์ Downloads แล้วดับเบิลคลิก WD69-001.pdf' },
+    { img: 'save/pc-4-open', s: 'พิมพ์', t: 'ต้องการพิมพ์: กด Ctrl + P', d: 'เมื่อเปิดไฟล์แล้ว กด Ctrl + P (Mac: ⌘ + P) หรือคลิกไอคอนเครื่องพิมพ์มุมขวาบน' },
+    { img: 'save/pc-5-print', s: 'พิมพ์', t: 'เลือกเครื่องพิมพ์ แล้วกด "พิมพ์"', d: 'เลือกเครื่องพิมพ์ของหน่วยงาน กระดาษ A4 จำนวน 2 ชุด แล้วกด พิมพ์' },
+  ],
 };
-// fromSuccess = เปิดจากหน้าเบิกสำเร็จ: ปิดแล้วชี้ไปที่ปุ่มบันทึก PDF
-function showSaveGuide(fromSuccess = false) {
-  let dev = DEVICE === 'android' ? 'android' : 'ios';
+// onFinish = ปุ่มสุดท้าย "เข้าใจแล้ว บันทึกไฟล์เลย" บันทึกไฟล์ให้ทันที · point = ปิดแล้วชี้ไปที่ปุ่มบันทึก PDF
+function showSaveGuide({ onFinish = null, point = false } = {}) {
+  let dev = DEVICE;
   const ui = slideDialog({
     cls: 'save-guide',
     label: 'วิธีบันทึกใบเบิก',
     tag: 'ภาพจำลอง',
-    finish: fromSuccess ? 'เข้าใจแล้ว ไปบันทึก' : 'เข้าใจแล้ว',
+    finish: onFinish ? 'เข้าใจแล้ว บันทึกเลย' : 'เข้าใจแล้ว',
+    onFinish,
     steps: () => SAVE_DEMO[dev],
     head: `
       <div class="save-head" role="alert">
@@ -1897,9 +1888,10 @@ function showSaveGuide(fromSuccess = false) {
         <div class="segmented save-dev" role="tablist" aria-label="อุปกรณ์">
           <button type="button" role="tab" data-dev="ios">iPhone</button>
           <button type="button" role="tab" data-dev="android">Android</button>
+          <button type="button" role="tab" data-dev="pc">คอม</button>
         </div>
       </div>`,
-    onClose: fromSuccess ? pointToSave : null,
+    onClose: point ? pointToSave : null,
   });
   if (!ui) return;
   $('.save-bar', ui.d).append($('.tour-x', ui.d)); // ปุ่มปิดอยู่แถวเดียวกับแถบเลือกอุปกรณ์ หัวข้อสีแดงจะได้ไม่ถูกบัง

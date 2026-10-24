@@ -9,7 +9,7 @@
 // ==================== Code.gs (ตัวเชื่อม Google Sheets — แก้ ADMIN_PIN ได้ที่นี่) ====================
 
 /**
- * ตัวเชื่อม Google Sheets สำหรับระบบเบิก-ยืมพัสดุ
+ * ตัวเชื่อม Google Sheets สำหรับระบบเบิกพัสดุ
  * วิธีติดตั้งอยู่ใน README.md หัวข้อ "ขั้นที่ 2: เชื่อม Google Sheets"
  *
  * วิธีง่ายสุด: วาง docs/apps-script/AllInOne.gs (รวมทุกไฟล์ไว้แล้ว) ลงใน Code.gs ไฟล์เดียว
@@ -19,7 +19,7 @@
  *   Code.gs      = ไฟล์นี้
  */
 
-// *** เปลี่ยนรหัส PIN สำหรับเจ้าหน้าที่พัสดุ (ใช้รับคืน / จัดการสต็อก) ***
+// *** เปลี่ยนรหัส PIN สำหรับเจ้าหน้าที่พัสดุ (ใช้ดูประวัติเบิก / จัดการสต็อก) ***
 var ADMIN_PIN = '1234';
 
 // ชื่อแท็บคงไว้ตามเวอร์ชันก่อน เพื่อให้ชีตที่ใช้งานอยู่แล้วอ่านต่อได้
@@ -30,13 +30,14 @@ var SHEET_NAMES = {
   movements: 'ประวัติสต็อก',
   departments: 'หน่วยงาน',
   categories: 'หมวดหมู่',
-  // 2 แท็บนี้สร้างใหม่ทุกครั้ง ไว้ดูอย่างเดียว ระบบไม่อ่านกลับ (สร้างครั้งแรกจะย้ายไปไว้หน้าสุด)
-  log: 'รายการเบิก-ยืม',
-  on_loan: 'พัสดุที่ถูกยืมอยู่',
+  // แท็บนี้สร้างใหม่ทุกครั้ง ไว้ดูอย่างเดียว ระบบไม่อ่านกลับ (สร้างครั้งแรกจะย้ายไปไว้หน้าสุด)
+  log: 'รายการเบิก',
 };
 
 // ชื่อแท็บเดิม: ชีตที่ใช้งานอยู่แล้วจะถูกเปลี่ยนชื่อให้อัตโนมัติ (ข้อมูลเดิมอยู่ครบ)
-var LEGACY_NAMES = { requests: ['คำขอยืม'] };
+var LEGACY_NAMES = { requests: ['คำขอยืม'], log: ['รายการเบิก-ยืม'] };
+// แท็บของระบบยืมเดิม (เลิกใช้แล้ว) ลบทิ้งให้อัตโนมัติตอนบันทึกครั้งถัดไป
+var OBSOLETE_SHEETS = ['พัสดุที่ถูกยืมอยู่'];
 
 function sheet_(ss, t) {
   var sh = ss.getSheetByName(SHEET_NAMES[t]);
@@ -48,32 +49,28 @@ function sheet_(ss, t) {
 
 /**
  * รันจากหน้า Apps Script เพื่อสร้างแท็บและใส่รายการพัสดุ/แผนกจาก SeedData
- * รันซ้ำได้จนกว่าจะเริ่มมีการเบิก/ยืมจริง (จะเขียนทับรายการพัสดุ แผนก และประวัติสต็อกทั้งหมด)
+ * รันซ้ำได้จนกว่าจะเริ่มมีการเบิกจริง (จะเขียนทับรายการพัสดุ แผนก และประวัติสต็อกทั้งหมด)
  */
 function setup() {
   if (typeof SEED_DATA === 'undefined') throw new Error('ไม่พบไฟล์ SeedData กรุณาคัดลอก docs/seed-data.js มาเป็นไฟล์ SeedData ก่อน');
   var sh = sheet_(SpreadsheetApp.getActiveSpreadsheet(), 'requests');
   if (sh && sh.getLastRow() > 1) {
-    throw new Error('มีรายการเบิก/ยืมในชีตแล้ว ไม่ได้เขียนทับ (ถ้าต้องการเริ่มใหม่ให้ลบแท็บ "' + SHEET_NAMES.requests + '" ก่อน)');
+    throw new Error('มีรายการเบิกในชีตแล้ว ไม่ได้เขียนทับ (ถ้าต้องการเริ่มใหม่ให้ลบแท็บ "' + SHEET_NAMES.requests + '" ก่อน)');
   }
   saveDb_(BorrowCore.seed(new Date(), SEED_DATA));
-  installDailyTrigger();
+  removeAutoReturnTrigger_();
 }
 
-/**
- * ตั้งเวลาให้ระบบคืนพัสดุที่ถึงวันคืนเข้าสต็อกอัตโนมัติทุกวัน (ประมาณ 00:00–01:00 ตามเขตเวลาของโปรเจกต์)
- * setup() เรียกให้แล้ว ถ้าติดตั้งไว้ก่อนหน้านี้ ให้รันฟังก์ชันนี้ 1 ครั้ง (รันซ้ำได้ ไม่สร้างซ้อน)
- */
-function installDailyTrigger() {
+// ระบบยืมเดิมตั้งเวลา "คืนอัตโนมัติ" ไว้ทุกวัน ตอนนี้เลิกใช้แล้ว: ลบตัวตั้งเวลานั้นออก
+function removeAutoReturnTrigger_() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'autoReturnDaily') ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger('autoReturnDaily').timeBased().everyDays(1).atHour(0).nearMinute(5).create();
 }
 
 /**
  * ก่อนเปิดใช้งานจริง: รันฟังก์ชันนี้ 1 ครั้งจากหน้า Apps Script (เลือก resetForLaunch แล้วกด เรียกใช้)
- * ล้างประวัติการเบิก/ยืม รายการในคำขอ และประวัติสต็อกทั้งหมด แล้วตั้งยอดคงเหลือทุกรายการเป็น 0
+ * ล้างประวัติการเบิก รายการในคำขอ และประวัติสต็อกทั้งหมด แล้วตั้งยอดคงเหลือทุกรายการเป็น 0
  * รายชื่อพัสดุ รายชื่อแผนก และหมวดหมู่อยู่ครบ · ถ้ารันผิด ย้อนกลับได้ที่ Google Sheet → ไฟล์ → ประวัติเวอร์ชัน
  */
 function resetForLaunch() {
@@ -83,7 +80,7 @@ function resetForLaunch() {
     var db = loadDb_();
     var n = BorrowCore.resetForLaunch(db);
     saveDb_(db);
-    Logger.log('รีเซ็ตเรียบร้อย: ลบใบเบิก/ยืม ' + n.requests + ' ใบ, ประวัติสต็อก ' + n.movements + ' รายการ, ตั้งยอด ' +
+    Logger.log('รีเซ็ตเรียบร้อย: ลบใบเบิก ' + n.requests + ' ใบ, ประวัติสต็อก ' + n.movements + ' รายการ, ตั้งยอด ' +
       db.items.length + ' รายการเป็น 0 (เก็บแผนก ' + db.departments.length + ' แผนกไว้)');
   } finally {
     lock.releaseLock();
@@ -93,7 +90,7 @@ function resetForLaunch() {
 /**
  * ล้างสต็อกเดิมทั้งหมด แล้วใส่รายการพัสดุและยอดคงเหลือตามไฟล์ Stock ล่าสุด (SEED_DATA ในไฟล์นี้)
  * รัน 1 ครั้งจากหน้า Apps Script (เลือก loadNewStock แล้วกด เรียกใช้)
- * ล้างประวัติการเบิก/ยืมและประวัติสต็อกด้วย · รายชื่อแผนกอยู่ครบ · ย้อนกลับได้ที่ ไฟล์ → ประวัติเวอร์ชัน
+ * ล้างประวัติการเบิกและประวัติสต็อกด้วย · รายชื่อแผนกอยู่ครบ · ย้อนกลับได้ที่ ไฟล์ → ประวัติเวอร์ชัน
  */
 function loadNewStock() {
   if (typeof SEED_DATA === 'undefined') throw new Error('ไม่พบข้อมูล SEED_DATA กรุณาวางไฟล์ AllInOne.gs ให้ครบทั้งไฟล์');
@@ -103,27 +100,34 @@ function loadNewStock() {
     var db = loadDb_();
     var before = BorrowCore.replaceStock(db, SEED_DATA, new Date());
     saveDb_(db);
-    Logger.log('ใส่สต็อกใหม่เรียบร้อย: ' + db.items.length + ' รายการ (เดิม ' + before.items + ' รายการ, ลบใบเบิก/ยืม ' + before.requests +
+    Logger.log('ใส่สต็อกใหม่เรียบร้อย: ' + db.items.length + ' รายการ (เดิม ' + before.items + ' รายการ, ลบใบเบิก ' + before.requests +
       ' ใบ) จาก ' + SEED_DATA.source + ' · แผนก ' + db.departments.length + ' แผนกอยู่ครบ');
   } finally {
     lock.releaseLock();
   }
 }
 
-/** ทำงานอัตโนมัติทุกวันจาก installDailyTrigger() */
+/** ตัวตั้งเวลารายวันของระบบยืมเดิมอาจยังเรียกฟังก์ชันนี้อยู่: ไม่ทำอะไรนอกจากลบตัวตั้งเวลานั้นทิ้ง */
 function autoReturnDaily() {
-  var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
-  try {
-    var db = loadDb_();
-    if (BorrowCore.autoReturnDue(db, new Date())) saveDb_(db);
-  } finally {
-    lock.releaseLock();
-  }
+  removeAutoReturnTrigger_();
 }
 
 function doGet() {
   return handle_({ action: 'load' });
+}
+
+// ยอดสต็อกสำหรับผู้ใช้ทั่วไป (ไม่มีชื่อผู้เบิก) เก็บไว้ในแคช 20 วินาที: คนเปิดเว็บพร้อมกันหลายคน / หน้าพัสดุคงเหลือที่ดึงยอดทุก 45 วินาที
+// ไม่ต้องอ่านชีตทั้งไฟล์และไม่ต้องรอคิวกัน · บันทึกผ่านเว็บแล้วแคชอัปเดตทันที · แก้ในชีตเองเห็นบนเว็บภายใน 20 วินาที
+var PUBLIC_CACHE_KEY = 'public-state-v2';
+var PUBLIC_CACHE_SEC = 20;
+function cache_() {
+  try { return typeof CacheService === 'undefined' ? null : CacheService.getScriptCache(); } catch (e) { return null; }
+}
+function cachePublic_(db) {
+  var c = cache_();
+  if (!c) return;
+  var s = JSON.stringify(BorrowCore.publicView(db, 0));
+  try { if (s.length < 95000) c.put(PUBLIC_CACHE_KEY, s, PUBLIC_CACHE_SEC); else c.remove(PUBLIC_CACHE_KEY); } catch (e) { /* แคชเต็ม/ใช้ไม่ได้ อ่านจากชีตตามปกติ */ }
 }
 
 function doPost(e) {
@@ -137,19 +141,24 @@ function doPost(e) {
 }
 
 function handle_(body) {
+  var isAdmin = String(body.pin || '') === ADMIN_PIN;
+  if (body.action === 'load' && !isAdmin) {
+    var c = cache_();
+    var hit = c && c.get(PUBLIC_CACHE_KEY);
+    if (hit) return ContentService.createTextOutput('{"ok":true,"result":null,"state":' + hit + '}').setMimeType(ContentService.MimeType.JSON);
+  }
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
     var db = loadDb_();
-    var isAdmin = String(body.pin || '') === ADMIN_PIN;
     var result = null;
-    // เผื่อ trigger รายวันยังไม่ได้ติดตั้ง/ยังไม่ทำงาน: ตรวจใบยืมที่ถึงวันคืนทุกครั้งที่มีคนใช้เว็บ
-    var autoReturned = BorrowCore.autoReturnDue(db, new Date());
     if (body.action !== 'load') {
       result = BorrowCore.run(db, body.action, body.payload, { isAdmin: isAdmin });
+      saveDb_(db);
+    } else {
+      cachePublic_(db);
     }
-    if (body.action !== 'load' || autoReturned) saveDb_(db);
-    // ประวัติการเบิก-ยืมส่งให้เฉพาะเจ้าหน้าที่ (มี PIN) ผู้ใช้ทั่วไปได้เฉพาะสต็อกและใบที่เพิ่งส่ง
+    // ประวัติการเบิกส่งให้เฉพาะเจ้าหน้าที่ (มี PIN) ผู้ใช้ทั่วไปได้เฉพาะสต็อกและใบที่เพิ่งส่ง
     var state = isAdmin ? db : BorrowCore.publicView(db, body.action === 'createRequest' ? result : 0);
     var out = { ok: true, result: result, state: state };
     // ลิงก์ชีตให้เจ้าหน้าที่เท่านั้น (หน้า Google Sheet บนเว็บ)
@@ -184,6 +193,42 @@ function json_(obj) {
 // ค่าในชีตตอนอ่าน (เป็นข้อความ) ใช้เทียบตอนบันทึก แท็บที่ไม่เปลี่ยนจะไม่ถูกเขียนใหม่ บันทึกเร็วขึ้นมาก
 var RAW_ = {};
 
+// เขียนเฉพาะส่วนที่เปลี่ยน (หัวตารางเหมือนเดิม): คืน true ถ้าเขียนแล้ว
+// - แถวใหม่ต่อท้าย (ประวัติสต็อก, รายการในคำขอ) → เขียนเฉพาะแถวใหม่
+// - แถวใหม่อยู่บนสุด (ประวัติการเบิก, รายการเบิก เรียงล่าสุดอยู่บน) → แทรกแถวใต้หัวตาราง
+// - จำนวนแถวเท่าเดิม แก้ไม่กี่แถว (ยอดคงเหลือในแท็บพัสดุ) → เขียนเฉพาะแถวที่เปลี่ยน
+// ข้อมูลยิ่งเยอะ ยิ่งประหยัดเวลากว่าเขียนใหม่ทั้งแท็บ
+function writeChanged_(sh, cur, rows, d) {
+  var n = rows[0].length;
+  var key = function (r) { return JSON.stringify(r); };
+  var same = function (a, from, b, bFrom, count) {
+    for (var i = 0; i < count; i++) if (key(a[from + i]) !== key(b[bFrom + i])) return false;
+    return true;
+  };
+  var put = function (row, values) {
+    var r = sh.getRange(row, 1, values.length, n);
+    r.setNumberFormat('@');
+    r.setValues(values);
+    return r;
+  };
+  var k = rows.length - cur.length;
+  var old = cur.length - 1;
+  if (k > 0 && same(cur, 1, rows, 1, old)) { put(cur.length + 1, rows.slice(cur.length)); return true; }
+  if (k > 0 && same(cur, 1, rows, 1 + k, old)) {
+    sh.insertRowsAfter(1, k);
+    // แถวที่แทรกใต้หัวตารางได้รูปแบบของหัวตารางมาด้วย ล้างเป็นแบบแถวข้อมูล
+    var r = put(2, rows.slice(1, 1 + k)).setFontWeight('normal').setBackground(null).setFontColor(null);
+    if (d.wide) { r.setVerticalAlignment('top'); sh.getRange(2, d.wide, k, 1).setWrap(true); }
+    return true;
+  }
+  if (k === 0) {
+    var changed = [];
+    for (var i = 1; i < rows.length; i++) if (key(cur[i]) !== key(rows[i])) changed.push(i);
+    if (changed.length <= 20) { changed.forEach(function (i) { put(i + 1, [rows[i]]); }); return true; }
+  }
+  return false;
+}
+
 function loadDb_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var tz = ss.getSpreadsheetTimeZone();
@@ -203,7 +248,7 @@ function loadDb_() {
         if (cols.indexOf(h) < 0) return;
         var v = row[i];
         // ถ้ามีคนพิมพ์วันที่ลงในชีตเอง Sheets จะแปลงเป็น Date ให้แปลงกลับเป็นข้อความ
-        if (v instanceof Date) v = Utilities.formatDate(v, tz, h === 'created_at' || /_at$/.test(h) ? 'yyyy-MM-dd HH:mm' : 'yyyy-MM-dd');
+        if (v instanceof Date) v = Utilities.formatDate(v, tz, /_at$/.test(h) ? 'yyyy-MM-dd HH:mm:ss' : 'yyyy-MM-dd');
         o[h] = v;
       });
       return o;
@@ -215,6 +260,7 @@ function loadDb_() {
 function saveDb_(db) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var data = BorrowCore.sheetData(db);
+  OBSOLETE_SHEETS.forEach(function (n) { var old = ss.getSheetByName(n); if (old) ss.deleteSheet(old); });
   Object.keys(data).forEach(function (t) {
     var d = data[t];
     var n = d.header.length;
@@ -223,19 +269,23 @@ function saveDb_(db) {
     var cur = null;
     if (!sh) {
       sh = ss.insertSheet(SHEET_NAMES[t]);
-      var front = { log: 1, on_loan: 2 };
+      var front = { log: 1 };
       if (front[t]) { ss.setActiveSheet(sh); ss.moveActiveSheet(front[t]); }
     } else {
       cur = RAW_[t] || sh.getDataRange().getValues().map(function (r) { return r.map(String); });
       if (JSON.stringify(cur) === JSON.stringify(rows)) return; // แท็บนี้ไม่มีอะไรเปลี่ยน
     }
-    // ล้างเฉพาะเมื่อข้อมูลเดิมยาว/กว้างกว่าของใหม่ (ไม่งั้นเขียนทับได้เลย)
-    if (cur && (cur.length > rows.length || (cur[0] || []).length > n)) sh.clearContents();
+    var newHeader = !cur || JSON.stringify(cur[0]) !== JSON.stringify(rows[0]);
+    if (cur && !newHeader && writeChanged_(sh, cur, rows, d)) return;
+    // หัวคอลัมน์เปลี่ยน (เช่น ตัดคอลัมน์ระบบยืมเดิมออก) ล้างทั้งข้อมูลและสีหัวตารางเดิม
+    // ไม่งั้นล้างเฉพาะเมื่อข้อมูลเดิมยาว/กว้างกว่าของใหม่ (ไม่งั้นเขียนทับได้เลย)
+    if (cur && newHeader) sh.clear();
+    else if (cur && (cur.length > rows.length || (cur[0] || []).length > n)) sh.clearContents();
     var range = sh.getRange(1, 1, rows.length, n);
     range.setNumberFormat('@'); // เก็บเป็นข้อความ ป้องกัน Sheets แปลงวันที่/รหัสเอง
     range.setValues(rows);
     // จัดหัวตารางเฉพาะแท็บใหม่ หรือเมื่อหัวคอลัมน์เปลี่ยน
-    if (!cur || JSON.stringify(cur[0]) !== JSON.stringify(rows[0])) {
+    if (newHeader) {
       sh.setFrozenRows(1);
       sh.getRange(1, 1, 1, n).setFontWeight('bold').setBackground(null).setFontColor(null);
       // คอลัมน์ภาษาไทยที่ระบบเขียนให้อัตโนมัติ (แก้ในชีตไม่มีผล) ทำหัวคอลัมน์สีฟ้าอ่อนไว้
@@ -243,46 +293,46 @@ function saveDb_(db) {
       if (d.front) formatReadable_(sh, d, rows.length);
     }
   });
+  cachePublic_(db);
 }
 
 // ==================== Core (กฎการเบิก/ยืมและการตัดสต็อก) — จาก docs/core.js ====================
 
 /*
- * BorrowCore — กฎการเบิก/ยืม-คืนพัสดุและการตัดสต็อก
+ * BorrowCore — กฎการเบิกพัสดุและการตัดสต็อก
  * ไฟล์เดียวกันนี้ใช้ทั้งในเบราว์เซอร์ (โหมดทดลอง) และใน Google Apps Script (คัดลอกไปเป็น Core.gs)
  * ข้อมูลทั้งหมดอยู่ในอ็อบเจกต์ db = { items, requests, request_items, movements, departments, categories }
  */
 var BorrowCore = (function () {
-  var STATUS = { issued: 'เบิกแล้ว', pending: 'รออนุมัติ', borrowed: 'กำลังยืม', returned: 'คืนแล้ว', rejected: 'ไม่อนุมัติ', cancelled: 'ยกเลิก' };
-  var MOVE = { receive: 'รับเข้า', withdraw: 'เบิกจ่าย', borrow: 'ยืมออก', return: 'รับคืน', adjust: 'ปรับปรุงยอด', lost: 'ชำรุด/สูญหาย' };
-  // ประเภทคำขอ: เบิก = ของออกจากคลังถาวร ไม่ต้องคืน / ยืม = ต้องคืนตามกำหนด
-  var TYPES = { withdraw: 'เบิก', borrow: 'ยืม' };
-  // พัสดุแต่ละรายการให้ใช้กับคำขอประเภทใดได้บ้าง
-  var KINDS = { withdraw: 'เบิกได้อย่างเดียว', borrow: 'ยืมได้อย่างเดียว', both: 'เบิกและยืมได้' };
+  // ระบบเบิกอย่างเดียว (ของออกจากคลังถาวร ไม่ต้องคืน) ใบเบิกทุกใบมีสถานะ "เบิกแล้ว"
+  var STATUS = { issued: 'เบิกแล้ว' };
+  var MOVE = { receive: 'รับเข้า', withdraw: 'เบิกจ่าย', adjust: 'ปรับปรุงยอด', lost: 'ชำรุด/สูญหาย' };
 
+  // คอลัมน์ที่ระบบอ่าน/เขียน · ชีตเวอร์ชันก่อนที่มีคอลัมน์ของระบบยืม (total_qty, kind, due_date ฯลฯ) อ่านได้ ระบบข้ามคอลัมน์นั้นไป
   var TABLES = {
-    items: ['id', 'code', 'name', 'category', 'unit', 'total_qty', 'available_qty', 'min_qty', 'location', 'active', 'kind'],
-    requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'borrow_date', 'due_date',
-      'status', 'created_at', 'approved_at', 'returned_at', 'note', 'type'],
-    request_items: ['request_id', 'item_id', 'qty', 'returned_qty', 'lost_qty'],
-    movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'total_after', 'request_no', 'note'],
+    items: ['id', 'code', 'name', 'category', 'unit', 'available_qty', 'min_qty', 'location', 'active'],
+    requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'status', 'created_at', 'note'],
+    request_items: ['request_id', 'item_id', 'qty'],
+    movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'request_no', 'note'],
     departments: ['name', 'full_name'],
     categories: ['name'],
   };
-  // หัวคอลัมน์ภาษาไทยในแท็บประวัติการเบิก ที่เป็นข้อมูลจริง (อ่านกลับเข้าระบบ)
-  var LABELS = { requests: { request_no: 'เลขที่', borrower_name: 'ผู้เบิก/ผู้ยืม', department: 'แผนก', note: 'หมายเหตุ' } };
+  // หัวคอลัมน์ภาษาไทยในแท็บประวัติการเบิก ที่เป็นข้อมูลจริง (อ่านกลับเข้าระบบ) · ชื่อหัวเดิมยังอ่านได้
+  var LABELS = { requests: { request_no: 'เลขที่', borrower_name: 'ผู้เบิก', department: 'แผนก', note: 'หมายเหตุ' } };
+  var OLD_LABELS = { requests: { borrower_name: ['ผู้เบิก/ผู้ยืม'] } };
   function fieldOf(table, header) {
     var m = LABELS[table];
-    if (m) for (var k in m) if (m[k] === header) return k;
+    var old = OLD_LABELS[table] || {};
+    if (m) for (var k in m) if (m[k] === header || (old[k] || []).indexOf(header) >= 0) return k;
     return header;
   }
-  var NUMERIC = ['id', 'total_qty', 'available_qty', 'min_qty', 'active', 'request_id', 'item_id', 'qty', 'returned_qty', 'lost_qty',
-    'available_after', 'total_after'];
+  var NUMERIC = ['id', 'available_qty', 'min_qty', 'active', 'request_id', 'item_id', 'qty', 'available_after'];
 
   function fail(msg) { throw new Error(msg); }
   function pad(n) { return (n < 10 ? '0' : '') + n; }
   function ymd(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
-  function stamp(d) { return ymd(d) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  // วันเวลาที่บันทึก ละเอียดถึงวินาที เช่น 2026-10-24 09:15:42
+  function stamp(d) { return ymd(d) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()); }
   function str(v) { return v === undefined || v === null ? '' : String(v).trim(); }
   function req(v, label) { var s = str(v); if (!s) fail('กรุณาระบุ' + label); return s; }
   function int(v, label, min) {
@@ -291,7 +341,6 @@ var BorrowCore = (function () {
     if (!isFinite(n) || Math.floor(n) !== n || n < min) fail(label + ' ต้องเป็นจำนวนเต็มตั้งแต่ ' + min + ' ขึ้นไป');
     return n;
   }
-  function isDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(s || ''); }
   function nextId(rows) { var m = 0; rows.forEach(function (r) { if (r.id > m) m = r.id; }); return m + 1; }
   function find(rows, pred) { for (var i = 0; i < rows.length; i++) if (pred(rows[i])) return rows[i]; return null; }
   function byId(rows, id) { id = Number(id); return find(rows, function (r) { return r.id === id; }); }
@@ -326,38 +375,22 @@ var BorrowCore = (function () {
       if (!i.name) i.name = i.code || 'พัสดุ #' + i.id;
       if (!i.unit) i.unit = 'ชิ้น';
     });
-    // ชีตเวอร์ชันก่อนไม่มีคอลัมน์ kind / type
-    db.items.forEach(function (i) { if (!KINDS[i.kind]) i.kind = 'both'; });
-    db.requests.forEach(function (r) { if (!TYPES[r.type]) r.type = 'borrow'; });
-    // จำนวนทั้งหมด = คงเหลือ + ที่ถูกยืมออกไปและยังไม่คืน คำนวณใหม่ทุกครั้ง
-    // เพื่อให้แก้ "คงเหลือ" (available_qty) ในชีตได้โดยตรงคอลัมน์เดียว
-    var lent = {};
-    var open = {};
-    db.requests.forEach(function (r) { if (r.status === 'borrowed') open[r.id] = true; });
-    db.request_items.forEach(function (l) {
-      if (open[l.request_id]) lent[l.item_id] = (lent[l.item_id] || 0) + Math.max(0, l.qty - l.returned_qty - l.lost_qty);
-    });
+    // ใบเบิกทุกใบ = เบิกแล้ว (ใบที่ค้างจากระบบยืมเดิมแสดงเป็นใบเบิกในประวัติ)
+    db.requests.forEach(function (r) { r.status = 'issued'; });
     // คงเหลือติดลบได้ (เบิกของที่หมด = ค้างจ่าย) รับเข้าครั้งถัดไปจะหักล้างเอง
-    db.items.forEach(function (i) {
-      i.total_qty = i.available_qty + (lent[i.id] || 0);
-    });
     return db;
   }
 
-  function allows(item, type) { return item.kind === 'both' || item.kind === type; }
-
+  // ปรับยอดคงเหลือ delta (+ เข้า / − ออก) และบันทึกประวัติสต็อก
   function moveStock(db, ctx, o) {
     var item = byId(db.items, o.item_id) || fail('ไม่พบรายการพัสดุ');
-    var available = item.available_qty + o.available_delta;
-    var total = item.total_qty + o.total_delta;
-    // ห้ามลดจนติดลบ ยกเว้นการเบิก (allowNegative) ส่วนการรับเข้า/คืนเข้าสต็อกที่ติดลบอยู่ทำได้เสมอ
-    if (!o.allowNegative && o.available_delta < 0 && available < 0) fail('"' + item.name + '" คงเหลือไม่พอ (คงเหลือ ' + item.available_qty + ' ' + item.unit + ')');
-    if ((!o.allowNegative && o.total_delta < 0 && total < 0) || available > total) fail('ยอดสต็อกของ "' + item.name + '" ไม่ถูกต้องหลังปรับปรุง');
+    var available = item.available_qty + o.delta;
+    // ห้ามลดจนติดลบ ยกเว้นการเบิก (allowNegative) ส่วนการรับเข้าสต็อกที่ติดลบอยู่ทำได้เสมอ
+    if (!o.allowNegative && o.delta < 0 && available < 0) fail('"' + item.name + '" คงเหลือไม่พอ (คงเหลือ ' + item.available_qty + ' ' + item.unit + ')');
     item.available_qty = available;
-    item.total_qty = total;
     db.movements.push({
-      id: nextId(db.movements), created_at: stamp(ctx.now), item_id: item.id, type: o.type, qty: o.qty,
-      available_after: available, total_after: total, request_no: o.request_no || '', note: str(o.note),
+      id: nextId(db.movements), created_at: stamp(ctx.now), item_id: item.id, type: o.type, qty: o.delta,
+      available_after: available, request_no: o.request_no || '', note: str(o.note),
     });
   }
 
@@ -365,25 +398,16 @@ var BorrowCore = (function () {
     return db.request_items.filter(function (l) { return l.request_id === requestId; });
   }
 
-  var ADMIN_ACTIONS = ['checkPin', 'approve', 'reject', 'returnItems', 'saveItem', 'stock', 'addMaster', 'removeMaster'];
+  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster'];
 
   var actions = {
     checkPin: function () { return true; },
 
-    // ส่งฟอร์มเบิก/ยืม: ตัดสต็อกทันที ไม่ต้องรออนุมัติ
+    // ส่งใบเบิก: ตัดสต็อกทันที ไม่ต้องรออนุมัติ เบิกได้แม้ของหมด (ยอดติดลบ)
     createRequest: function (db, p, ctx) {
-      var type = TYPES[p.type] ? p.type : fail('กรุณาเลือกประเภท เบิก หรือ ยืม');
-      var name = req(p.borrower_name, 'ชื่อผู้' + TYPES[type]);
+      var name = req(p.borrower_name, 'ชื่อผู้เบิก');
       var dept = req(p.department, 'แผนก');
       if (!find(db.departments, function (d) { return d.name === dept; })) fail('กรุณาเลือกแผนกจากรายการ');
-      var today = ymd(ctx.now);
-      var due = '';
-      if (type === 'borrow') {
-        if (!isDate(p.due_date)) fail('กรุณาระบุวันคืน');
-        // ถึงวันคืนระบบจะคืนเข้าสต็อกอัตโนมัติ จึงต้องคืนวันพรุ่งนี้เป็นอย่างเร็ว
-        if (p.due_date <= today) fail('วันคืนต้องเป็นวันพรุ่งนี้หรือหลังจากนั้น');
-        due = p.due_date;
-      }
       if (!p.items || !p.items.length) fail('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
       var merged = {};
       p.items.forEach(function (l) {
@@ -393,85 +417,24 @@ var BorrowCore = (function () {
       Object.keys(merged).forEach(function (id) {
         var item = byId(db.items, id);
         if (!item || !item.active) fail('มีพัสดุที่ไม่พบหรือถูกปิดใช้งาน');
-        if (!allows(item, type)) fail('"' + item.name + '" ' + KINDS[item.kind]);
-        // เบิกได้แม้ของหมด (ยอดติดลบ) ส่วนการยืมต้องมีของจริง
-        if (type === 'borrow' && merged[id] > item.available_qty) {
-          fail('"' + item.name + '" คงเหลือไม่พอ (ขอ ' + merged[id] + ', คงเหลือ ' + item.available_qty + ' ' + item.unit + ')');
-        }
       });
-      // เลขที่เอกสาร เช่น WD69-001 = ประเภท + ปี พ.ศ. 2 หลัก + ลำดับในปีนั้น (เกิน 999 เป็น 4 หลักอัตโนมัติ)
+      // เลขที่เอกสาร เช่น WD69-001 = WD + ปี พ.ศ. 2 หลัก + ลำดับในปีนั้น (เกิน 999 เป็น 4 หลักอัตโนมัติ)
       var be = String(ctx.now.getFullYear() + 543).slice(2);
-      var prefix = (type === 'withdraw' ? 'WD' : 'BR') + be + '-';
+      var prefix = 'WD' + be + '-';
       var seq = 0;
       db.requests.forEach(function (r) {
         if (r.request_no.indexOf(prefix) === 0) seq = Math.max(seq, Number(r.request_no.slice(prefix.length)));
       });
       var r = {
         id: nextId(db.requests), request_no: prefix + (seq + 1 < 1000 ? ('00' + (seq + 1)).slice(-3) : String(seq + 1)), borrower_name: name, phone: str(p.phone),
-        department: dept, purpose: str(p.purpose), borrow_date: today, due_date: due,
-        status: type === 'withdraw' ? 'issued' : 'borrowed', created_at: stamp(ctx.now), approved_at: stamp(ctx.now),
-        returned_at: '', note: str(p.note), type: type,
+        department: dept, purpose: str(p.purpose), status: 'issued', created_at: stamp(ctx.now), note: str(p.note),
       };
       db.requests.push(r);
       Object.keys(merged).forEach(function (id) {
         var q = merged[id];
-        db.request_items.push({ request_id: r.id, item_id: Number(id), qty: q, returned_qty: 0, lost_qty: 0 });
-        moveStock(db, ctx, type === 'withdraw'
-          ? { item_id: id, type: 'withdraw', available_delta: -q, total_delta: -q, qty: -q, request_no: r.request_no, allowNegative: true }
-          : { item_id: id, type: 'borrow', available_delta: -q, total_delta: 0, qty: -q, request_no: r.request_no });
+        db.request_items.push({ request_id: r.id, item_id: Number(id), qty: q });
+        moveStock(db, ctx, { item_id: id, type: 'withdraw', delta: -q, request_no: r.request_no, allowNegative: true });
       });
-      return r.id;
-    },
-
-    // approve / reject / cancelRequest ใช้กับคำขอ "รออนุมัติ" ที่ค้างจากระบบเวอร์ชันก่อน
-    cancelRequest: function (db, p) {
-      var r = byId(db.requests, p.id) || fail('ไม่พบคำขอยืม');
-      if (r.status !== 'pending') fail('ยกเลิกได้เฉพาะคำขอที่รออนุมัติ');
-      r.status = 'cancelled';
-      return r.id;
-    },
-
-    approve: function (db, p, ctx) {
-      var r = byId(db.requests, p.id) || fail('ไม่พบคำขอยืม');
-      if (r.status !== 'pending') fail('คำขอนี้ไม่อยู่ในสถานะรออนุมัติ');
-      lines(db, r.id).forEach(function (l) {
-        moveStock(db, ctx, { item_id: l.item_id, type: 'borrow', available_delta: -l.qty, total_delta: 0, qty: -l.qty, request_no: r.request_no });
-      });
-      r.status = 'borrowed';
-      r.approved_at = stamp(ctx.now);
-      return r.id;
-    },
-
-    reject: function (db, p, ctx) {
-      var r = byId(db.requests, p.id) || fail('ไม่พบคำขอยืม');
-      if (r.status !== 'pending') fail('ไม่สามารถปฏิเสธคำขอนี้ได้');
-      r.status = 'rejected';
-      r.approved_at = stamp(ctx.now);
-      if (str(p.note)) r.note = str(p.note);
-      return r.id;
-    },
-
-    // คืนบางส่วนได้: items = [{ item_id, returned_qty, lost_qty }]
-    returnItems: function (db, p, ctx) {
-      var r = byId(db.requests, p.id) || fail('ไม่พบคำขอยืม');
-      if (r.status !== 'borrowed') fail('คำขอนี้ไม่อยู่ในสถานะกำลังยืม');
-      var touched = false;
-      (p.items || []).forEach(function (x) {
-        var l = find(lines(db, r.id), function (l) { return l.item_id === Number(x.item_id); }) || fail('มีพัสดุที่ไม่อยู่ในคำขอนี้');
-        var ret = int(x.returned_qty || 0, 'จำนวนที่คืน');
-        var lost = int(x.lost_qty || 0, 'จำนวนชำรุด/สูญหาย');
-        if (ret + lost === 0) return;
-        var outstanding = l.qty - l.returned_qty - l.lost_qty;
-        if (ret + lost > outstanding) fail('จำนวนคืนเกินจำนวนค้างคืน (ค้าง ' + outstanding + ')');
-        if (ret) moveStock(db, ctx, { item_id: l.item_id, type: 'return', available_delta: ret, total_delta: 0, qty: ret, request_no: r.request_no });
-        if (lost) moveStock(db, ctx, { item_id: l.item_id, type: 'lost', available_delta: 0, total_delta: -lost, qty: -lost, request_no: r.request_no, note: p.note });
-        l.returned_qty += ret;
-        l.lost_qty += lost;
-        touched = true;
-      });
-      if (!touched) fail('กรุณาระบุจำนวนที่คืน');
-      var remaining = lines(db, r.id).reduce(function (s, l) { return s + l.qty - l.returned_qty - l.lost_qty; }, 0);
-      if (remaining === 0) { r.status = 'returned'; r.returned_at = stamp(ctx.now); }
       return r.id;
     },
 
@@ -482,7 +445,6 @@ var BorrowCore = (function () {
       var fields = {
         code: code, name: req(p.name, 'ชื่อพัสดุ'), category: str(p.category), unit: str(p.unit) || 'ชิ้น',
         min_qty: int(p.min_qty || 0, 'จุดสั่งซื้อขั้นต่ำ'), location: str(p.location), active: p.active === false ? 0 : 1,
-        kind: KINDS[p.kind] ? p.kind : 'both',
       };
       var item;
       if (p.id) {
@@ -491,11 +453,10 @@ var BorrowCore = (function () {
       } else {
         item = fields;
         item.id = nextId(db.items);
-        item.total_qty = 0;
         item.available_qty = 0;
         db.items.push(item);
         var qty = int(p.initial_qty || 0, 'จำนวนเริ่มต้น');
-        if (qty) moveStock(db, ctx, { item_id: item.id, type: 'receive', available_delta: qty, total_delta: qty, qty: qty, note: 'ยอดยกมาเริ่มต้น' });
+        if (qty) moveStock(db, ctx, { item_id: item.id, type: 'receive', delta: qty, note: 'ยอดยกมาเริ่มต้น' });
       }
       return item.id;
     },
@@ -506,13 +467,13 @@ var BorrowCore = (function () {
       var q;
       if (p.type === 'receive') {
         q = int(p.qty, 'จำนวน', 1);
-        moveStock(db, ctx, { item_id: item.id, type: 'receive', available_delta: q, total_delta: q, qty: q, note: p.note });
+        moveStock(db, ctx, { item_id: item.id, type: 'receive', delta: q, note: p.note });
       } else if (p.type === 'lost') {
         q = int(p.qty, 'จำนวน', 1);
-        moveStock(db, ctx, { item_id: item.id, type: 'lost', available_delta: -q, total_delta: -q, qty: -q, note: p.note });
+        moveStock(db, ctx, { item_id: item.id, type: 'lost', delta: -q, note: p.note });
       } else if (p.type === 'adjust') {
         var diff = int(p.counted_qty, 'ยอดที่นับได้') - item.available_qty;
-        if (diff) moveStock(db, ctx, { item_id: item.id, type: 'adjust', available_delta: diff, total_delta: diff, qty: diff, note: p.note || 'ปรับยอดตามการตรวจนับ' });
+        if (diff) moveStock(db, ctx, { item_id: item.id, type: 'adjust', delta: diff, note: p.note || 'ปรับยอดตามการตรวจนับ' });
       } else {
         fail('ประเภทการปรับสต็อกไม่ถูกต้อง');
       }
@@ -541,71 +502,26 @@ var BorrowCore = (function () {
     return actions[action](db, payload || {}, { now: ctx.now || new Date() });
   }
 
-  var AUTO_RETURN_NOTE = 'คืนอัตโนมัติเมื่อถึงวันคืน';
-
-  // ถึงวันคืน (ตั้งแต่ 00:00 ของวันคืน) → คืนพัสดุที่ยังค้างเข้าสต็อกอัตโนมัติ ไม่ว่าคืนของจริงแล้วหรือยัง
-  // คืนค่าจำนวนใบยืมที่ถูกปิด (0 = ไม่มีอะไรเปลี่ยน)
-  function autoReturnDue(db, now) {
-    now = now || new Date();
-    var today = ymd(now);
-    var ctx = { now: now };
-    var closed = 0;
-    db.requests.forEach(function (r) {
-      if (r.status !== 'borrowed' || !isDate(r.due_date) || r.due_date > today) return;
-      lines(db, r.id).forEach(function (l) {
-        var out = l.qty - l.returned_qty - l.lost_qty;
-        if (out <= 0) return;
-        moveStock(db, ctx, { item_id: l.item_id, type: 'return', available_delta: out, total_delta: 0, qty: out, request_no: r.request_no, note: AUTO_RETURN_NOTE });
-        l.returned_qty += out;
-      });
-      r.status = 'returned';
-      r.returned_at = stamp(now);
-      r.note = r.note ? r.note + ' · ' + AUTO_RETURN_NOTE : AUTO_RETURN_NOTE;
-      closed++;
-    });
-    return closed;
-  }
-
   // ---------- ตารางสำหรับเขียนลง Google Sheets ----------
   // คอลัมน์ตาม TABLES (ระบบอ่านกลับ) + คอลัมน์ภาษาไทยต่อท้ายให้คนอ่านง่าย (ระบบไม่อ่านกลับ เขียนใหม่ทุกครั้ง)
-  // และแท็บ on_loan = รายการพัสดุที่ถูกยืมอยู่ตอนนี้
   function sheetData(db) {
     var itemOf = function (id) { return byId(db.items, id) || { code: '', name: '(ลบแล้ว)', unit: '' }; };
-    var reqOf = function (id) { return byId(db.requests, id) || { request_no: '', status: '' }; };
-    var outstanding = function (l) { return reqOf(l.request_id).status === 'borrowed' ? l.qty - l.returned_qty - l.lost_qty : 0; };
-    var lent = {};
+    var reqOf = function (id) { return byId(db.requests, id) || { request_no: '' }; };
     var withdrawn = {};
-    db.request_items.forEach(function (l) {
-      lent[l.item_id] = (lent[l.item_id] || 0) + outstanding(l);
-      var r = reqOf(l.request_id);
-      if (r.type === 'withdraw' && r.status === 'issued') withdrawn[l.item_id] = (withdrawn[l.item_id] || 0) + l.qty;
-    });
+    db.request_items.forEach(function (l) { withdrawn[l.item_id] = (withdrawn[l.item_id] || 0) + l.qty; });
     var extra = {
-      items: [['ถูกยืมอยู่', function (i) { return lent[i.id] || 0; }], ['เบิกไปแล้วรวม', function (i) { return withdrawn[i.id] || 0; }]],
-      requests: [
-        ['ประเภท', function (r) { return TYPES[r.type] || ''; }],
-        ['สถานะ', function (r) { return STATUS[r.status] || r.status; }],
-        ['รายการพัสดุ', function (r) {
-          return lines(db, r.id).map(function (l) { var it = itemOf(l.item_id); return it.name + ' ×' + l.qty + ' ' + it.unit; }).join(', ');
-        }],
-      ],
+      items: [['เบิกไปแล้วรวม', function (i) { return withdrawn[i.id] || 0; }]],
       request_items: [
         ['เลขที่', function (l) { return reqOf(l.request_id).request_no; }],
         ['รหัสพัสดุ', function (l) { return itemOf(l.item_id).code; }],
         ['ชื่อพัสดุ', function (l) { return itemOf(l.item_id).name; }],
         ['หน่วย', function (l) { return itemOf(l.item_id).unit; }],
-        ['ค้างคืน', outstanding],
       ],
       movements: [
         ['รายการ', function (m) { return MOVE[m.type] || m.type; }],
         ['รหัสพัสดุ', function (m) { return itemOf(m.item_id).code; }],
         ['ชื่อพัสดุ', function (m) { return itemOf(m.item_id).name; }],
       ],
-    };
-    // วันที่แบบไทยสำหรับคนอ่าน เช่น 12/10/2569 09:15
-    var thaiStamp = function (v) {
-      var m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}))?/.exec(v || '');
-      return m ? Number(m[3]) + '/' + Number(m[2]) + '/' + (Number(m[1]) + 543) + (m[4] ? ' ' + m[4] : '') : '';
     };
     var out = {};
     Object.keys(TABLES).forEach(function (t) {
@@ -624,62 +540,46 @@ var BorrowCore = (function () {
     // คอลัมน์ เลขที่/ผู้เบิก/แผนก/หมายเหตุ เป็นข้อมูลจริงที่ระบบอ่านกลับ (ชื่อหัวภาษาไทยแปลงกลับด้วย fieldOf)
     var reqFront = [
       ['เลขที่', function (r) { return r.request_no; }],
-      ['วันที่', function (r) { return thaiStamp(r.created_at); }],
-      ['ประเภท', function (r) { return TYPES[r.type] || ''; }],
+      ['วันที่เวลาที่เบิก', function (r) { return thaiStamp(r.created_at); }],
       [LABELS.requests.borrower_name, function (r) { return r.borrower_name; }],
       ['แผนก', function (r) { return r.department; }],
       ['รายการพัสดุ', function (r) {
         return lines(db, r.id).map(function (l) { var it = itemOf(l.item_id); return it.name + ' ×' + l.qty + ' ' + it.unit; }).join('\n');
       }],
       ['จำนวนรวม', function (r) { return lines(db, r.id).reduce(function (n, l) { return n + l.qty; }, 0); }],
-      ['สถานะ', function (r) { return STATUS[r.status] || r.status; }],
-      ['กำหนดคืน', function (r) { return r.type === 'borrow' ? thaiStamp(r.due_date) : ''; }],
       ['หมายเหตุ', function (r) { return r.note; }],
     ];
     var reqSys = TABLES.requests.filter(function (c) { return !LABELS.requests[c]; });
     out.requests = {
       header: reqFront.map(function (e) { return e[0]; }).concat(reqSys),
-      front: reqFront.length, sys: reqSys.length, wide: 6,
+      front: reqFront.length, sys: reqSys.length, wide: 5,
       rows: db.requests.slice().sort(function (a, b) { return b.id - a.id; }).map(function (r) {
         return reqFront.map(function (e) { var v = e[1](r); return v === undefined ? '' : v; })
           .concat(reqSys.map(function (c) { return r[c] === undefined ? '' : r[c]; }));
       }),
     };
-    var loans = [];
-    db.requests.filter(function (r) { return r.status === 'borrowed'; })
-      .sort(function (a, b) { return a.due_date.localeCompare(b.due_date) || a.id - b.id; })
-      .forEach(function (r) {
-        lines(db, r.id).forEach(function (l) {
-          var q = l.qty - l.returned_qty - l.lost_qty;
-          if (q <= 0) return;
-          var it = itemOf(l.item_id);
-          loans.push([r.request_no, thaiStamp(r.created_at), r.borrower_name, r.department, it.code, it.name, q, it.unit, thaiStamp(r.due_date)]);
-        });
-      });
     // แท็บ log: 1 แถวต่อพัสดุ 1 รายการ ล่าสุดอยู่บน อ่านง่าย ใช้กรอง/Pivot ในชีตได้
     var log = [];
     db.requests.slice().sort(function (a, b) { return b.id - a.id; }).forEach(function (r) {
       lines(db, r.id).forEach(function (l) {
         var it = itemOf(l.item_id);
-        var w = r.type === 'withdraw';
-        log.push([thaiStamp(r.created_at), r.request_no, TYPES[r.type] || '', r.borrower_name, r.department,
-          it.code, it.name, l.qty, it.unit, STATUS[r.status] || r.status,
-          w ? '' : thaiStamp(r.due_date), w ? '' : l.returned_qty, w ? '' : outstanding(l)]);
+        log.push([thaiStamp(r.created_at), r.request_no, r.borrower_name, r.department, it.code, it.name, l.qty, it.unit]);
       });
     });
     out.log = {
-      header: ['วันที่', 'เลขที่', 'ประเภท', 'ผู้เบิก/ผู้ยืม', 'แผนก', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'จำนวน', 'หน่วย', 'สถานะ', 'กำหนดคืน', 'คืนแล้ว', 'ยังไม่คืน'],
-      extra: 13, rows: log,
-    };
-    out.on_loan = {
-      header: ['เลขที่', 'วันที่ยืม', 'ผู้ยืม', 'แผนก', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'จำนวนที่ยังไม่คืน', 'หน่วย', 'กำหนดคืน'],
-      extra: 9, rows: loans,
+      header: ['วันที่เวลาที่เบิก', 'เลขที่', 'ผู้เบิก', 'แผนก', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'จำนวน', 'หน่วย'],
+      extra: 8, rows: log,
     };
     return out;
   }
+  // วันที่แบบไทยสำหรับคนอ่าน เช่น 12/10/2569 09:15:42 (ข้อมูลเก่าไม่มีวินาทีแสดง 09:15)
+  function thaiStamp(v) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}(?::\d{2})?))?/.exec(v || '');
+    return m ? Number(m[3]) + '/' + Number(m[2]) + '/' + (Number(m[1]) + 543) + (m[4] ? ' ' + m[4] : '') : '';
+  }
 
   // ข้อมูลที่ส่งให้ผู้ใช้ทั่วไป (ไม่มี PIN): สต็อก แผนก หมวดหมู่ และเฉพาะใบที่เพิ่งส่ง (ใช้ทำ PDF)
-  // ประวัติการเบิก-ยืมทั้งหมด (ชื่อผู้ขอ ฯลฯ) ส่งให้เฉพาะเจ้าหน้าที่
+  // ประวัติการเบิกทั้งหมด (ชื่อผู้เบิก ฯลฯ) ส่งให้เฉพาะเจ้าหน้าที่
   function publicView(db, keepRequestId) {
     var keep = Number(keepRequestId || 0);
     return {
@@ -690,50 +590,31 @@ var BorrowCore = (function () {
     };
   }
 
-  // สรุปรายเดือน month = 'YYYY-MM' (นับใบที่ทำรายการในเดือนนั้น ไม่นับที่ยกเลิก/ไม่อนุมัติ/รออนุมัติ)
-  function monthlySummary(db, month, today) {
-    var COUNTED = { issued: 1, borrowed: 1, returned: 1 };
-    var reqs = db.requests.filter(function (r) { return COUNTED[r.status] && r.created_at.slice(0, 7) === month; })
+  // สรุปรายเดือน month = 'YYYY-MM' (นับใบเบิกที่ทำรายการในเดือนนั้น)
+  function monthlySummary(db, month) {
+    var reqs = db.requests.filter(function (r) { return r.created_at.slice(0, 7) === month; })
       .sort(function (a, b) { return a.id - b.id; });
-    var t = { withdraw_docs: 0, withdraw_qty: 0, borrow_docs: 0, borrow_qty: 0, returned_qty: 0, lost_qty: 0, outstanding_qty: 0, overdue_docs: 0 };
-    var withdrawn = {}, borrowed = {}, depts = {};
-    function itemRow(map, id) {
-      if (!map[id]) {
-        var it = byId(db.items, id) || { code: '', name: '(ลบแล้ว)', unit: '' };
-        map[id] = { item_id: id, code: it.code, name: it.name, unit: it.unit, qty: 0, times: 0, returned: 0, lost: 0, outstanding: 0 };
-      }
-      return map[id];
-    }
+    var t = { withdraw_docs: 0, withdraw_qty: 0 };
+    var withdrawn = {}, depts = {};
     reqs.forEach(function (r) {
-      var w = r.type === 'withdraw';
-      var d = depts[r.department] || (depts[r.department] = { name: r.department, withdraw_docs: 0, withdraw_qty: 0, borrow_docs: 0, borrow_qty: 0 });
-      var lines = db.request_items.filter(function (l) { return l.request_id === r.id; });
-      var qty = lines.reduce(function (s, l) { return s + l.qty; }, 0);
-      if (w) { t.withdraw_docs++; t.withdraw_qty += qty; d.withdraw_docs++; d.withdraw_qty += qty; }
-      else {
-        t.borrow_docs++; t.borrow_qty += qty; d.borrow_docs++; d.borrow_qty += qty;
-        if (r.status === 'borrowed' && r.due_date && today && r.due_date < today) t.overdue_docs++;
-      }
-      lines.forEach(function (l) {
-        var row = itemRow(w ? withdrawn : borrowed, l.item_id);
-        row.qty += l.qty;
-        row.times++;
-        if (!w) {
-          var out = r.status === 'borrowed' ? l.qty - l.returned_qty - l.lost_qty : 0;
-          row.returned += l.returned_qty; row.lost += l.lost_qty; row.outstanding += out;
-          t.returned_qty += l.returned_qty; t.lost_qty += l.lost_qty; t.outstanding_qty += out;
+      var d = depts[r.department] || (depts[r.department] = { name: r.department, withdraw_docs: 0, withdraw_qty: 0 });
+      var ls = lines(db, r.id);
+      var qty = ls.reduce(function (s, l) { return s + l.qty; }, 0);
+      t.withdraw_docs++; t.withdraw_qty += qty; d.withdraw_docs++; d.withdraw_qty += qty;
+      ls.forEach(function (l) {
+        if (!withdrawn[l.item_id]) {
+          var it = byId(db.items, l.item_id) || { code: '', name: '(ลบแล้ว)', unit: '' };
+          withdrawn[l.item_id] = { item_id: l.item_id, code: it.code, name: it.name, unit: it.unit, qty: 0, times: 0 };
         }
+        withdrawn[l.item_id].qty += l.qty;
+        withdrawn[l.item_id].times++;
       });
     });
     function values(map) { return Object.keys(map).map(function (k) { return map[k]; }); }
-    var byQty = function (a, b) { return b.qty - a.qty || a.code.localeCompare(b.code); };
     return {
       month: month, totals: t, requests: reqs,
-      withdrawn: values(withdrawn).sort(byQty),
-      borrowed: values(borrowed).sort(byQty),
-      departments: values(depts).sort(function (a, b) {
-        return (b.withdraw_qty + b.borrow_qty) - (a.withdraw_qty + a.borrow_qty) || a.name.localeCompare(b.name);
-      }),
+      withdrawn: values(withdrawn).sort(function (a, b) { return b.qty - a.qty || a.code.localeCompare(b.code); }),
+      departments: values(depts).sort(function (a, b) { return b.withdraw_qty - a.withdraw_qty || a.name.localeCompare(b.name); }),
     };
   }
 
@@ -745,23 +626,23 @@ var BorrowCore = (function () {
     data.categories.forEach(function (n) { db.categories.push({ name: n }); });
     var ctx = { now: now || new Date(), isAdmin: true };
     data.items.forEach(function (x) {
-      run(db, 'saveItem', { code: x[0], name: x[1], category: x[2], unit: x[3], initial_qty: x[4], min_qty: x[5], location: x[6], kind: x[7] }, ctx);
+      run(db, 'saveItem', { code: x[0], name: x[1], category: x[2], unit: x[3], initial_qty: x[4], min_qty: x[5], location: x[6] }, ctx);
     });
     return db;
   }
 
-  // เริ่มใช้งานจริง: ล้างใบเบิก/ใบยืมและประวัติสต็อกทั้งหมด ตั้งยอดทุกรายการเป็น 0
+  // เริ่มใช้งานจริง: ล้างใบเบิกและประวัติสต็อกทั้งหมด ตั้งยอดทุกรายการเป็น 0
   // เก็บรายชื่อพัสดุ (ชื่อ รหัส หน่วย หมวดหมู่ ที่เก็บ จุดเตือน) รายชื่อแผนก และหมวดหมู่ไว้เหมือนเดิม
   function resetForLaunch(db) {
     var cleared = { requests: db.requests.length, movements: db.movements.length };
     db.requests = [];
     db.request_items = [];
     db.movements = [];
-    db.items.forEach(function (i) { i.available_qty = 0; i.total_qty = 0; });
+    db.items.forEach(function (i) { i.available_qty = 0; });
     return cleared;
   }
 
-  // แทนที่รายการพัสดุทั้งหมดด้วยไฟล์ Stock ใหม่ (SEED_DATA): ล้างใบเบิก/ใบยืมและประวัติสต็อก
+  // แทนที่รายการพัสดุทั้งหมดด้วยไฟล์ Stock ใหม่ (SEED_DATA): ล้างใบเบิกและประวัติสต็อก
   // พัสดุและยอดคงเหลือเป็นไปตามไฟล์ (บันทึกเป็น "รับเข้า ยอดยกมาเริ่มต้น") เก็บรายชื่อแผนกเดิมไว้
   function replaceStock(db, data, now) {
     var fresh = seed(now, { departments: [], categories: [], items: data.items });
@@ -776,7 +657,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, TYPES: TYPES, KINDS: KINDS, allows: allows, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, autoReturnDue: autoReturnDue, AUTO_RETURN_NOTE: AUTO_RETURN_NOTE, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

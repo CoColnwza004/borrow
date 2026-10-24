@@ -29,3 +29,8 @@
   for = "/icons/*"
   [headers.values]
     Cache-Control = "public, max-age=604800"
+# ภาพประกอบวิธีใช้งาน: เก็บไว้ 1 วัน (เปิดครั้งถัดไปไม่ต้องโหลดซ้ำ) ภาพที่อัปเดตจะเห็นภายใน 1 วัน
+[[headers]]
+  for = "/tour/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400, stale-while-revalidate=604800"

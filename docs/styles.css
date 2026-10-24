@@ -23,8 +23,6 @@
   --accent-hover: #0077ed;
   --accent-soft: rgba(0, 113, 227, 0.1);
   --withdraw: #0071e3;
-  --borrow: #bf4800;
-  --borrow-soft: rgba(191, 72, 0, 0.1);
   --green: #1d8a3a;
   --green-soft: rgba(52, 199, 89, 0.14);
   --orange: #b25000;
@@ -75,8 +73,6 @@
     --accent-hover: #47a6ff;
     --accent-soft: rgba(41, 151, 255, 0.16);
     --withdraw: #2997ff;
-    --borrow: #ff9f0a;
-    --borrow-soft: rgba(255, 159, 10, 0.16);
     --green: #30d158;
     --green-soft: rgba(48, 209, 88, 0.16);
     --orange: #ff9f0a;
@@ -247,14 +243,12 @@ svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
 @media (hover: hover) {
   .choice:hover { text-decoration: none; box-shadow: var(--shadow-lg); }
   .choice.withdraw:hover { box-shadow: var(--shadow-lg), 0 30px 60px -30px rgba(0,113,227,.35); }
-  .choice.borrow:hover { box-shadow: var(--shadow-lg), 0 30px 60px -30px rgba(191,72,0,.30); }
 }
 .choice:active { transform: scale(.985); transition-duration: .12s; }
 .choice .choice-icon {
   width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; font-size: 30px; color: #fff; margin-bottom: 8px;
 }
 .choice.withdraw .choice-icon { background: linear-gradient(135deg, #0a84ff, #0060df); box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 10px 22px -10px rgba(0,113,227,.7); }
-.choice.borrow .choice-icon { background: linear-gradient(135deg, #ff9f0a, #e8590c); box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 10px 22px -10px rgba(232,89,12,.65); }
 .choice .choice-icon svg { transition: transform .55s var(--spring); }
 .choice h2 { font-size: clamp(28px, 3.4vw, 36px); font-weight: 700; }
 .choice p { color: var(--text-2); font-size: 17px; max-width: 26em; text-wrap: pretty; margin-bottom: 14px; }
@@ -262,18 +256,14 @@ svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
   align-self: flex-start; margin-top: auto; display: inline-flex; align-items: center; gap: 6px;
   padding: 9px 18px; border-radius: 980px; font-weight: 600; font-size: 16px; background: var(--accent-soft);
 }
-.choice.borrow .cta { background: var(--borrow-soft); }
 .choice.withdraw .cta { color: var(--withdraw); }
-.choice.borrow .cta { color: var(--borrow); }
 .choice .cta::after { content: '›'; display: inline-block; transition: transform .35s var(--spring); }
 /* ไอคอนขยับตามความหมาย: เบิก = ลูกศรลงถาด, ยืม = ลูกศรวนกลับ */
 @media (hover: hover) {
   .choice:hover .cta::after { transform: translateX(4px); }
   .choice.withdraw:hover .choice-icon svg { transform: translateY(3px); }
-  .choice.borrow:hover .choice-icon svg { transform: rotate(-60deg); }
 }
 .choice.withdraw:active .choice-icon svg { transform: translateY(3px); }
-.choice.borrow:active .choice-icon svg { transform: rotate(-60deg); }
 .brand-mark { box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 4px 10px -4px rgba(10,132,255,.6); }
 /* มือถือ: การ์ดเป็นแถวกะทัดรัด เห็นทั้ง 2 ปุ่มและตัวเลขในหน้าจอแรก */
 @media (max-width: 600px) {
@@ -285,7 +275,7 @@ svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
   .choice .choice-icon { grid-column: 1; grid-row: 1 / 3; width: 52px; height: 52px; border-radius: 15px; font-size: 26px; margin: 0; }
   .choice h2 { grid-column: 2; grid-row: 1; font-size: 22px; }
   .choice p { grid-column: 2; grid-row: 2; font-size: 14px; line-height: 1.4; margin: 0; }
-  .choice .cta, .choice.borrow .cta { grid-column: 3; grid-row: 1 / 3; align-self: center; padding: 0; margin: 0; background: none; font-size: 0; }
+  .choice .cta { grid-column: 3; grid-row: 1 / 3; align-self: center; padding: 0; margin: 0; background: none; font-size: 0; }
   .choice .cta::after { font-size: 24px; color: var(--text-3); }
 }
 
@@ -345,37 +335,83 @@ textarea { resize: vertical; min-height: 80px; }
 .search input:focus { background: var(--surface); }
 .check { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--text); cursor: pointer; white-space: nowrap; }
 
-/* ============ Buttons ============ */
+/* ============ Buttons: Liquid Glass ============ */
+/* กระจกโปร่งแสง เบลอพื้นหลัง ขอบรับแสง เงาสะท้อนด้านบน (::before) · ปุ่มหลักเป็นกระจกสีตาม --g (สีล่าง) / --g-hi (สีบน)
+   มีเมาส์: แสงวงกลมตามตำแหน่งเมาส์ (--mx/--my ตั้งใน app.js) · กด: ยุบเล็กน้อยแล้วเด้งกลับ */
 .btn {
+  position: relative; isolation: isolate;
   font: inherit; font-size: 15px; font-weight: 500; letter-spacing: normal; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 9px 18px; border-radius: 980px; border: none; cursor: pointer; white-space: nowrap;
-  background: var(--fill); color: var(--text); transition: background .2s, color .2s, opacity .2s, transform .45s var(--spring);
+  padding: 9px 18px; border-radius: 980px; border: none; cursor: pointer; white-space: nowrap; color: var(--text);
+  background: linear-gradient(180deg, rgba(255,255,255,.82), rgba(255,255,255,.52));
+  backdrop-filter: blur(14px) saturate(180%); -webkit-backdrop-filter: blur(14px) saturate(180%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.75), inset 0 1px 1px rgba(255,255,255,.95), inset 0 -1px 2px rgba(0,0,0,.05),
+    0 0 0 .5px rgba(0,0,0,.1), 0 1px 3px rgba(0,0,0,.08), 0 8px 20px -12px rgba(0,0,0,.3);
+  transition: color .2s, opacity .2s, box-shadow .3s var(--ease-out), filter .25s, transform .45s var(--spring);
 }
-@media (hover: hover) { .btn:hover { background: var(--fill-strong); text-decoration: none; } }
-.btn:active:not(:disabled) { transform: scale(.96); transition-duration: .2s, .2s, .2s, .08s; }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-.btn.primary { background: var(--accent); color: #fff; }
-@media (hover: hover) { .btn.primary:hover { background: var(--accent-hover); } }
-.btn.borrow { background: var(--borrow); color: #fff; }
-.btn.danger { background: var(--red); color: #fff; }
-.btn.ok { background: var(--green); color: #fff; }
+.btn::before {
+  content: ''; position: absolute; inset: 1px; z-index: -1; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(130% 100% at 50% -20%, rgba(255,255,255,.85), rgba(255,255,255,0) 58%);
+  transition: opacity .3s;
+}
+@media (hover: hover) {
+  .btn:hover { text-decoration: none; box-shadow: inset 0 0 0 1px rgba(255,255,255,.85), inset 0 1px 1px #fff, inset 0 -1px 2px rgba(0,0,0,.05),
+    0 0 0 .5px rgba(0,0,0,.12), 0 2px 4px rgba(0,0,0,.08), 0 12px 26px -12px rgba(0,0,0,.35); }
+  .btn:hover::before {
+    background: radial-gradient(70px circle at var(--mx, 50%) var(--my, 0%), rgba(255,255,255,.55), rgba(255,255,255,0) 70%),
+      radial-gradient(130% 100% at 50% -20%, rgba(255,255,255,.85), rgba(255,255,255,0) 58%);
+  }
+}
+.btn:active:not(:disabled) { transform: scale(.955); filter: brightness(.97); transition-duration: .2s, .2s, .2s, .2s, .08s; }
+.btn:disabled { opacity: .42; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn:disabled::before { opacity: 0; }
+/* กระจกสี */
+.btn.primary, .btn.danger, .btn.ok {
+  color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,.12);
+  background: linear-gradient(180deg, rgba(var(--g-hi), .94), rgba(var(--g), .97));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.22), inset 0 1px 1px rgba(255,255,255,.55), inset 0 -3px 8px rgba(0,0,0,.16),
+    0 1px 2px rgba(0,0,0,.14), 0 10px 24px -10px rgba(var(--g), .8);
+}
+.btn.primary::before, .btn.danger::before, .btn.ok::before { background: radial-gradient(130% 100% at 50% -25%, rgba(255,255,255,.5), rgba(255,255,255,0) 55%); }
+.btn.primary { --g: 0,105,217; --g-hi: 40,142,255; }
+.btn.danger { --g: 200,0,20; --g-hi: 240,60,50; }
+.btn.ok { --g: 24,128,52; --g-hi: 44,165,75; }
+@media (hover: hover) {
+  .btn.primary:hover, .btn.danger:hover, .btn.ok:hover {
+    filter: brightness(1.06) saturate(1.05);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.28), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -3px 8px rgba(0,0,0,.16),
+      0 2px 4px rgba(0,0,0,.14), 0 14px 30px -10px rgba(var(--g), .9);
+  }
+  .btn.primary:hover::before, .btn.danger:hover::before, .btn.ok:hover::before {
+    background: radial-gradient(70px circle at var(--mx, 50%) var(--my, 0%), rgba(255,255,255,.4), rgba(255,255,255,0) 70%),
+      radial-gradient(130% 100% at 50% -25%, rgba(255,255,255,.5), rgba(255,255,255,0) 55%);
+  }
+}
 .btn.lg { font-size: 17px; padding: 14px 28px; }
 .btn.sm { font-size: 13px; padding: 5px 12px; }
 .btn.block { width: 100%; }
-.btn.plain { background: none; color: var(--accent); padding-left: 8px; padding-right: 8px; }
-@media (hover: hover) { .btn.plain:hover { background: var(--accent-soft); } }
-/* ปุ่มหลักแบบมีแสงจากด้านหลัง */
-.btn.primary { --btn-glow: 0,113,227; }
-.btn.borrow { --btn-glow: 191,72,0; }
-.btn.lg.primary, .btn.lg.borrow { box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 1px 2px rgba(0,0,0,.12), 0 8px 22px -10px rgba(var(--btn-glow), .75); }
-@media (hover: hover) { .btn.lg.primary:hover, .btn.lg.borrow:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 1px 2px rgba(0,0,0,.12), 0 12px 28px -10px rgba(var(--btn-glow), .9); } }
-.btn:disabled { box-shadow: none; }
-/* โหมดมืด: พื้นปุ่มเข้มพอให้ตัวอักษรขาวผ่าน AA */
+.btn.plain { background: none; color: var(--accent); padding-left: 8px; padding-right: 8px; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.btn.plain::before { content: none; }
+@media (hover: hover) { .btn.plain:hover { background: var(--accent-soft); box-shadow: none; } }
 @media (prefers-color-scheme: dark) {
-  .btn.primary { background: #0071e3; --btn-glow: 41,151,255; }
-  .btn.borrow { background: #bf4800; --btn-glow: 255,159,10; }
+  .btn {
+    background: linear-gradient(180deg, rgba(255,255,255,.17), rgba(255,255,255,.07));
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.14), inset 0 1px 1px rgba(255,255,255,.22), 0 8px 20px -12px rgba(0,0,0,.7);
+  }
+  .btn::before { background: radial-gradient(130% 100% at 50% -20%, rgba(255,255,255,.22), rgba(255,255,255,0) 58%); }
+  .btn.primary { --g: 0,100,210; --g-hi: 30,130,245; }
 }
-@media (prefers-color-scheme: dark) and (hover: hover) { .btn.primary:hover { background: #0077ed; } .btn.borrow:hover { background: #cc4d00; } }
+@media (prefers-color-scheme: dark) and (hover: hover) {
+  .btn:hover { box-shadow: inset 0 0 0 1px rgba(255,255,255,.2), inset 0 1px 1px rgba(255,255,255,.28), 0 12px 26px -12px rgba(0,0,0,.8); }
+  .btn:hover::before {
+    background: radial-gradient(70px circle at var(--mx, 50%) var(--my, 0%), rgba(255,255,255,.2), rgba(255,255,255,0) 70%),
+      radial-gradient(130% 100% at 50% -20%, rgba(255,255,255,.22), rgba(255,255,255,0) 58%);
+  }
+}
+/* ผู้ที่ตั้งค่าลดความโปร่งใส: ปุ่มทึบ อ่านง่าย */
+@media (prefers-reduced-transparency: reduce) {
+  .btn { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--surface); }
+  .btn.primary, .btn.danger, .btn.ok { background: rgb(var(--g)); }
+}
 .icon-btn {
   width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--fill); color: var(--text-2);
   display: grid; place-items: center; cursor: pointer; font-size: 18px; flex: none;
@@ -411,7 +447,6 @@ textarea { resize: vertical; min-height: 80px; }
   width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex: none; font-size: 22px;
   background: var(--accent-soft); color: var(--withdraw);
 }
-.pick-icon.borrow { background: var(--borrow-soft); color: var(--borrow); }
 .pick-body { flex: 1 1 170px; min-width: 0; }
 .pick-name { font-weight: 500; transition: color 0.2s; }
 .stepper { display: inline-flex; align-items: center; background: var(--fill); border-radius: 980px; flex: none; margin-left: auto; }
@@ -523,10 +558,9 @@ textarea { resize: vertical; min-height: 80px; }
   white-space: nowrap; letter-spacing: normal; background: var(--fill); color: var(--text-2);
 }
 .pill.withdraw, .pill.issued { background: var(--accent-soft); color: var(--accent); }
-.pill.borrow, .pill.borrowed { background: var(--borrow-soft); color: var(--borrow); }
-.pill.returned, .pill.in { background: var(--green-soft); color: var(--green); }
+.pill.in { background: var(--green-soft); color: var(--green); }
 .pill.pending, .pill.low { background: var(--orange-soft); color: var(--orange); }
-.pill.overdue, .pill.rejected, .pill.out { background: var(--red-soft); color: var(--red); }
+.pill.out { background: var(--red-soft); color: var(--red); }
 
 /* ============ Tables ============ */
 .table-wrap { overflow-x: auto; }
@@ -814,15 +848,13 @@ button, .btn, a, input, select, .row, .item-card { -webkit-tap-highlight-color: 
 #rf .pick.out .add-btn:disabled, .pick.out .add-btn:disabled { background: var(--red-tint); color: var(--red); opacity: .8; }
 .item-card.out { background: color-mix(in srgb, var(--red-tint) 50%, var(--surface)); }
 .item-card.out .qty b { color: var(--red); }
-.item-card.out .pick-icon:not(.borrow) { background: var(--red-tint); color: var(--red); }
+.item-card.out .pick-icon { background: var(--red-tint); color: var(--red); }
 .pill.out { background: var(--red-tint); color: var(--red); }
 .item-card .actions .btn.primary { background: var(--accent-soft); color: var(--accent); box-shadow: none; }
-.item-card .actions .btn.borrow { background: var(--borrow-soft); color: var(--borrow); box-shadow: none; }
 @media (hover: hover) {
   .item-card .actions .btn.primary:hover { background: var(--accent); color: var(--on-accent); }
-  .item-card .actions .btn.borrow:hover { background: var(--borrow); color: var(--on-accent); }
 }
-.item-card .pick-icon:not(.borrow) { background: var(--fill); color: var(--text-2); }
+.item-card .pick-icon { background: var(--fill); color: var(--text-2); }
 .item-pills { display: flex; gap: 6px; flex-wrap: wrap; }
 
 /* ============ รายการเลือกพัสดุแบบสงบ ============ */
@@ -835,12 +867,10 @@ button, .btn, a, input, select, .row, .item-card { -webkit-tap-highlight-color: 
 .pick-letter.hit { animation: letter-hit .9s var(--ease-out); }
 @keyframes letter-hit { 0%, 35% { color: var(--accent); } }
 
-/* ============ สีตามประเภท เบิก (ฟ้า) / ยืม (ส้ม) ============ */
+/* ============ สีของฟอร์มเบิก (ฟ้า) ============ */
 #rf, .success { --tint: 0,113,227; --tint-ink: #0060c7; }
-#rf[data-type="borrow"], .success[data-type="borrow"] { --tint: 191,72,0; --tint-ink: #a03c00; }
 @media (prefers-color-scheme: dark) {
   #rf, .success { --tint: 41,151,255; --tint-ink: #63b3ff; }
-  #rf[data-type="borrow"], .success[data-type="borrow"] { --tint: 255,159,10; --tint-ink: #ffb340; }
 }
 .pick.selected { background: rgba(var(--tint), .1); box-shadow: inset 0 0 0 1px rgba(var(--tint), .12); border-radius: 12px; margin: 0 -12px; padding-left: 12px; padding-right: 12px; }
 .pick.selected .pick-name { color: var(--tint-ink); font-weight: 600; }
@@ -876,7 +906,6 @@ button, .btn, a, input, select, .row, .item-card { -webkit-tap-highlight-color: 
 #rf-count { transform-origin: 0 50%; }
 .fly { position: fixed; z-index: 45; width: 0; height: 0; pointer-events: none; }
 .fly > i { position: absolute; left: -6px; top: -6px; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.fly.borrow > i { background: var(--borrow); box-shadow: 0 0 0 3px var(--borrow-soft); }
 
 /* ============ Feedback: toast, ช่องผิด, ปุ่มกำลังบันทึก, โครงโหลด ============ */
 .toast { display: flex; align-items: center; gap: 8px; animation: toast-in .45s var(--spring); }
@@ -929,9 +958,8 @@ html.vt #rf-title { view-transition-name: page-title; }
   box-shadow: var(--shadow-lg); opacity: 0; transition: opacity .4s var(--ease-out);
 }
 .choice.withdraw::after { box-shadow: var(--shadow-lg), 0 30px 60px -30px rgba(0,113,227,.35); }
-.choice.borrow::after { box-shadow: var(--shadow-lg), 0 30px 60px -30px rgba(191,72,0,.30); }
 @media (hover: hover) {
-  .choice:hover, .choice.withdraw:hover, .choice.borrow:hover, .item-card:hover { box-shadow: var(--shadow); }
+  .choice:hover, .choice.withdraw:hover, .item-card:hover { box-shadow: var(--shadow); }
   .choice:hover::after, .item-card:hover::after { opacity: 1; }
 }
 /* แถวที่เพิ่งเลือก / เพิ่งเอาออก: ชั้นสีเฟดความทึบ แทนการเปลี่ยนสีพื้นทีละเฟรม */
@@ -1212,6 +1240,7 @@ dialog.tour.closing::backdrop { animation: fade-out .2s var(--ease-in) forwards;
 .tour-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--separator); transition: transform .3s var(--spring); }
 .tour-dots i.on { background: var(--accent); transform: scale(1.35); }
 .tour-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px 18px 18px; }
+.tour-actions .btn { white-space: normal; line-height: 1.25; padding-left: 12px; padding-right: 12px; text-align: center; }
 @media (prefers-color-scheme: dark) {
   .tour-shot { background: linear-gradient(160deg, #10213d, #1e1838); }
   .tour-x { background: rgba(44,44,46,.85); }
@@ -1237,7 +1266,12 @@ dialog.tour.save-guide.closing { animation: sheet-out .2s var(--ease-in) forward
 .save-bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 12px 14px 0; }
 .save-guide .tour-x { position: static; flex: none; }
 .save-dev { flex: 1; display: flex; min-width: 0; }
-.save-dev button { flex: 1 1 0; font-size: 16px; padding: 10px 6px; }
+.save-dev button { flex: 1 1 0; font-size: 15px; padding: 10px 4px; min-width: 0; }
+@media (max-width: 360px) {
+  .save-bar { gap: 8px; }
+  .save-dev button { font-size: 14px; padding: 10px 1px; }
+  .save-guide .tour-x { padding: 0 12px 0 9px; gap: 3px; }
+}
 .save-guide .tour-shot { position: relative; padding-top: 14px; margin-top: 12px; }
 .save-guide .tour-shot img { height: min(40dvh, 320px); }
 .save-guide .tour-step { color: var(--red); }
@@ -1286,6 +1320,40 @@ dialog.tour.save-guide.closing { animation: sheet-out .2s var(--ease-in) forward
   .save-bell svg, .save-bell::after, .save-alert-ic svg, .save-alert-ic::after, .success > .save-alert, #pdf-save.attn { animation: none !important; }
   .save-bell::after, .save-alert-ic::after { opacity: 0; }
 }
+
+/* ============ ถามก่อนบันทึก PDF: ต้องการคำแนะนำไหม ============ */
+dialog.ask {
+  width: min(380px, calc(100% - 32px)); padding: 28px 22px 20px; border: 0; border-radius: 28px; text-align: center; color: var(--text);
+  background: rgba(255,255,255,.86); backdrop-filter: saturate(180%) blur(30px); -webkit-backdrop-filter: saturate(180%) blur(30px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 0 0 1px rgba(0,0,0,.05), 0 30px 80px -20px rgba(0,0,0,.4);
+}
+dialog.ask[open] { display: flex; flex-direction: column; align-items: center; gap: 8px; animation: hud-in .45s var(--spring); }
+dialog.ask::backdrop { background: rgba(8, 12, 24, .38); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); animation: fade .25s; }
+dialog.ask.closing { animation: hud-out .18s var(--ease-in) forwards; }
+dialog.ask.closing::backdrop { animation: fade-out .18s var(--ease-in) forwards; }
+.ask-ic {
+  width: 56px; height: 56px; border-radius: 17px; display: grid; place-items: center; font-size: 30px; color: #fff; margin-bottom: 6px;
+  background: linear-gradient(135deg, #ff9f0a, #e8590c); box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 10px 22px -10px rgba(232,89,12,.7);
+}
+dialog.ask h3 { font-size: 20px; font-weight: 700; line-height: 1.35; text-wrap: balance; }
+dialog.ask p { font-size: 15px; color: var(--text-2); line-height: 1.45; text-wrap: pretty; }
+.ask-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; margin-top: 12px; }
+.ask-actions .btn { padding-left: 10px; padding-right: 10px; }
+@media (max-width: 360px) { .ask-actions { grid-template-columns: 1fr; } .ask-actions [data-ask="yes"] { order: -1; } }
+@media (prefers-color-scheme: dark) {
+  dialog.ask { background: rgba(44,44,46,.86); box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 0 0 1px rgba(255,255,255,.08), 0 30px 80px -20px rgba(0,0,0,.8); }
+}
+
+/* ============ ป๊อปอัปกลางจอ: บันทึกไฟล์เรียบร้อย ============ */
+.hud.saved { background: rgba(8, 12, 24, .28); pointer-events: auto; animation: fade .25s; }
+.hud.saved.out { animation: fade-out .24s var(--ease-in) forwards; }
+.hud-ic.ok circle { fill: var(--green, #34c759); }
+.hud-ic.ok::after { border-color: var(--green, #34c759); }
+.saved-file { display: inline-flex; align-items: center; gap: 10px; margin: 4px 0 2px; padding: 8px 14px 8px 8px; border-radius: 14px; background: var(--fill); }
+.hud-card .saved-file b { color: var(--text); font-size: 16px; }
+.saved-file .file-icon { width: 30px; height: 36px; border-radius: 6px; font-size: 9px; background: #e5332a; color: #fff; font-weight: 700; display: grid; place-items: end center; padding-bottom: 5px; }
+.saved-ok { width: 100%; margin-top: 12px; }
+.hud.saved .hud-bar i { background: var(--green, #34c759); }
 
 /* ============ แจ้งเตือนให้อ่านวิธีใช้งาน ============ */
 .help-notice {
