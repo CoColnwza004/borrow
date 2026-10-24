@@ -42,10 +42,13 @@ const PdfDoc = (() => {
     for (let i = rows.length; i < MIN_ROWS; i++) rows.push('<tr class="blank"><td></td><td></td><td></td><td></td><td></td><td></td></tr>');
     const dept = esc(r.department_full || r.department);
     const statement = `ข้าพเจ้าขอเบิกพัสดุตามรายการต่อไปนี้ เพื่อใช้ใน${dept}`;
+    // วันที่ใต้ช่องลงชื่อทั้งสองฝั่ง = วันที่เบิก เช่น 24 / 10 / 2569
+    const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.created_at || '');
+    const signDate = ymd ? `${Number(ymd[3])} / ${Number(ymd[2])} / ${Number(ymd[1]) + 543}` : '........ / ........ / ........';
     const sign = (role, name) => `<div class="pdf-sign-box">
       <div>ลงชื่อ .......................................... ${role}</div>
       <div>( ${name ? esc(name) : '..........................................'} )</div>
-      <div>วันที่ ........ / ........ / ........</div></div>`;
+      <div>วันที่ ${signDate}</div></div>`;
     return `<div class="pdf-page">
       <div class="pdf-head">
         <div><div class="pdf-org">${esc(org || 'ระบบเบิกพัสดุ')}</div>
