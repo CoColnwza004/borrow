@@ -1353,6 +1353,25 @@ dialog.tour.save-guide.closing { animation: sheet-out .2s var(--ease-in) forward
 .kbd svg { font-size: 1.1em; }
 .help-tips { background: var(--orange-soft); border-radius: var(--r-md); padding: 14px 18px; font-size: 15px; line-height: 1.5; }
 .help-tips ul { margin: 6px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+/* ลูกศรลอย "เลื่อนลงอ่านต่อ" (หน้าวิธีใช้งาน) */
+.scroll-hint {
+  position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 40; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 4px; height: 50px; padding: 0 14px 0 20px; border: 0; border-radius: 980px;
+  font: inherit; font-size: 16px; font-weight: 600; color: #fff; cursor: pointer; background: var(--accent);
+  box-shadow: 0 12px 28px -8px rgba(0,113,227,.65), 0 0 0 1px rgba(255,255,255,.18) inset;
+  transition: opacity .3s, transform .35s var(--ease-out), padding .3s var(--ease-out), gap .3s;
+  animation: hint-in .5s var(--ease-out) .5s backwards;
+}
+.scroll-hint svg { width: 26px; height: 26px; flex: none; fill: currentColor; animation: hint-bob 1.4s ease-in-out infinite; }
+.scroll-hint-txt { white-space: nowrap; overflow: hidden; max-width: 9em; transition: max-width .3s var(--ease-out), opacity .2s; }
+.scroll-hint.mini { padding: 0 12px; gap: 0; }
+.scroll-hint.mini .scroll-hint-txt { max-width: 0; opacity: 0; }
+.scroll-hint.gone { opacity: 0; pointer-events: none; transform: translate(-50%, 18px); }
+.scroll-hint:active { transform: translateX(-50%) scale(.94); transition-duration: .08s; }
+@keyframes hint-bob { 50% { transform: translateY(4px); } }
+@keyframes hint-in { from { opacity: 0; transform: translate(-50%, 18px); } }
+@media (prefers-reduced-motion: reduce) { .scroll-hint, .scroll-hint svg { animation: none; } }
+@media print { .scroll-hint { display: none; } }
 .help-end { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 8px 0 20px; }
 @media (max-width: 760px) {
   .help-split, .help-cols { grid-template-columns: 1fr; }
