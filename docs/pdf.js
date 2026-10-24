@@ -71,6 +71,18 @@ const PdfDoc = (() => {
     </div>`;
   }
 
+  // ภาษาไทยไม่เว้นวรรคระหว่างคำ html2canvas จึงตัดบรรทัดภาษาไทยไม่ได้ (ข้อความที่ขึ้นบรรทัดใหม่ถูกวาดซ้อนกันบรรทัดเดียว)
+  // ใส่ตัวแบ่งคำที่มองไม่เห็น (U+200B) ระหว่างคำด้วยตัวตัดคำภาษาไทยของเบราว์เซอร์ ก่อนวาด
+  const THAI = /[\u0E00-\u0E7F]/;
+  function markThaiWords(root) {
+    if (typeof Intl === 'undefined' || !Intl.Segmenter) return;
+    const seg = new Intl.Segmenter('th', { granularity: 'word' });
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) if (THAI.test(walker.currentNode.nodeValue)) nodes.push(walker.currentNode);
+    nodes.forEach((n) => { n.nodeValue = [...seg.segment(n.nodeValue)].map((x) => x.segment).join('\u200B'); });
+  }
+
   // แปลง HTML เป็น PDF (A4) margin = [บน, ซ้าย, ล่าง, ขวา] หน่วย มม.
   async function render(html, { margin = 0, pageNumbers = false } = {}) {
     await loadLib();
@@ -78,6 +90,7 @@ const PdfDoc = (() => {
     const stage = document.createElement('div');
     stage.className = 'pdf-stage';
     stage.innerHTML = html;
+    markThaiWords(stage);
     document.body.appendChild(stage);
     try {
       let worker = window.html2pdf().set({
@@ -143,7 +156,7 @@ const PdfDoc = (() => {
       <h2 class="pdf-h2">3. รายการใบเบิกทั้งหมด</h2>
       <table class="pdf-grid pdf-small"><thead><tr><th style="width:17%">วันเวลาที่เบิก</th><th style="width:12%">เลขที่</th>
         <th style="width:17%">ผู้เบิก</th><th style="width:12%">แผนก</th><th>พัสดุ</th></tr></thead>
-        <tbody>${sum.requests.map((r) => `<tr><td>${esc(thaiDateTime(r.created_at))}</td><td>${esc(r.request_no)}</td>
+        <tbody>${sum.requests.map((r) => `<tr><td>${esc(thaiDateTime(r.created_at)).replace(/ (\d{1,2}:\d{2}(:\d{2})?)$/, '<br>$1')}</td><td>${esc(r.request_no)}</td>
           <td>${esc(r.borrower_name)}</td><td>${esc(r.department)}</td>
           <td>${extra.lines(r).map((l) => `${esc(l.name)} ×${num(l.qty)}`).join(', ')}</td></tr>`).join('') || empty(5)}</tbody></table>
 
