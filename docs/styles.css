@@ -208,6 +208,15 @@ svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
 .banner {
   background: var(--orange-soft); color: var(--text); border-radius: var(--r-md); padding: 12px 18px; font-size: 14px;
 }
+/* เว็บทดสอบ (ลิงก์ preview ของ Cloudflare) */
+.test-banner { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; background: rgba(175, 82, 222, .12); box-shadow: inset 0 0 0 1px rgba(175, 82, 222, .35); }
+.test-banner > b { color: #8e3cc9; font-size: 15px; }
+.test-ver { font-size: 13px; font-weight: 600; color: #8e3cc9; background: rgba(175, 82, 222, .14); border-radius: 980px; padding: 1px 9px; }
+.test-banner > span:last-child { flex-basis: 100%; }
+.test-badge { font-size: 11px; font-weight: 700; color: #fff; background: #af52de; border-radius: 980px; padding: 2px 8px; letter-spacing: .02em; }
+/* จอแคบ: เหลือไอคอน + ป้าย ทดสอบ ไม่ให้แถบเมนูล้นจอ */
+@media (max-width: 400px) { .brand:has(.test-badge) #brand-name { display: none; } }
+@media (prefers-color-scheme: dark) { .test-banner > b, .test-ver { color: #d9a6ff; } }
 
 /* ============ Hero / home ============ */
 .hero { position: relative; isolation: isolate; text-align: center; padding: 40px 0 16px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
