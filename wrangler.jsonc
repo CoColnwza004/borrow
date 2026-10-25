@@ -3,6 +3,9 @@
 {
   "name": "borrow",
   "compatibility_date": "2026-10-01",
+  // ลิงก์ทดสอบแยกของแต่ละ branch (Preview URLs) สำหรับลองการแก้ไขก่อนรวมเข้าเว็บจริง
+  "workers_dev": true,
+  "preview_urls": true,
   "assets": {
     "directory": "./docs",
     "not_found_handling": "none"

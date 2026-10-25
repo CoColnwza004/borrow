@@ -488,6 +488,21 @@ test('Cloudflare _headers is generated from netlify.toml (same CSP and cache rul
   assert.match(out, /\/vendor\/\*\n {2}Cache-Control: public, max-age=31536000, immutable/);
 });
 
+test('Cloudflare build marks preview branches as the test site, the main branch as the real site', () => {
+  const { buildInfo } = require('../scripts/cf-headers.js');
+  assert.equal(buildInfo({}), null, 'ไม่ได้ build บน Cloudflare: ใช้ไฟล์ตั้งต้น (เว็บจริง)');
+  const parse = (js) => JSON.parse(js.match(/BUILD_INFO = (\{.*\});/)[1]);
+  const prod = parse(buildInfo({ WORKERS_CI_BRANCH: 'claude/magical-hamilton-g35q6e', WORKERS_CI_COMMIT_SHA: 'abcdef1234567' }));
+  assert.deepEqual([prod.test, prod.commit], [false, 'abcdef1']);
+  const prev = parse(buildInfo({ WORKERS_CI_BRANCH: 'claude/admiring-clarke-lvp2ic', WORKERS_CI_COMMIT_SHA: '1234567890' }));
+  assert.deepEqual([prev.test, prev.branch, prev.commit], [true, 'claude/admiring-clarke-lvp2ic', '1234567']);
+  assert.equal(parse(buildInfo({ CF_PAGES_BRANCH: 'fix-x', CF_PAGES_COMMIT_SHA: 'ffffffffff' })).test, true);
+  // ไฟล์ตั้งต้นใน repo = เว็บจริง
+  const ctx = { window: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../docs/build-info.js'), 'utf8'), ctx);
+  assert.equal(ctx.window.BUILD_INFO.test, false);
+});
+
 test('Apps Script: withdrawing an out-of-stock item writes a negative balance to the sheet; receiving offsets it', () => {
   const { sheets, ctx } = mockAppsScript();
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);

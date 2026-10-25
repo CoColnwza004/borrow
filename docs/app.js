@@ -2,7 +2,11 @@
 
 // ===================== Config & state =====================
 const CONFIG = window.APP_CONFIG || {};
-const API_URL = (CONFIG.API_URL || '').trim();
+// เว็บทดสอบ = ลิงก์ preview ของ Cloudflare ที่ build จาก branch อื่น (ไม่ใช่ branch หลัก) ดู scripts/cf-headers.js
+// ไม่แตะ Google Sheet จริง: ใช้ชีตสำเนา TEST_API_URL ถ้าตั้งไว้ ไม่งั้นใช้โหมดทดลอง (ข้อมูลอยู่ในเบราว์เซอร์)
+const BUILD = window.BUILD_INFO || {};
+const TEST_SITE = BUILD.test === true;
+const API_URL = ((TEST_SITE ? CONFIG.TEST_API_URL : CONFIG.API_URL) || '').trim();
 const DEMO = !API_URL;
 const DEMO_KEY = 'supply-demo-db-v3';
 const DEMO_PIN = '1234';
@@ -281,7 +285,17 @@ function downloadCsv(name, header, rows) {
 }
 
 // ===================== Admin mode (PIN) =====================
+// แถบบอกว่าเป็นเว็บทดสอบ รุ่นไหน (branch / commit / เวลา build) และข้อมูลไปเก็บที่ไหน
+function testBanner() {
+  const built = BUILD.builtAt ? new Date(BUILD.builtAt).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  const ver = [BUILD.commit && 'รุ่น ' + BUILD.commit, built && 'อัปเดต ' + built].filter(Boolean).join(' · ');
+  return `<div class="banner test-banner"><b>เว็บทดสอบ</b> ${ver ? `<span class="test-ver">${esc(ver)}</span>` : ''}
+    <span>${DEMO ? 'ลองเบิก/ดาวน์โหลด PDF ได้เต็มที่ ข้อมูลเก็บในเบราว์เซอร์นี้เท่านั้น <b>ไม่เข้า Google Sheet จริง</b> · หน้าเจ้าหน้าที่ใช้ PIN 1234'
+      : 'ข้อมูลบันทึกลง <b>Google Sheet สำหรับทดสอบ</b> ไม่ใช่ชีตจริง'}</span></div>`;
+}
+
 function renderMode() {
+  if (TEST_SITE && !$('.test-badge')) $('.brand').insertAdjacentHTML('beforeend', '<span class="test-badge">ทดสอบ</span>');
   const btn = $('#btn-admin');
   btn.textContent = isAdmin() ? 'เจ้าหน้าที่ · ออก' : 'เจ้าหน้าที่';
   btn.classList.toggle('on', isAdmin());
@@ -510,13 +524,15 @@ function countUp(root) {
 
 function render(enter = false) {
   const key = currentRoute();
-  document.title = `${ROUTES[key].title} · ระบบเบิกพัสดุ`;
+  document.title = `${TEST_SITE ? '[ทดสอบ] ' : ''}${ROUTES[key].title} · ระบบเบิกพัสดุ`;
   renderNav();
   const page = $('#page');
   page.classList.remove('enter');
   page.innerHTML = '';
   $('.scroll-hint')?.remove();
-  if (DEMO) {
+  if (TEST_SITE) {
+    page.insertAdjacentHTML('beforeend', testBanner());
+  } else if (DEMO) {
     page.insertAdjacentHTML('beforeend', '<div class="banner">โหมดทดลอง — ข้อมูลเก็บเฉพาะในเบราว์เซอร์เครื่องนี้ เชื่อม Google Sheets ตามคู่มือใน README เพื่อใช้ร่วมกันทุกเครื่อง</div>');
   }
   document.body.classList.toggle('home-bg', key === 'home');

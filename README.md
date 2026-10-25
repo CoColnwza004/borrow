@@ -63,6 +63,23 @@ repo มี [`wrangler.jsonc`](wrangler.jsonc) (เผยแพร่โฟล�
 - `API_URL` และ Apps Script ใช้ตัวเดิมได้เลย ไม่ต้องแก้หรือ Deploy ใหม่
 - ย้ายเสร็จแล้วลบเว็บบน Netlify ได้ (Site configuration → Delete this site) แจ้งลิงก์ใหม่ให้ทุกแผนก และคนที่เพิ่มเว็บไว้หน้าจอโฮมให้เพิ่มใหม่
 
+### เว็บทดสอบ: ลองการแก้ไขแต่ละรอบก่อนขึ้นเว็บจริง
+ทุกครั้งที่มีการแก้ไข โค้ดจะถูก push ไปที่ branch ทดสอบ (`claude/admiring-clarke-lvp2ic`) ก่อน Cloudflare จะสร้าง **ลิงก์ทดสอบแยก** ให้
+ลองใช้จนพอใจแล้วจึงรวมเข้า branch หลัก (`claude/magical-hamilton-g35q6e`) = เว็บจริงอัปเดต
+
+ตั้งค่าใน Cloudflare ครั้งเดียว (Workers & Pages → เลือกโปรเจกต์):
+1. **Settings → Build → Branch control** → เปิด **Builds for non-production branches** (Non-production deploy command = `npx wrangler versions upload` ค่าเริ่มต้น)
+2. **Settings → Domains & Routes → Preview URLs** → **Enable** (`wrangler.jsonc` ตั้ง `preview_urls: true` ไว้แล้ว)
+3. ลิงก์ทดสอบของ branch จะอยู่ในรูป `https://claude-admiring-clarke-lvp2ic-<ชื่อโปรเจกต์>.<ชื่อบัญชี>.workers.dev`
+   ดูได้ที่ **Deployments** (เวอร์ชันล่าสุด → Preview URL) หรือในเครื่องหมายสถานะของ commit / Pull Request บน GitHub
+
+เว็บทดสอบรู้ตัวเองจาก branch ที่ build (`scripts/cf-headers.js` เขียน `docs/build-info.js` ตอน build) แล้ว:
+- มีป้ายสีม่วง **ทดสอบ** ที่แถบด้านบน แถบบอกรุ่น (commit) และเวลาที่อัปเดต ชื่อแท็บขึ้นต้นด้วย [ทดสอบ]
+- **ไม่แตะ Google Sheet จริง**: ใช้โหมดทดลอง (ข้อมูลพัสดุตั้งต้น 301 รายการ เก็บในเบราว์เซอร์นั้น) ลองเบิก ดาวน์โหลด PDF และหน้าเจ้าหน้าที่ (PIN `1234`) ได้เต็มที่
+- ถ้าต้องการทดสอบกับ Google Sheet จริง ๆ (เช่น ทดสอบโค้ด Apps Script ใหม่): Google Sheet → **ไฟล์ → ทำสำเนา** (Apps Script ถูกคัดลอกไปด้วย)
+  → ในชีตสำเนา ส่วนขยาย → Apps Script → Deploy → New deployment (เว็บแอป) → ใส่ URL `/exec` ของสำเนาใน `TEST_API_URL` ใน `docs/config.js`
+- เว็บจริง (branch หลัก) และไฟล์ zip ที่อัปโหลดเองไม่มีป้ายทดสอบ ใช้ `API_URL` ตามปกติ
+
 ### ขั้นที่ 2: เชื่อม Google Sheets เพื่อให้ทุกเครื่องใช้ข้อมูลพัสดุ/สต็อกชุดเดียวกัน (ประมาณ 10 นาที)
 
 **Google Sheet มาจากไหน?** สร้างใหม่เองด้วยบัญชี Google (Gmail หรือบัญชี Google Workspace ของโรงพยาบาล) ไม่ต้องมีชีตเดิม
