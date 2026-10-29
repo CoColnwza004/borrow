@@ -78,7 +78,8 @@ repo มี [`wrangler.jsonc`](wrangler.jsonc) (เผยแพร่โฟล�
 ตั้งค่าใน Cloudflare ครั้งเดียว (Workers & Pages → เลือกโปรเจกต์):
 1. **Settings → Build → Branch control** → เปิด **Builds for non-production branches** (Non-production deploy command = `npx wrangler versions upload` ค่าเริ่มต้น)
 2. **Settings → Domains & Routes → Preview URLs** → **Enable** (`wrangler.jsonc` ตั้ง `preview_urls: true` ไว้แล้ว)
-3. ลิงก์ทดสอบของ branch จะอยู่ในรูป `https://claude-admiring-clarke-lvp2ic-<ชื่อโปรเจกต์>.<ชื่อบัญชี>.workers.dev`
+3. ลิงก์ทดสอบของ branch จะอยู่ในรูป `https://claude-admiring-clarke-lvp2ic-pakkred-supply.<ชื่อบัญชี>.workers.dev`
+   (`"name"` ใน `wrangler.jsonc` ต้องตรงกับชื่อโปรเจกต์ Worker บน Cloudflare คือ `pakkred-supply` ไม่งั้น Cloudflare build ไม่ผ่าน)
    ดูได้ที่ **Deployments** (เวอร์ชันล่าสุด → Preview URL) หรือในเครื่องหมายสถานะของ commit / Pull Request บน GitHub
 
 เว็บทดสอบรู้ตัวเองจาก branch ที่ build (`scripts/cf-headers.js` เขียน `docs/build-info.js` ตอน build) แล้ว:
@@ -87,6 +88,7 @@ repo มี [`wrangler.jsonc`](wrangler.jsonc) (เผยแพร่โฟล�
 - ถ้าต้องการทดสอบกับ Google Sheet จริง ๆ (เช่น ทดสอบโค้ด Apps Script ใหม่): Google Sheet → **ไฟล์ → ทำสำเนา** (Apps Script ถูกคัดลอกไปด้วย)
   → ในชีตสำเนา ส่วนขยาย → Apps Script → Deploy → New deployment (เว็บแอป) → ใส่ URL `/exec` ของสำเนาใน `TEST_API_URL` ใน `docs/config.js`
 - เว็บจริง (branch หลัก) และไฟล์ zip ที่อัปโหลดเองไม่มีป้ายทดสอบ ใช้ `API_URL` ตามปกติ
+- ลิงก์ preview ของ **Netlify** (`deploy-preview-…--….netlify.app`) และ **Vercel** (`…-git-….vercel.app`) ที่ยังเชื่อม repo อยู่ ก็เป็นเว็บทดสอบเช่นกัน (ดู `docs/build-info.js`)
 
 ### ขั้นที่ 2: เชื่อม Google Sheets เพื่อให้ทุกเครื่องใช้ข้อมูลพัสดุ/สต็อกชุดเดียวกัน (ประมาณ 10 นาที)
 

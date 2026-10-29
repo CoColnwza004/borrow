@@ -584,10 +584,16 @@ test('Cloudflare build marks preview branches as the test site, the main branch 
   const prev = parse(buildInfo({ WORKERS_CI_BRANCH: 'claude/admiring-clarke-lvp2ic', WORKERS_CI_COMMIT_SHA: '1234567890' }));
   assert.deepEqual([prev.test, prev.branch, prev.commit], [true, 'claude/admiring-clarke-lvp2ic', '1234567']);
   assert.equal(parse(buildInfo({ CF_PAGES_BRANCH: 'fix-x', CF_PAGES_COMMIT_SHA: 'ffffffffff' })).test, true);
-  // ไฟล์ตั้งต้นใน repo = เว็บจริง
-  const ctx = { window: {} };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../docs/build-info.js'), 'utf8'), ctx);
-  assert.equal(ctx.window.BUILD_INFO.test, false);
+  // ไฟล์ตั้งต้นใน repo = เว็บจริง ยกเว้นลิงก์ preview ของ Netlify / Vercel
+  const src = fs.readFileSync(path.join(__dirname, '../docs/build-info.js'), 'utf8');
+  const isTest = (hostname) => { const ctx = { window: {}, location: { hostname } }; vm.runInNewContext(src, ctx); return ctx.window.BUILD_INFO.test; };
+  for (const h of ['pakkred-supply.cocolnwza004.workers.dev', 'parkkredhospitalsupply.netlify.app', 'cocolnwza004.github.io', 'borrow-cocolnwza004s-projects.vercel.app', 'borrow-ten.vercel.app', 'localhost', 'supply.example.go.th']) {
+    assert.equal(isTest(h), false, h + ' = เว็บจริง');
+  }
+  for (const h of ['deploy-preview-30--parkkredhospitalsupply.netlify.app', 'claude-admiring-clarke-lvp2ic--parkkredhospitalsupply.netlify.app',
+    'borrow-git-claude-admiring-clarke-lvp2ic-cocolnwza004s-projects.vercel.app', 'borrow-2b1is6tfx-cocolnwza004s-projects.vercel.app']) {
+    assert.equal(isTest(h), true, h + ' = เว็บทดสอบ');
+  }
 });
 
 test('Apps Script: withdrawing an out-of-stock item writes a negative balance to the sheet; receiving offsets it', () => {
