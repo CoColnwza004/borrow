@@ -69,6 +69,69 @@ test('core: validation for department, name, items and inactive items', () => {
   assert.equal(paper.available_qty, 120);
 });
 
+test('core: receiving stock records the company, expiry date and delivery note; companies are managed like departments', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  Core.run(db, 'addMaster', { table: 'suppliers', name: 'บริษัท เอ บี ซี จำกัด' }, admin);
+  assert.deepEqual(db.suppliers, [{ name: 'บริษัท เอ บี ซี จำกัด' }]);
+  assert.throws(() => Core.run(db, 'addMaster', { table: 'suppliers', name: 'บริษัท เอ บี ซี จำกัด' }, admin), /มีชื่อนี้อยู่แล้ว/);
+  assert.throws(() => Core.run(db, 'addMaster', { table: 'suppliers', name: 'x' }, user), /PIN/);
+  assert.equal(db.departments.length, 2, 'ไม่ไปเพิ่มเป็นแผนก');
+  Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 30, supplier: 'บริษัท เอ บี ซี จำกัด', expiry_date: '2027-06-30', delivery_no: 'IV-2569/0012' }, admin);
+  const m = db.movements.at(-1);
+  assert.deepEqual([m.type, m.qty, m.supplier, m.expiry_date, m.delivery_no], ['receive', 30, 'บริษัท เอ บี ซี จำกัด', '2027-06-30', 'IV-2569/0012']);
+  assert.equal(paper.available_qty, 150);
+  assert.throws(() => Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 1, expiry_date: '30/06/2570' }, admin), /วันหมดอายุไม่ถูกต้อง/);
+  // ไม่ใส่ก็รับเข้าได้ (ไม่บังคับ)
+  Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 1 }, admin);
+  assert.deepEqual([db.movements.at(-1).supplier, db.movements.at(-1).expiry_date, db.movements.at(-1).delivery_no], ['', '', '']);
+  Core.run(db, 'removeMaster', { table: 'suppliers', name: 'บริษัท เอ บี ซี จำกัด' }, admin);
+  assert.equal(db.suppliers.length, 0);
+  // ข้อมูลเดิมที่ยังไม่มีคอลัมน์บริษัท/วันหมดอายุ อ่านได้
+  const old = Core.normalize({ movements: [{ id: 1, created_at: '2026-01-01 08:00', item_id: 1, type: 'receive', qty: 5, available_after: 5 }] });
+  assert.deepEqual([old.movements[0].supplier, old.movements[0].expiry_date, old.suppliers.length], ['', '', 0]);
+});
+
+test('core: new items get the next item code automatically (NSO-301 → NSO-302), with the first receive lot', () => {
+  const db = Core.seed(new Date(), SEED);
+  assert.equal(Core.nextItemCode(db.items), 'NSO-302');
+  const id = Core.run(db, 'saveItem', { name: 'ถุงมือไนไตรล์ S', unit: 'กล่อง', initial_qty: 20, supplier: 'บ.ทดสอบ', expiry_date: '2028-01-31', delivery_no: 'DN-77' }, admin);
+  const it = db.items.find((i) => i.id === id);
+  assert.equal(it.code, 'NSO-302');
+  assert.equal(it.available_qty, 20);
+  assert.deepEqual([db.movements.at(-1).supplier, db.movements.at(-1).expiry_date, db.movements.at(-1).delivery_no], ['บ.ทดสอบ', '2028-01-31', 'DN-77']);
+  assert.equal(Core.run(db, 'saveItem', { name: 'ถัดไป' }, admin) && db.items.at(-1).code, 'NSO-303');
+  assert.throws(() => Core.run(db, 'saveItem', { code: 'NSO-001', name: 'ซ้ำ' }, admin), /มีอยู่แล้ว/);
+  assert.equal(Core.nextItemCode([]), 'NSO-001');
+  assert.equal(Core.nextItemCode([{ code: 'A-9' }, { code: 'A-10' }, { code: 'X' }]), 'A-11');
+  // แถวที่พิมพ์ในชีตเองโดยไม่ใส่รหัส ได้รหัสถัดไปให้
+  const loaded = Core.normalize({ items: [{ id: 1, code: 'NSO-007', name: 'a', available_qty: 1 }, { name: 'ของใหม่', available_qty: 3 }] });
+  assert.equal(loaded.items[1].code, 'NSO-008');
+});
+
+test('core: staff can delete a withdraw slip, optionally returning its stock; the slip number is never reused', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const gloves = db.items.find((i) => i.code === 'MD-005');
+  const a = Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 10 }, { item_id: gloves.id, qty: 2 }] }, user);
+  const b = Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 5 }] }, user);
+  assert.throws(() => Core.run(db, 'deleteRequest', { id: a }, user), /PIN/);
+  // ลบพร้อมคืนสต็อก
+  assert.match(Core.run(db, 'deleteRequest', { id: a, restock: true }, admin), /^WD\d\d-001$/);
+  assert.deepEqual([paper.available_qty, gloves.available_qty], [115, 6]);
+  assert.deepEqual(db.movements.slice(-2).map((m) => [m.type, m.qty, m.note]), [['cancel', 10, 'ลบใบเบิก ' + db.movements.at(-1).request_no], ['cancel', 2, 'ลบใบเบิก ' + db.movements.at(-1).request_no]]);
+  assert.equal(db.requests.length, 1);
+  assert.ok(!db.request_items.some((l) => l.request_id === a));
+  // ลบโดยไม่คืนสต็อก
+  Core.run(db, 'deleteRequest', { id: b }, admin);
+  assert.equal(paper.available_qty, 115);
+  assert.equal(db.requests.length, 0);
+  assert.throws(() => Core.run(db, 'deleteRequest', { id: b }, admin), /ไม่พบใบเบิก/);
+  // ใบใหม่ไม่ใช้เลขที่ของใบที่ลบไปแล้ว
+  const c = Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 1 }] }, user);
+  assert.match(db.requests.find((r) => r.id === c).request_no, /-003$/);
+});
+
 test('core: withdrawing more than stock goes negative; receiving new stock offsets it', () => {
   const db = Core.seed(new Date(), FIXTURE);
   const paper = db.items.find((i) => i.code === 'OF-001');
@@ -187,7 +250,7 @@ test('Apps Script: only changed tabs are rewritten, shrinking tabs leave no stal
   const after = writes();
   for (const t of ['อุปกรณ์', 'ประวัติการเบิก', 'รายการในคำขอ', 'ประวัติสต็อก', 'รายการเบิก']) assert.equal(after[t], before[t] + 1, t);
   for (const t of ['หน่วยงาน', 'หมวดหมู่']) assert.equal(after[t], before[t], t + ' ไม่ต้องเขียนใหม่');
-  assert.deepEqual(Object.keys(sheets).sort(), ['ประวัติการเบิก', 'ประวัติสต็อก', 'รายการในคำขอ', 'รายการเบิก', 'หน่วยงาน', 'หมวดหมู่', 'อุปกรณ์'].sort());
+  assert.deepEqual(Object.keys(sheets).sort(), ['บริษัท', 'ประวัติการเบิก', 'ประวัติสต็อก', 'รายการในคำขอ', 'รายการเบิก', 'หน่วยงาน', 'หมวดหมู่', 'อุปกรณ์'].sort());
   // ลบแผนก: แท็บสั้นลง ต้องไม่มีแถวเก่าค้าง
   assert.equal(post({ action: 'removeMaster', payload: { table: 'departments', name: 'ICU' }, pin: '1234' }).ok, true);
   assert.equal(sheets['หน่วยงาน'].data.length, 22);
@@ -286,6 +349,30 @@ test('Apps Script: saves write only the rows that changed, and the sheet matches
   for (const [t, n] of Object.entries(names)) {
     assert.deepEqual(JSON.parse(JSON.stringify(sheets[n].data)), [full[t].header, ...full[t].rows].map((r) => r.map(String)), n);
   }
+});
+
+test('Apps Script: บริษัท tab, receive lot columns and deleting a slip round-trip through the sheet', () => {
+  const { sheets, ctx } = mockAppsScript();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
+  ctx.setup();
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  assert.equal(post({ action: 'addMaster', payload: { table: 'suppliers', name: 'บริษัท ก จำกัด' }, pin: '1234' }).ok, true);
+  assert.deepEqual(sheets['บริษัท'].data, [['name'], ['บริษัท ก จำกัด']]);
+  assert.equal(post({ action: 'stock', payload: { item_id: 3, type: 'receive', qty: 7, supplier: 'บริษัท ก จำกัด', expiry_date: '2027-03-31', delivery_no: 'IV-1' }, pin: '1234' }).ok, true);
+  const mv = sheets['ประวัติสต็อก'];
+  const h = mv.data[0];
+  const last = mv.data.at(-1);
+  assert.deepEqual([last[h.indexOf('supplier')], last[h.indexOf('expiry_date')], last[h.indexOf('delivery_no')]], ['บริษัท ก จำกัด', '2027-03-31', 'IV-1']);
+  const w = post({ action: 'createRequest', payload: { borrower_name: 'ก', department: 'ICU', items: [{ item_id: 3, qty: 2 }] } });
+  const del = post({ action: 'deleteRequest', payload: { id: w.result, restock: true }, pin: '1234' });
+  assert.equal(del.ok, true, del.error);
+  const st = post({ action: 'load', pin: '1234' }).state;
+  assert.equal(st.requests.length, 0);
+  assert.equal(st.items.find((i) => i.id === 3).available_qty, Q(3) + 7);
+  assert.equal(sheets['ประวัติการเบิก'].data.length, 1, 'แท็บประวัติการเบิกไม่มีแถวค้าง');
+  assert.equal(sheets['รายการเบิก'].data.length, 1);
+  assert.equal(st.suppliers[0].name, 'บริษัท ก จำกัด');
+  assert.equal(post({ action: 'deleteRequest', payload: { id: 1 } }).ok, false, 'ผู้ใช้ทั่วไปลบไม่ได้');
 });
 
 test('Apps Script: public stock loads come from a short cache (no sheet reads, no lock queue) and refresh after a save', () => {
@@ -445,7 +532,7 @@ test('core: sheet tables add readable Thai columns (withdraw only, time to the s
   Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 3 }] }, user);
   Core.run(db, 'createRequest', { ...person, items: [{ item_id: gloves.id, qty: 2 }] }, user);
   const d = Core.sheetData(db);
-  assert.deepEqual(Object.keys(d).sort(), ['categories', 'departments', 'items', 'log', 'movements', 'request_items', 'requests']);
+  assert.deepEqual(Object.keys(d).sort(), ['categories', 'departments', 'items', 'log', 'movements', 'request_items', 'requests', 'suppliers']);
   const col = (t, name) => d[t].header.indexOf(name);
   // แท็บประวัติการเบิก: คอลัมน์อ่านง่ายอยู่หน้า ครบทุกช่องของระบบ (หัวไทยแปลงกลับได้) ล่าสุดอยู่บน
   assert.deepEqual(d.requests.header.slice(0, 7), ['เลขที่', 'วันที่เวลาที่เบิก', 'ผู้เบิก', 'แผนก', 'รายการพัสดุ', 'จำนวนรวม', 'หมายเหตุ']);
@@ -497,10 +584,16 @@ test('Cloudflare build marks preview branches as the test site, the main branch 
   const prev = parse(buildInfo({ WORKERS_CI_BRANCH: 'claude/admiring-clarke-lvp2ic', WORKERS_CI_COMMIT_SHA: '1234567890' }));
   assert.deepEqual([prev.test, prev.branch, prev.commit], [true, 'claude/admiring-clarke-lvp2ic', '1234567']);
   assert.equal(parse(buildInfo({ CF_PAGES_BRANCH: 'fix-x', CF_PAGES_COMMIT_SHA: 'ffffffffff' })).test, true);
-  // ไฟล์ตั้งต้นใน repo = เว็บจริง
-  const ctx = { window: {} };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../docs/build-info.js'), 'utf8'), ctx);
-  assert.equal(ctx.window.BUILD_INFO.test, false);
+  // ไฟล์ตั้งต้นใน repo = เว็บจริง ยกเว้นลิงก์ preview ของ Netlify / Vercel
+  const src = fs.readFileSync(path.join(__dirname, '../docs/build-info.js'), 'utf8');
+  const isTest = (hostname) => { const ctx = { window: {}, location: { hostname } }; vm.runInNewContext(src, ctx); return ctx.window.BUILD_INFO.test; };
+  for (const h of ['pakkred-supply.cocolnwza004.workers.dev', 'parkkredhospitalsupply.netlify.app', 'cocolnwza004.github.io', 'borrow-cocolnwza004s-projects.vercel.app', 'borrow-ten.vercel.app', 'localhost', 'supply.example.go.th']) {
+    assert.equal(isTest(h), false, h + ' = เว็บจริง');
+  }
+  for (const h of ['deploy-preview-30--parkkredhospitalsupply.netlify.app', 'claude-admiring-clarke-lvp2ic--parkkredhospitalsupply.netlify.app',
+    'borrow-git-claude-admiring-clarke-lvp2ic-cocolnwza004s-projects.vercel.app', 'borrow-2b1is6tfx-cocolnwza004s-projects.vercel.app']) {
+    assert.equal(isTest(h), true, h + ' = เว็บทดสอบ');
+  }
 });
 
 test('Apps Script: withdrawing an out-of-stock item writes a negative balance to the sheet; receiving offsets it', () => {

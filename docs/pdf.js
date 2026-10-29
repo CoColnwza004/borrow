@@ -124,7 +124,7 @@ const PdfDoc = (() => {
   const num = (n) => Number(n || 0).toLocaleString('th-TH');
   const monthName = (m) => new Date(m + '-01T00:00:00').toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
 
-  // sum = BorrowCore.monthlySummary(), extra = { deptFull(name), lines(r) -> [{name, qty, unit}] }
+  // sum = BorrowCore.monthlySummary(), extra = { deptFull(name), lines(r) -> [{name, qty, unit}], staff = ชื่อผู้จัดทำรายงาน }
   function reportTemplate(sum, org, extra) {
     const t = sum.totals;
     const empty = (cols) => `<tr><td colspan="${cols}" class="c muted">ไม่มีรายการ</td></tr>`;
@@ -162,7 +162,7 @@ const PdfDoc = (() => {
 
       <div class="pdf-sign pdf-keep">
         <div class="pdf-sign-box"><div>ลงชื่อ .......................................... ผู้จัดทำรายงาน</div>
-          <div>( .......................................... )</div><div>วันที่ ........ / ........ / ........</div></div>
+          <div>( ${extra.staff ? esc(extra.staff) : '..........................................'} )</div><div>วันที่ ........ / ........ / ........</div></div>
         <div class="pdf-sign-box"><div>ลงชื่อ .......................................... หัวหน้างานพัสดุ</div>
           <div>( .......................................... )</div><div>วันที่ ........ / ........ / ........</div></div>
       </div>

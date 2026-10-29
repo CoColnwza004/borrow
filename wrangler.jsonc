@@ -1,7 +1,7 @@
 // Cloudflare Workers (Static Assets): เผยแพร่โฟลเดอร์ docs/ ตรง ๆ ไม่มีโค้ดฝั่งเซิร์ฟเวอร์
 // ตั้ง Build command = node scripts/cf-headers.js (สร้าง docs/_headers ส่วนหัวความปลอดภัย) และ Deploy command = npx wrangler deploy
 {
-  "name": "borrow",
+  "name": "pakkred-supply",
   "compatibility_date": "2026-10-01",
   // ลิงก์ทดสอบแยกของแต่ละ branch (Preview URLs) สำหรับลองการแก้ไขก่อนรวมเข้าเว็บจริง
   "workers_dev": true,

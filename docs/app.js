@@ -67,6 +67,8 @@ const ICON = {
   share: '<svg viewBox="0 0 24 24"><path d="M12 2.6 7.3 7.3l1.4 1.4L11 6.4V15h2V6.4l2.3 2.3 1.4-1.4L12 2.6ZM5 10v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V10h-3v2h1v8H7v-8h1v-2H5Z"/></svg>',
   dots: '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>',
   ext: '<svg viewBox="0 0 24 24"><path d="M14 3h7v7h-2V6.4l-9.3 9.3-1.4-1.4L17.6 5H14V3ZM5 5h6v2H5v12h12v-6h2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/></svg>',
+  cal: '<svg viewBox="0 0 24 24"><path d="M7 2h2v2h6V2h2v2h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V2ZM5 9v10h14V9H5Zm2 2h4v4H7v-4Z"/></svg>',
+  lock: '<svg viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z"/></svg>',
   bell: '<svg viewBox="0 0 24 24"><path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>',
 };
 
@@ -96,8 +98,13 @@ async function remote(action, payload) {
       ? 'Apps Script ไม่มีฟังก์ชัน doPost — วางโค้ด AllInOne.gs ให้ครบทั้งไฟล์ บันทึก แล้ว Deploy ใหม่'
       : 'Apps Script ตอบกลับไม่ใช่ข้อมูลของระบบ — ' + DEPLOY_HINT);
   }
-  if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+  if (!data.ok) {
+    const msg = data.error || 'เกิดข้อผิดพลาด';
+    throw new Error(/ไม่รู้จักคำสั่ง/.test(msg) ? msg + ' — Apps Script ยังเป็นเวอร์ชันเก่า: วาง AllInOne.gs ล่าสุด แล้ว Deploy → Manage deployments → New version' : msg);
+  }
   if (data.sheet) state.sheet = data.sheet; // ลิงก์ Google Sheet ส่งมาเฉพาะคำขอที่มี PIN เจ้าหน้าที่
+  // Apps Script เวอร์ชันเก่า (ก่อนมีแท็บบริษัท) ส่งข้อมูลเจ้าหน้าที่มาโดยไม่มี suppliers
+  if (state.pin && data.state) state.oldServer = !('suppliers' in data.state);
   return data;
 }
 
@@ -290,16 +297,16 @@ function testBanner() {
   const built = BUILD.builtAt ? new Date(BUILD.builtAt).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
   const ver = [BUILD.commit && 'รุ่น ' + BUILD.commit, built && 'อัปเดต ' + built].filter(Boolean).join(' · ');
   return `<div class="banner test-banner"><b>เว็บทดสอบ</b> ${ver ? `<span class="test-ver">${esc(ver)}</span>` : ''}
-    <span>${DEMO ? 'ลองเบิก/ดาวน์โหลด PDF ได้เต็มที่ ข้อมูลเก็บในเบราว์เซอร์นี้เท่านั้น <b>ไม่เข้า Google Sheet จริง</b> · หน้าเจ้าหน้าที่ใช้ PIN 1234'
+    <span>${DEMO ? 'ลองเบิก/ดาวน์โหลด PDF ได้เต็มที่ ข้อมูลเก็บในเบราว์เซอร์นี้เท่านั้น <b>ไม่เข้า Google Sheet จริง</b> · หน้าเจ้าหน้าที่พัสดุใช้ PIN 1234'
       : 'ข้อมูลบันทึกลง <b>Google Sheet สำหรับทดสอบ</b> ไม่ใช่ชีตจริง'}</span></div>`;
 }
 
 function renderMode() {
   if (TEST_SITE && !$('.test-badge')) $('.brand').insertAdjacentHTML('beforeend', '<span class="test-badge">ทดสอบ</span>');
   const btn = $('#btn-admin');
-  btn.textContent = isAdmin() ? 'เจ้าหน้าที่ · ออก' : 'เจ้าหน้าที่';
+  btn.textContent = isAdmin() ? 'เจ้าหน้าที่พัสดุ · ออก' : 'เจ้าหน้าที่พัสดุ';
   btn.classList.toggle('on', isAdmin());
-  btn.title = isAdmin() ? 'ออกจากโหมดเจ้าหน้าที่' : 'เข้าสู่โหมดเจ้าหน้าที่พัสดุ';
+  btn.title = isAdmin() ? 'ออกจากโหมดเจ้าหน้าที่พัสดุ' : 'เข้าสู่โหมดเจ้าหน้าที่พัสดุ';
 }
 
 $('#btn-admin').addEventListener('click', safe(async () => {
@@ -310,7 +317,7 @@ $('#btn-admin').addEventListener('click', safe(async () => {
     renderMode();
     await store.load();
     refresh();
-    toast('ออกจากโหมดเจ้าหน้าที่แล้ว');
+    toast('ออกจากโหมดเจ้าหน้าที่พัสดุแล้ว');
     return;
   }
   pinForm();
@@ -318,39 +325,92 @@ $('#btn-admin').addEventListener('click', safe(async () => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ใส่ PIN → หน้าต่างใส่รหัสหายไป → ป๊อปอัป "กำลังเข้าสู่ระบบ" → "เข้าสู่ระบบสำเร็จ" (ผิด: แจ้งแล้วเปิดช่องใส่รหัสให้ใหม่)
+// ใส่รหัสแบบหน้าจอล็อก iPhone: จุดบอกจำนวนหลัก ปุ่มตัวเลขวงกลม ใส่ครบจำนวนหลัก (PIN_LENGTH) แล้วตรวจเอง
+// ถูก → หน้าใส่รหัสหายไป → ป๊อปอัป "กำลังเข้าสู่ระบบ" → "เข้าสู่ระบบสำเร็จ" · ผิด → เปิดหน้าใส่รหัสใหม่ จุดสั่น + แจ้งว่ารหัสไม่ถูกต้อง
+const PIN_LENGTH = Math.max(1, Math.min(12, Number(CONFIG.PIN_LENGTH) || 4));
+const PIN_KEYS = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ']];
 function pinForm(error = '') {
-  const body = openModal('โหมดเจ้าหน้าที่พัสดุ', `
-    <p class="muted">ใช้สำหรับรับคืนพัสดุ รับเข้าสต็อก ตรวจนับ และจัดการรายชื่อพัสดุ/แผนก</p>
-    <form id="pin-form" class="fields">
-      <label class="field full">รหัส PIN${DEMO ? ' <span class="hint">(โหมดทดลองใช้ 1234)</span>' : ''}
-        <input type="password" name="pin" inputmode="numeric" autocomplete="off" required autofocus></label>
-      ${error ? `<p class="error full" role="alert">${esc(error)}</p>` : ''}
-      <div class="actions full"><button class="btn primary lg block">เข้าสู่ระบบ</button></div>
-    </form>`);
-  if (error) flag($('[name=pin]', body));
-  $('#pin-form', body).addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const pin = e.target.pin.value;
-    if (!pin) { flag(e.target.pin); return; }
-    closeModal();
-    await sleep(motionOK() ? 220 : 0); // รอหน้าต่างใส่รหัสปิดก่อน
-    const hud = loginHud();
-    state.pin = pin;
-    try {
-      // แสดง "กำลังเข้าสู่ระบบ" อย่างน้อยครู่หนึ่ง ไม่ให้กะพริบหายเร็วเกินไป
-      await Promise.all([store.act('checkPin', undefined, { quiet: true }), sleep(700)]);
-    } catch (err) {
-      state.pin = '';
-      await hud.fail(err.message);
-      pinForm(err.message);
-      return;
+  $('dialog.passcode')?.remove();
+  const d = document.createElement('dialog');
+  d.className = 'passcode';
+  d.tabIndex = -1;
+  d.setAttribute('aria-label', 'ใส่รหัสเจ้าหน้าที่พัสดุ');
+  d.innerHTML = `
+    <div class="pc-top">
+      <span class="pc-lock" aria-hidden="true">${ICON.lock}</span>
+      <h2>ใส่รหัสเจ้าหน้าที่พัสดุ</h2>
+      <p class="pc-msg${error ? ' err' : ''}" role="alert">${error ? esc(error) : DEMO ? 'โหมดทดลอง: รหัส 1234' : 'สำหรับรับเข้า ตรวจนับ และจัดการพัสดุ'}</p>
+      <div class="pc-dots${error ? ' shake' : ''}" aria-hidden="true">${'<i></i>'.repeat(PIN_LENGTH)}</div>
+      <span class="vh" aria-live="polite" id="pc-count"></span>
+    </div>
+    <div class="pc-pad">
+      ${PIN_KEYS.map(([n, l]) => `<button type="button" class="pc-key" data-k="${n}" aria-label="${n}"><b>${n}</b><small>${l}</small></button>`).join('')}
+      <span></span>
+      <button type="button" class="pc-key" data-k="0" aria-label="0"><b>0</b><small></small></button>
+      <button type="button" class="pc-txt" data-right>ยกเลิก</button>
+    </div>`;
+  document.body.append(d);
+  let pin = '';
+  let busy = false;
+  const dots = $$('.pc-dots i', d);
+  const right = $('[data-right]', d);
+  const draw = () => {
+    dots.forEach((x, i) => x.classList.toggle('on', i < pin.length));
+    right.textContent = pin ? 'ลบ' : 'ยกเลิก';
+    $('#pc-count', d).textContent = pin ? `ใส่แล้ว ${pin.length} จาก ${PIN_LENGTH} หลัก` : '';
+  };
+  const close = (then) => {
+    if (!d.open) return;
+    const done = () => { d.close(); d.remove(); then?.(); };
+    if (!motionOK()) return done();
+    d.classList.add('closing');
+    setTimeout(done, 220);
+  };
+  const flash = (k) => {
+    const b = $(`[data-k="${k}"]`, d);
+    if (!b) return;
+    b.classList.add('press');
+    setTimeout(() => b.classList.remove('press'), 140);
+  };
+  const press = (k) => {
+    if (busy || pin.length >= PIN_LENGTH) return;
+    pin += k;
+    draw();
+    if (pin.length === PIN_LENGTH) {
+      busy = true;
+      // ให้เห็นจุดสุดท้ายเต็มก่อนหน้าใส่รหัสหายไป
+      setTimeout(() => close(() => login(pin)), motionOK() ? 160 : 0);
     }
-    sessionStorage.setItem('pin', state.pin);
-    renderMode();
-    route();
-    hud.success();
+  };
+  const back = () => { if (busy) return; if (pin) { pin = pin.slice(0, -1); draw(); } else close(); };
+  $$('.pc-key', d).forEach((b) => b.addEventListener('click', () => press(b.dataset.k)));
+  right.addEventListener('click', back);
+  d.addEventListener('keydown', (e) => {
+    if (/^\d$/.test(e.key)) { e.preventDefault(); flash(e.key); press(e.key); } else if (e.key === 'Backspace') { e.preventDefault(); back(); }
   });
+  d.addEventListener('cancel', (e) => { e.preventDefault(); if (!busy) close(); });
+  draw();
+  d.showModal();
+  d.focus();
+  if (error && motionOK()) navigator.vibrate?.([70, 50, 70]);
+}
+
+async function login(pin) {
+  const hud = loginHud();
+  state.pin = pin;
+  try {
+    // แสดง "กำลังเข้าสู่ระบบ" อย่างน้อยครู่หนึ่ง ไม่ให้กะพริบหายเร็วเกินไป
+    await Promise.all([store.act('checkPin', undefined, { quiet: true }), sleep(700)]);
+  } catch (err) {
+    state.pin = '';
+    await hud.fail(/PIN/.test(err.message) ? 'รหัสไม่ถูกต้อง ลองอีกครั้ง' : err.message);
+    pinForm(/PIN/.test(err.message) ? 'รหัสไม่ถูกต้อง ลองอีกครั้ง' : err.message);
+    return;
+  }
+  sessionStorage.setItem('pin', state.pin);
+  renderMode();
+  route();
+  hud.success();
 }
 
 // ป๊อปอัปกลางจอ: "กำลังเข้าสู่ระบบ" → "เข้าสู่ระบบสำเร็จ" แสดง 5 วินาที (แตะหรือกด Esc เพื่อปิดก่อนได้)
@@ -390,7 +450,7 @@ function loginHud() {
         <h3>เข้าสู่ระบบสำเร็จ</h3>
         <p>ยินดีต้อนรับ เจ้าหน้าที่พัสดุ</p>
         <div class="hud-tags"><span>พัสดุคงเหลือ</span><span>ประวัติเบิก</span><span>ภาพรวม</span><span>Google Sheet</span><span>ตั้งค่า</span></div>
-        <p class="hud-hint">${$('#nav-bar').classList.contains('compact') ? 'เปิดเมนูเจ้าหน้าที่ได้ที่ปุ่ม ☰ มุมขวาบน' : 'เมนูเจ้าหน้าที่อยู่ที่แถบด้านบน'}</p>
+        <p class="hud-hint">${$('#nav-bar').classList.contains('compact') ? 'เปิดเมนูเจ้าหน้าที่พัสดุได้ที่ปุ่ม ☰ มุมขวาบน' : 'เมนูเจ้าหน้าที่พัสดุอยู่ที่แถบด้านบน'}</p>
         <span class="hud-bar" aria-hidden="true"><i></i></span>`);
       timer = setTimeout(close, 5000);
     },
@@ -490,7 +550,7 @@ $('#menu-toggle').addEventListener('click', () => setMenu(!$('#nav-bar').classLi
 $('#nav-links').addEventListener('click', (e) => { if (e.target.closest('a')) setMenu(false); });
 
 // ปุ่ม "สรุปรายเดือน" ในหน้าภาพรวม / ประวัติ
-document.addEventListener('click', (e) => { if (e.target.closest('[data-monthly]') && isAdmin()) showMonthlyReport(); });
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-monthly]'); if (b && isAdmin()) showMonthlyReport(b.dataset.month); });
 
 // องค์ประกอบที่ค่อย ๆ ลอยขึ้นตามลำดับการอ่าน เมื่อเปลี่ยนหน้า (ไม่เล่นซ้ำตอนซิงก์ข้อมูล/พิมพ์ค้นหา)
 const ENTER = '.page > .banner, .hero > *, .choice, .stat-strip, .page > .page-head, #rf > .page-head, .page > .page-head-row, .page > .toolbar, #rf > .group, .item-card, .rows > li, .stats > .stat, .grid-2 > .card, .page > section.card';
@@ -941,7 +1001,7 @@ function renderRequestForm(page) {
       } catch (err) {
         // Apps Script เวอร์ชันเก่ายังไม่ให้เบิกของที่หมด (ยอดติดลบ)
         if (/คงเหลือไม่พอ/.test(err.message)) {
-          throw new Error(err.message + ' — ระบบใน Google Sheet ยังเป็นเวอร์ชันเก่า ให้เจ้าหน้าที่อัปเดต Apps Script (Deploy → New version) แล้วจะเบิกของที่หมดได้');
+          throw new Error(err.message + ' — ระบบใน Google Sheet ยังเป็นเวอร์ชันเก่า ให้เจ้าหน้าที่พัสดุอัปเดต Apps Script (Deploy → New version) แล้วจะเบิกของที่หมดได้');
         }
         throw err;
       }
@@ -1054,7 +1114,7 @@ function showSuccess(id) {
   PdfDoc.build(r, CONFIG.HOSPITAL_NAME, CONFIG.STAFF_NAME).then((b) => {
     blob = b;
     $('#pdf-q', body).innerHTML = `อนุญาตให้บันทึก <b>${esc(fileName)}</b> ลงในเครื่องนี้หรือไม่?`;
-    $('#pdf-sub', body).textContent = 'ใช้พิมพ์และลงลายมือชื่อผู้เบิกและเจ้าหน้าที่พัสดุ · ควรเก็บไฟล์ไว้ (เจ้าหน้าที่ออกให้ใหม่ได้)';
+    $('#pdf-sub', body).textContent = 'ใช้พิมพ์และลงลายมือชื่อผู้เบิกและเจ้าหน้าที่พัสดุ · ควรเก็บไฟล์ไว้ (เจ้าหน้าที่พัสดุออกให้ใหม่ได้)';
     $('#pdf-save', body).disabled = false;
     $('.permission', body).classList.add('ready');
     $('#pdf-save', body).classList.add('ready');
@@ -1250,7 +1310,7 @@ function showItem(id) {
       <thead><tr><th>วันเวลา</th><th>ประเภท</th><th class="num">จำนวน</th><th class="num">คงเหลือ</th><th>อ้างอิง</th></tr></thead>
       <tbody>${moves.map((m) => `<tr><td>${fmtDateTime(m.created_at)}</td><td>${movePill(m)}</td>
         <td class="num">${m.qty > 0 ? '+' : ''}${fmtNum(m.qty)}</td><td class="num">${fmtNum(m.available_after)}</td>
-        <td>${esc(m.request_no)} ${m.note ? `<div class="muted small">${esc(m.note)}</div>` : ''}</td></tr>`).join('') ||
+        <td>${esc(m.request_no)} ${m.note ? `<div class="muted small">${esc(m.note)}</div>` : ''}${lotInfo(m)}</td></tr>`).join('') ||
         '<tr><td colspan="5" class="empty">ไม่มี</td></tr>'}</tbody>
     </table></div>` : ''}`, { wide: isAdmin() });
   $$('[data-close]', body).forEach((a) => a.addEventListener('click', closeModal));
@@ -1261,25 +1321,115 @@ function showItem(id) {
   }
 }
 
+// ข้อมูลล็อตที่รับเข้า: บริษัท (เลือกจากรายการ หรือเพิ่มใหม่ลง Google Sheet ได้ทันที) · วันหมดอายุ (เลือกจากปฏิทินเท่านั้น) · เลขใบส่งของ
+const ADD_SUPPLIER = '__add__';
+function supplierOptions(selected) {
+  return '<option value="">- ไม่ระบุ -</option>' +
+    (state.db.suppliers || []).map((s) => `<option ${s.name === selected ? 'selected' : ''}>${esc(s.name)}</option>`).join('') +
+    `<option value="${ADD_SUPPLIER}">+ เพิ่มบริษัทใหม่…</option>`;
+}
+function lotFields() {
+  return `
+    ${oldServerNote()}
+    <label class="field full">บริษัท / ผู้จำหน่าย<select name="supplier">${supplierOptions(lsGet('last-supplier'))}</select></label>
+    <div class="field full add-supplier" hidden>
+      <span>ชื่อบริษัทใหม่ <span class="hint">(บันทึกลงรายการบริษัทใน Google Sheet ด้วย)</span></span>
+      <div class="inline-add">
+        <input id="new-supplier" placeholder="เช่น บริษัท เอ บี ซี จำกัด" autocomplete="off">
+        <button type="button" class="btn primary" id="add-supplier">เพิ่ม</button>
+        <button type="button" class="btn" id="cancel-supplier">ยกเลิก</button>
+      </div>
+    </div>
+    <label class="field">วันหมดอายุ <span class="hint">(แตะเพื่อเลือกวัน)</span>
+      <span class="date-wrap"><input name="expiry_date" type="date" class="date-pick" min="${today()}"><button type="button" class="link date-clear" hidden>ล้าง</button></span></label>
+    <label class="field">เลขใบส่งของ<input name="delivery_no" placeholder="เช่น IV-2569/0012" autocomplete="off"></label>`;
+}
+function bindLotFields(form) {
+  const sel = form.supplier;
+  const box = $('.add-supplier', form);
+  const inp = $('#new-supplier', form);
+  let prev = sel.value;
+  sel.addEventListener('change', () => {
+    if (sel.value === ADD_SUPPLIER) { box.hidden = false; inp.focus(); return; }
+    prev = sel.value;
+    box.hidden = true;
+  });
+  $('#cancel-supplier', form).addEventListener('click', () => { box.hidden = true; inp.value = ''; sel.value = prev; });
+  const add = safe(async () => {
+    const name = inp.value.trim();
+    if (!name) { inp.focus(); throw new Error('กรุณาพิมพ์ชื่อบริษัท'); }
+    if (state.oldServer) throw new Error(OLD_SERVER_MSG);
+    if (!(state.db.suppliers || []).some((s) => s.name === name)) await store.act('addMaster', { table: 'suppliers', name }, { quiet: true });
+    sel.innerHTML = supplierOptions(name);
+    prev = name;
+    box.hidden = true;
+    inp.value = '';
+    toast('เพิ่มบริษัท ' + name + ' แล้ว');
+  });
+  $('#add-supplier', form).addEventListener('click', add);
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+  // วันหมดอายุ: เปิดปฏิทินเมื่อแตะ พิมพ์เองไม่ได้ (Backspace / Delete = ล้างค่า)
+  const d = form.expiry_date;
+  const clear = $('.date-clear', form);
+  const sync = () => { clear.hidden = !d.value; };
+  const open = () => { try { d.showPicker?.(); } catch { /* เบราว์เซอร์เก่า: ใช้ปฏิทินของช่องวันที่ตามปกติ */ } };
+  d.addEventListener('click', open);
+  d.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' || e.key === 'Escape') return;
+    e.preventDefault();
+    if (e.key === 'Backspace' || e.key === 'Delete') { d.value = ''; sync(); } else if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') open();
+  });
+  d.addEventListener('paste', (e) => e.preventDefault());
+  d.addEventListener('change', sync);
+  clear.addEventListener('click', () => { d.value = ''; sync(); });
+}
+// ค่าล็อตจากฟอร์ม (ไม่ส่งตัวเลือก "+ เพิ่มบริษัทใหม่")
+function lotData(form) {
+  const supplier = form.supplier.value === ADD_SUPPLIER ? '' : form.supplier.value;
+  if (supplier) lsSet('last-supplier', supplier);
+  return { supplier, expiry_date: form.expiry_date.value, delivery_no: form.delivery_no.value.trim() };
+}
+// บริษัท · เลขใบส่งของ · วันหมดอายุ ของรายการรับเข้า (แสดงใต้ประวัติสต็อก)
+function lotInfo(m) {
+  const parts = [m.supplier && esc(m.supplier), m.delivery_no && 'ใบส่งของ ' + esc(m.delivery_no), m.expiry_date && 'หมดอายุ ' + fmtDate(m.expiry_date)].filter(Boolean);
+  return parts.length ? `<div class="muted small lot">${parts.join(' · ')}</div>` : '';
+}
+// Apps Script ที่ยังไม่อัปเดต (ไม่มีแท็บบริษัท) จะไม่บันทึกข้อมูลบริษัท/วันหมดอายุ/เลขใบส่งของ
+const OLD_SERVER_MSG = 'Apps Script ยังเป็นเวอร์ชันเก่า: วาง AllInOne.gs ล่าสุด แล้ว Deploy → Manage deployments → New version ก่อน จึงจะบันทึกบริษัท วันหมดอายุ และเลขใบส่งของได้';
+const oldServerNote = () => (state.oldServer ? `<p class="banner full">${OLD_SERVER_MSG}</p>` : '');
+
 function itemForm(item) {
+  // พัสดุใหม่: ระบบตั้งรหัสถัดไปให้เอง (เช่น NSO-302) เจ้าหน้าที่ไม่ต้องกรอก
+  const nextCode = BorrowCore.nextItemCode(state.db.items);
   const body = openModal(item ? 'แก้ไขข้อมูลพัสดุ' : 'เพิ่มพัสดุใหม่', `
     <form id="item-form" class="fields">
-      <label class="field">รหัสพัสดุ <span class="req">*</span><input name="code" required value="${esc(item?.code)}"></label>
+      ${item
+        ? `<label class="field">รหัสพัสดุ <span class="req">*</span><input name="code" required value="${esc(item.code)}"></label>`
+        : `<label class="field">รหัสพัสดุ <span class="hint">(ระบบตั้งให้อัตโนมัติ)</span><input value="${esc(nextCode)}" readonly class="auto-code" tabindex="-1" aria-readonly="true"></label>`}
       <label class="field">หน่วยนับ<input name="unit" value="${esc(item?.unit || 'ชิ้น')}"></label>
       <label class="field full">ชื่อพัสดุ <span class="req">*</span><input name="name" required value="${esc(item?.name)}"></label>
       <label class="field full">หมวดหมู่<select name="category">${options(state.db.categories, item?.category, '- ไม่ระบุ -')}</select></label>
       <label class="field">จุดสั่งซื้อขั้นต่ำ <span class="hint">(เตือนเมื่อคงเหลือ ≤)</span><input name="min_qty" type="number" min="0" value="${item?.min_qty ?? 0}"></label>
       ${item ? '' : '<label class="field">จำนวนเริ่มต้น<input name="initial_qty" type="number" min="0" value="0"></label>'}
       <label class="field ${item ? '' : 'full'}">สถานที่เก็บ<input name="location" value="${esc(item?.location)}"></label>
-      ${item ? `<label class="check full"><input type="checkbox" name="active" ${item.active ? 'checked' : ''}> เปิดใช้งาน (ให้เบิกได้)</label>` : ''}
+      ${item ? `<label class="check full"><input type="checkbox" name="active" ${item.active ? 'checked' : ''}> เปิดใช้งาน (ให้เบิกได้)</label>`
+        : `<p class="form-sec full">รับเข้าครั้งแรก <span class="hint">(ใส่เมื่อมีจำนวนเริ่มต้น)</span></p>${lotFields()}`}
       <div class="actions full"><button class="btn primary lg">บันทึก</button></div>
     </form>`);
-  $('#item-form', body).addEventListener('submit', safe(async (e) => {
+  const form = $('#item-form', body);
+  if (!item) bindLotFields(form);
+  form.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
     const data = formData(e.target);
     if (item) { data.id = item.id; data.active = e.target.active.checked; }
+    else {
+      Object.assign(data, lotData(form));
+      // Apps Script เวอร์ชันเก่ายังต้องการรหัส: ส่งรหัสที่คำนวณไว้ให้ (เวอร์ชันใหม่ตั้งให้เองที่เซิร์ฟเวอร์ ไม่ชนกันแม้เพิ่มพร้อมกัน)
+      if (state.oldServer) data.code = nextCode;
+    }
+    delete data[ADD_SUPPLIER];
     const id = await store.act('saveItem', data);
-    toast('บันทึกเรียบร้อย');
+    toast(item ? 'บันทึกเรียบร้อย' : `เพิ่มพัสดุ ${itemById(id)?.code || ''} เรียบร้อย`);
     refresh();
     showItem(id);
   }));
@@ -1294,12 +1444,16 @@ function stockForm(item, type) {
   const body = openModal(`${titles[type]} · ${item.name}`, `
     <form id="stock-form" class="fields">
       ${field}
-      <label class="field full">หมายเหตุ / เลขที่เอกสาร<input name="note"></label>
+      ${type === 'receive' ? lotFields() : ''}
+      <label class="field full">หมายเหตุ${type === 'receive' ? '' : ' / เลขที่เอกสาร'}<input name="note"></label>
       <div class="actions full"><button class="btn primary lg">บันทึก</button></div>
     </form>`);
-  $('#stock-form', body).addEventListener('submit', safe(async (e) => {
+  const form = $('#stock-form', body);
+  if (type === 'receive') bindLotFields(form);
+  form.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
-    await store.act('stock', { item_id: item.id, type, ...formData(e.target) });
+    const data = { item_id: item.id, type, ...formData(e.target), ...(type === 'receive' ? lotData(form) : {}) };
+    await store.act('stock', data);
     toast('ปรับปรุงสต็อกเรียบร้อย');
     refresh();
     showItem(item.id);
@@ -1307,29 +1461,43 @@ function stockForm(item, type) {
 }
 
 // ===================== Requests (history) =====================
+// ช่วงเวลา: ทุกเดือน / วันนี้ / เลือกเดือน (YYYY-MM)
 function renderRequests(page) {
-  let tab = hashParams().get('tab') || '';
-  const tabs = [['', 'ทั้งหมด'], ['today', 'วันนี้'], ['month', 'เดือนนี้']];
+  const params = hashParams();
+  const thisMonth = today().slice(0, 7);
+  let when = params.get('m') || (params.get('tab') === 'today' ? 'today' : params.get('tab') === 'month' ? thisMonth : '');
+  const counts = {};
+  state.db.requests.forEach((r) => { const m = r.created_at.slice(0, 7); counts[m] = (counts[m] || 0) + 1; });
+  const months = [...new Set([thisMonth, ...Object.keys(counts), ...(/^\d{4}-\d{2}$/.test(when) ? [when] : [])])].sort().reverse();
   page.insertAdjacentHTML('beforeend', `
-    <div class="page-head"><h1>ประวัติเบิก</h1><p class="lead">ดูใบเบิกย้อนหลังและดาวน์โหลดใบเบิกเป็น PDF</p></div>
+    <div class="page-head"><h1>ประวัติเบิก</h1><p class="lead">ดูใบเบิกย้อนหลัง เลือกเดือน ดาวน์โหลดใบเบิกเป็น PDF หรือลบใบที่บันทึกผิด</p></div>
     <div class="toolbar">
-      <div class="segmented" id="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}</div>
+      <label class="month-pick">${ICON.cal}<select id="r-month" aria-label="เลือกเดือน">
+        <option value="">ทุกเดือน</option><option value="today">วันนี้</option>
+        ${months.map((m) => `<option value="${m}">${esc(PdfDoc.monthName(m))} (${fmtNum(counts[m] || 0)} ใบ)</option>`).join('')}
+      </select></label>
       <div class="search">${ICON.search}<input type="search" id="r-q" placeholder="ค้นหาเลขที่ ชื่อ แผนก หรือพัสดุ"></div>
       <button class="btn" id="r-export">ส่งออก CSV</button>
-      <button class="btn primary" data-monthly>${ICON.doc} สรุปรายเดือน (PDF)</button>
+      <button class="btn primary" data-monthly id="r-monthly">${ICON.doc} สรุปรายเดือน (PDF)</button>
     </div>
+    <p class="muted small" id="r-sum"></p>
     <section class="card"><ul class="rows" id="req-body"></ul></section>`);
+  $('#r-month').value = when;
 
-  const match = (r) => !tab || r.created_at.startsWith(tab === 'today' ? today() : today().slice(0, 7));
+  const match = (r) => !when || r.created_at.startsWith(when === 'today' ? today() : when);
   const filtered = () => {
     const q = $('#r-q').value.trim().toLowerCase();
     return requestsView().filter((r) => match(r) &&
       (!q || [r.request_no, r.borrower_name, r.department, r.item_summary].some((s) => s.toLowerCase().includes(q))));
   };
   const draw = () => {
-    $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-    history.replaceState(null, '', `#/requests${tab ? '?tab=' + tab : ''}`);
-    $('#req-body').innerHTML = filtered().map((r) => `
+    history.replaceState(null, '', `#/requests${when === 'today' ? '?tab=today' : when ? '?m=' + when : ''}`);
+    // สรุปรายเดือนเปิดที่เดือนที่เลือกไว้
+    $('#r-monthly').dataset.month = /^\d{4}-\d{2}$/.test(when) ? when : when === 'today' ? thisMonth : '';
+    const rows = filtered();
+    const qty = rows.reduce((s, r) => s + r.items.reduce((n, l) => n + l.qty, 0), 0);
+    $('#r-sum').textContent = `${fmtNum(rows.length)} ใบ · ${fmtNum(qty)} หน่วย`;
+    $('#req-body').innerHTML = rows.map((r) => `
       <li><div class="row" data-request="${r.id}">
         <span class="pick-icon">${ICON.withdraw}</span>
         <div class="row-body">
@@ -1338,12 +1506,12 @@ function renderRequests(page) {
         </div>
         <div class="row-end"><span>${fmtDateTime(r.created_at)}</span></div>
         <span class="chev">${ICON.chev}</span>
-      </div></li>`).join('') || '<li class="empty">ไม่พบรายการ</li>';
+      </div></li>`).join('') || `<li class="empty">${when ? 'ไม่มีใบเบิกในช่วงเวลานี้' : 'ไม่พบรายการ'}</li>`;
     bindRowClicks($('#req-body'));
   };
-  $$('#tabs button').forEach((b) => b.addEventListener('click', () => { tab = b.dataset.tab; draw(); }));
+  $('#r-month').addEventListener('change', (e) => { when = e.target.value; draw(); });
   $('#r-q').addEventListener('input', draw);
-  $('#r-export').addEventListener('click', () => downloadCsv('requests',
+  $('#r-export').addEventListener('click', () => downloadCsv('requests' + (when ? '-' + when : ''),
     ['เลขที่', 'วันเวลาที่เบิก', 'ผู้เบิก', 'แผนก', 'หมายเหตุ', 'รหัสพัสดุ', 'พัสดุ', 'จำนวน', 'หน่วย'],
     filtered().flatMap((r) => r.items.map((l) => [r.request_no, r.created_at, r.borrower_name, r.department, r.note, l.code, l.name, l.qty, l.unit]))));
   draw();
@@ -1369,17 +1537,71 @@ function showRequest(id) {
       </tr>`).join('')}</tbody>
     </table></div>
     <div class="actions">
+      ${isAdmin() ? `<button class="btn danger-soft" id="rq-delete">${IC.trash} ลบใบเบิก</button>` : ''}
+      <span class="spacer"></span>
       <button class="btn primary" id="rq-pdf">${ICON.doc} ดาวน์โหลด PDF</button>
     </div>`);
   $('#rq-pdf', body).addEventListener('click', safe(() => downloadPdf(r, $('#rq-pdf', body))), { once: true });
+  $('#rq-delete', body)?.addEventListener('click', () => confirmDeleteRequest(r));
+}
+
+// ป๊อปอัปยืนยันก่อนลบใบเบิก: เลือกได้ว่าจะคืนจำนวนพัสดุเข้าสต็อกหรือไม่
+function confirmDeleteRequest(r) {
+  const qty = r.items.reduce((n, l) => n + l.qty, 0);
+  confirmBox({
+    title: `ลบใบเบิก ${r.request_no} ใช่ไหม?`,
+    html: `<p>${esc(r.borrower_name)} · ${esc(r.department)} · ${fmtDateTime(r.created_at)}<br>${fmtNum(r.items.length)} รายการ รวม ${fmtNum(qty)} หน่วย</p>
+      <label class="check confirm-check"><input type="checkbox" name="restock" checked> คืนจำนวนพัสดุในใบนี้เข้าสต็อก</label>
+      <p class="muted small">ลบแล้วย้อนกลับไม่ได้ · เลขที่ ${esc(r.request_no)} จะไม่ถูกนำมาใช้ซ้ำ</p>`,
+    ok: 'ลบใบเบิก',
+    onOk: async (d) => {
+      const restock = $('[name=restock]', d).checked;
+      if (state.oldServer) throw new Error(OLD_SERVER_MSG.replace('จึงจะบันทึกบริษัท วันหมดอายุ และเลขใบส่งของได้', 'จึงจะลบใบเบิกได้'));
+      await store.act('deleteRequest', { id: r.id, restock });
+      closeModal();
+      toast(`ลบใบเบิก ${r.request_no} แล้ว${restock ? ' และคืนพัสดุเข้าสต็อก' : ''}`);
+      refresh();
+    },
+  });
+}
+
+// ป๊อปอัปยืนยันกลางจอ (ปุ่มยืนยันสีแดง) onOk ทำงานเสร็จจึงปิด ถ้า error แสดงข้อความแล้วค้างไว้ให้ลองใหม่
+function confirmBox({ title, html = '', ok = 'ยืนยัน', onOk }) {
+  $('dialog.ask')?.remove();
+  const d = document.createElement('dialog');
+  d.className = 'ask confirm';
+  d.setAttribute('aria-labelledby', 'confirm-t');
+  d.innerHTML = `
+    <span class="ask-ic danger" aria-hidden="true">${IC.trash}</span>
+    <h3 id="confirm-t">${esc(title)}</h3>
+    ${html}
+    <div class="ask-actions">
+      <button type="button" class="btn lg" data-c="no">ยกเลิก</button>
+      <button type="button" class="btn danger lg" data-c="ok">${esc(ok)}</button>
+    </div>`;
+  document.body.append(d);
+  const close = () => {
+    if (!motionOK()) { d.close(); d.remove(); return; }
+    d.classList.add('closing');
+    setTimeout(() => { d.close(); d.remove(); }, 180);
+  };
+  $('[data-c="no"]', d).addEventListener('click', close);
+  d.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+  const okBtn = $('[data-c="ok"]', d);
+  okBtn.addEventListener('click', async () => {
+    okBtn.disabled = true;
+    try { await onOk(d); close(); } catch (e) { toast(e.message, true); okBtn.disabled = false; }
+  });
+  d.showModal();
+  $('[data-c="no"]', d).focus();
 }
 
 // ===================== สรุปรายเดือน (เจ้าหน้าที่) =====================
-function showMonthlyReport() {
-  const months = [...new Set([today().slice(0, 7), ...state.db.requests.map((r) => r.created_at.slice(0, 7))])].filter(Boolean).sort().reverse();
+function showMonthlyReport(pick) {
+  const months = [...new Set([today().slice(0, 7), ...(pick ? [pick] : []), ...state.db.requests.map((r) => r.created_at.slice(0, 7))])].filter(Boolean).sort().reverse();
   const body = openModal('สรุปรายเดือน (PDF)', `
     <label class="field">เลือกเดือน
-      <select id="mr-month">${months.map((m) => `<option value="${m}">${esc(PdfDoc.monthName(m))}</option>`).join('')}</select></label>
+      <select id="mr-month">${months.map((m) => `<option value="${m}" ${m === pick ? 'selected' : ''}>${esc(PdfDoc.monthName(m))}</option>`).join('')}</select></label>
     <div id="mr-preview"></div>
     <div class="actions"><button class="btn primary lg" id="mr-pdf">${ICON.doc} สร้าง PDF</button></div>`);
   let sum;
@@ -1411,6 +1633,7 @@ function showMonthlyReport() {
     try {
       const blob = await PdfDoc.buildReport(sum, CONFIG.HOSPITAL_NAME, {
         generatedAt: nowStamp(),
+        staff: CONFIG.STAFF_NAME,
         deptFull,
         lines: (r) => requestView(r).items,
       });
@@ -1517,13 +1740,13 @@ function renderMovements(page) {
       return `<tr><td>${fmtDateTime(m.created_at)}</td><td>${esc(i?.name)}<div class="muted small">${esc(i?.code)}</div></td>
         <td>${movePill(m)}</td><td class="num">${m.qty > 0 ? '+' : ''}${fmtNum(m.qty)}</td>
         <td class="num">${fmtNum(m.available_after)}</td>
-        <td>${esc(m.request_no)} ${m.note ? `<div class="muted small">${esc(m.note)}</div>` : ''}</td></tr>`;
+        <td>${esc(m.request_no)} ${m.note ? `<div class="muted small">${esc(m.note)}</div>` : ''}${lotInfo(m)}</td></tr>`;
     }).join('') || '<tr><td colspan="6" class="empty">ไม่พบรายการ</td></tr>';
   };
   ['#m-item', '#m-type', '#m-from', '#m-to'].forEach((s) => $(s).addEventListener('change', draw));
   $('#m-export').addEventListener('click', () => downloadCsv('stock-movements',
-    ['วันเวลา', 'รหัส', 'พัสดุ', 'ประเภท', 'จำนวน', 'คงเหลือหลังทำรายการ', 'เลขที่เอกสาร', 'หมายเหตุ'],
-    filtered().map((m) => [m.created_at, itemById(m.item_id)?.code, itemById(m.item_id)?.name, MOVE[m.type] || m.type, m.qty, m.available_after, m.request_no, m.note])));
+    ['วันเวลา', 'รหัส', 'พัสดุ', 'ประเภท', 'จำนวน', 'คงเหลือหลังทำรายการ', 'เลขที่เอกสาร', 'หมายเหตุ', 'บริษัท', 'วันหมดอายุ', 'เลขใบส่งของ'],
+    filtered().map((m) => [m.created_at, itemById(m.item_id)?.code, itemById(m.item_id)?.name, MOVE[m.type] || m.type, m.qty, m.available_after, m.request_no, m.note, m.supplier, m.expiry_date, m.delivery_no])));
   draw();
 }
 
@@ -1534,7 +1757,7 @@ function renderSettings(page) {
     <section class="card">
       <div class="card-head"><h3>${title}</h3></div>
       <form class="toolbar" data-add="${table}" style="padding:4px 24px 12px">
-        <input name="name" placeholder="${isDept(table) ? 'ชื่อย่อ เช่น ICU' : 'เพิ่มใหม่...'}" required style="flex:1;min-width:120px">
+        <input name="name" placeholder="${isDept(table) ? 'ชื่อย่อ เช่น ICU' : table === 'suppliers' ? 'เช่น บริษัท เอ บี ซี จำกัด' : 'เพิ่มใหม่...'}" required style="flex:1;min-width:120px">
         ${isDept(table) ? '<input name="full_name" placeholder="ชื่อเต็ม (ถ้ามี)" style="flex:2;min-width:160px">' : ''}
         <button class="btn primary">เพิ่ม</button></form>
       <div class="table-wrap"><table><tbody>${state.db[table].map((x) => `<tr><td>${esc(x.name)}${x.full_name ? `<div class="muted small">${esc(x.full_name)}</div>` : ''}</td>
@@ -1544,6 +1767,8 @@ function renderSettings(page) {
   page.insertAdjacentHTML('beforeend', `
     <div class="page-head"><h1>ตั้งค่า</h1><p class="lead">รายชื่อแผนกจะแสดงในฟอร์มเบิก</p></div>
     <div class="grid-2">${card('departments', 'แผนก')}${card('categories', 'หมวดหมู่พัสดุ')}</div>
+    ${oldServerNote()}
+    ${card('suppliers', 'บริษัท / ผู้จำหน่าย (เลือกตอนรับเข้าพัสดุ)')}
     ${DEMO ? `<section class="card card-pad" style="display:flex;flex-direction:column;gap:12px;align-items:flex-start"><h3>โหมดทดลอง</h3>
       <p class="muted">ล้างข้อมูลที่ทดลองไว้ในเบราว์เซอร์นี้ แล้วกลับไปใช้ข้อมูลตัวอย่าง</p>
       <button class="btn danger" id="reset-demo">ล้างข้อมูลทดลอง</button></section>`
@@ -1552,17 +1777,25 @@ function renderSettings(page) {
 
   $$('[data-add]').forEach((f) => f.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
+    if (f.dataset.add === 'suppliers' && state.oldServer) throw new Error(OLD_SERVER_MSG);
     await store.act('addMaster', { table: f.dataset.add, name: f.name.value, full_name: f.full_name?.value });
     toast('เพิ่มเรียบร้อย');
     refresh();
   })));
-  for (const table of ['departments', 'categories']) {
-    $$(`[data-remove-${table}]`).forEach((b) => b.addEventListener('click', safe(async () => {
-      if (!confirm('ยืนยันการลบ?')) return;
-      await store.act('removeMaster', { table, name: b.getAttribute(`data-remove-${table}`) });
-      toast('ลบเรียบร้อย');
-      refresh();
-    })));
+  for (const table of ['departments', 'categories', 'suppliers']) {
+    $$(`[data-remove-${table}]`).forEach((b) => b.addEventListener('click', () => {
+      const name = b.getAttribute(`data-remove-${table}`);
+      confirmBox({
+        title: `ลบ "${name}" ใช่ไหม?`,
+        html: '<p class="muted small">ข้อมูลเดิมที่เคยบันทึกชื่อนี้ไว้ยังอยู่ครบ</p>',
+        ok: 'ลบ',
+        onOk: async () => {
+          await store.act('removeMaster', { table, name });
+          toast('ลบเรียบร้อย');
+          refresh();
+        },
+      });
+    }));
   }
   $('#reset-demo')?.addEventListener('click', () => {
     if (!confirm('ล้างข้อมูลทดลองทั้งหมด?')) return;
@@ -1607,7 +1840,7 @@ const SAVE_GUIDE = {
     ],
     tips: [
       'ถ้าเปิดเว็บจากลิงก์ใน <b>LINE</b> ให้แตะ <span class="kbd icon">' + ICON.dots + '</span> หรือ <span class="kbd">⋯</span> มุมบน → <b>เปิดใน Safari</b> ก่อน ปุ่มบันทึกจะทำงานได้ถูกต้อง',
-      'ส่งไฟล์ให้หัวหน้าหรือเจ้าหน้าที่ทาง LINE ได้: ในหน้าต่างแชร์แตะไอคอน <b>LINE</b> แล้วเลือกห้องแชต',
+      'ส่งไฟล์ให้หัวหน้าหรือเจ้าหน้าที่พัสดุทาง LINE ได้: ในหน้าต่างแชร์แตะไอคอน <b>LINE</b> แล้วเลือกห้องแชต',
     ],
   },
   android: {
@@ -1628,7 +1861,7 @@ const SAVE_GUIDE = {
     ],
     tips: [
       'ถ้าเปิดเว็บจากลิงก์ใน <b>LINE</b> ให้แตะ <span class="kbd icon">' + ICON.dots + '</span> มุมบน → <b>เปิดในเบราว์เซอร์อื่น / Chrome</b> ก่อน จะดาวน์โหลดไฟล์ได้',
-      'ส่งไฟล์ให้หัวหน้าหรือเจ้าหน้าที่: เปิดไฟล์ → แชร์ → LINE',
+      'ส่งไฟล์ให้หัวหน้าหรือเจ้าหน้าที่พัสดุ: เปิดไฟล์ → แชร์ → LINE',
     ],
   },
   pc: {
@@ -1700,7 +1933,7 @@ function renderHelp(page) {
     </section>
     <div class="help-end">
       <a class="btn primary lg" href="#/request">เริ่มเบิกพัสดุ</a>
-      <p class="muted small">ลืมบันทึกไฟล์หรือไฟล์หาย แจ้งเจ้าหน้าที่พัสดุพร้อมเลขที่ใบเบิก เจ้าหน้าที่ดาวน์โหลดใบเบิกให้ใหม่ได้จากหน้าประวัติเบิก</p>
+      <p class="muted small">ลืมบันทึกไฟล์หรือไฟล์หาย แจ้งเจ้าหน้าที่พัสดุพร้อมเลขที่ใบเบิก เจ้าหน้าที่พัสดุดาวน์โหลดใบเบิกให้ใหม่ได้จากหน้าประวัติเบิก</p>
     </div>`);
   const drawDev = () => {
     const g = SAVE_GUIDE[dev];
