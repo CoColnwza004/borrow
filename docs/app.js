@@ -353,9 +353,11 @@ function testBanner() {
 function renderMode() {
   if (TEST_SITE && !$('.test-badge')) $('.brand').insertAdjacentHTML('beforeend', '<span class="test-badge">ทดสอบ</span>');
   const btn = $('#btn-admin');
-  btn.textContent = isAdmin() ? 'เจ้าหน้าที่พัสดุ · ออก' : 'เจ้าหน้าที่พัสดุ';
+  // จอแคบมาก (≤ 360px) ปุ่มเหลือแค่ "ออก"
+  btn.innerHTML = isAdmin() ? '<span class="adm-long">เจ้าหน้าที่พัสดุ · </span>ออก' : 'เจ้าหน้าที่พัสดุ';
   btn.classList.toggle('on', isAdmin());
   btn.title = isAdmin() ? 'ออกจากโหมดเจ้าหน้าที่พัสดุ' : 'เข้าสู่โหมดเจ้าหน้าที่พัสดุ';
+  if (!isAdmin()) $('#btn-bell').hidden = true;
 }
 
 $('#btn-admin').addEventListener('click', safe(async () => {
@@ -585,7 +587,83 @@ function renderNav() {
   const cur = currentRoute();
   const a = ([k, label, n]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur ? 'active' : ''}">${label}${n ? `<span class="badge">${n}</span>` : ''}</a>`;
   $('#nav-links').innerHTML = (isAdmin() ? links.filter(([k]) => k !== 'help') : links.slice(0, 4)).map(a).join('');
+  updateBell();
   fitNav();
+}
+
+// ===================== กระดิ่งแจ้งเตือน (เจ้าหน้าที่): ใกล้หมดสต็อก / ใกล้หมดอายุ =====================
+const EXPIRY_MONTHS = Math.max(1, Number(CONFIG.EXPIRY_ALERT_MONTHS) || 8);
+let alertCache = { db: null };
+function alertsView() {
+  if (alertCache.db !== state.db) {
+    alertCache = {
+      db: state.db,
+      low: itemsView().filter((i) => i.active && isLow(i)).sort((a, b) => a.available_qty - a.min_qty - (b.available_qty - b.min_qty) || a.code.localeCompare(b.code)),
+      exp: BorrowCore.expiryAlerts(state.db, today(), EXPIRY_MONTHS),
+    };
+  }
+  return alertCache;
+}
+function updateBell() {
+  const b = $('#btn-bell');
+  b.hidden = !isAdmin() || !state.db;
+  if (b.hidden) return;
+  const { low, exp } = alertsView();
+  const n = low.length + exp.length;
+  const badge = $('.bell-badge', b);
+  badge.hidden = !n;
+  badge.textContent = n > 99 ? '99+' : n;
+  b.classList.toggle('urgent', exp.some((x) => x.days <= 30));
+  b.setAttribute('aria-label', `การแจ้งเตือน: ใกล้หมดอายุ ${exp.length} ล็อต · ใกล้หมดสต็อก ${low.length} รายการ`);
+  // ครั้งแรกที่เข้าโหมดเจ้าหน้าที่ในแท็บนี้ กระดิ่งสั่นให้เห็นว่ามีของใกล้หมดอายุ
+  if (exp.length && !ssGet('bell-rang')) {
+    ssSet('bell-rang', '1');
+    if (motionOK()) { b.classList.remove('ring'); void b.offsetWidth; b.classList.add('ring'); }
+  }
+}
+$('#btn-bell').addEventListener('click', () => showAlerts());
+
+function showAlerts(tab) {
+  const { low, exp } = alertsView();
+  tab ||= exp.length || !low.length ? 'exp' : 'low';
+  const expRow = (x) => {
+    const tone = x.expired || x.days <= 30 ? 'out' : x.days <= 90 ? 'low' : 'soon';
+    const when = x.expired ? `หมดอายุแล้ว ${fmtNum(-x.days)} วัน` : x.days === 0 ? 'หมดอายุวันนี้' : `อีก ${fmtNum(x.days)} วัน`;
+    return `<li><div class="row" data-item="${x.item_id}">
+      <span class="pick-icon ${tone}">${ICON.cal}</span>
+      <div class="row-body">
+        <div class="row-title">${esc(x.name)}</div>
+        <div class="row-sub">${esc(x.code)} · หมดอายุ ${fmtDate(x.expiry_date)} · คงเหลือล็อตนี้ ~${fmtNum(x.qty)} ${esc(x.unit)}${x.supplier ? ` · ${esc(x.supplier)}` : ''}${x.delivery_no ? ` · ใบส่งของ ${esc(x.delivery_no)}` : ''}</div>
+      </div>
+      <div class="row-end"><span class="pill ${tone}">${when}</span></div>
+      <span class="chev">${ICON.chev}</span></div></li>`;
+  };
+  const lowRow = (i) => `<li><div class="row" data-item="${i.id}">
+      <span class="pick-icon ${i.available_qty <= 0 ? 'out' : 'low'}">${ICON.box}</span>
+      <div class="row-body">
+        <div class="row-title">${esc(i.name)}</div>
+        <div class="row-sub">${esc(i.code)} · จุดสั่งซื้อ ${fmtNum(i.min_qty)} ${esc(i.unit)}${i.location ? ` · ${esc(i.location)}` : ''}</div>
+      </div>
+      <div class="row-end"><span class="pill ${i.available_qty <= 0 ? 'out' : 'low'}">${i.available_qty < 0 ? 'ติดลบ ' + fmtNum(-i.available_qty) : i.available_qty === 0 ? 'หมด' : 'เหลือ ' + fmtNum(i.available_qty)} ${esc(i.unit)}</span></div>
+      <span class="chev">${ICON.chev}</span></div></li>`;
+  const body = openModal('การแจ้งเตือน', `
+    <div class="segmented alert-tabs" id="al-tabs" role="tablist">
+      <button type="button" data-t="exp">ใกล้หมดอายุ <span class="seg-count">${fmtNum(exp.length)}</span></button>
+      <button type="button" data-t="low">ใกล้หมดสต็อก <span class="seg-count">${fmtNum(low.length)}</span></button>
+    </div>
+    <div id="al-body"></div>`, { wide: true });
+  const draw = () => {
+    $$('#al-tabs button', body).forEach((b) => b.classList.toggle('active', b.dataset.t === tab));
+    $('#al-body', body).innerHTML = tab === 'exp'
+      ? `<p class="muted small alert-note">ล็อตที่จะหมดอายุภายใน ${EXPIRY_MONTHS} เดือน (ถึง ${fmtDate(BorrowCore.ymd(new Date(new Date().getFullYear(), new Date().getMonth() + EXPIRY_MONTHS, new Date().getDate())))}) และล็อตที่หมดอายุแล้ว
+          · จำนวนคงเหลือของแต่ละล็อตประมาณแบบเข้าก่อนออกก่อน · ใส่วันหมดอายุได้ตอนรับเข้าสต็อก</p>
+        <section class="card"><ul class="rows">${exp.map(expRow).join('') || '<li class="empty">ไม่มีพัสดุที่ใกล้หมดอายุ</li>'}</ul></section>`
+      : `<p class="muted small alert-note">พัสดุที่คงเหลือถึงจุดสั่งซื้อขั้นต่ำแล้ว (ตั้งจุดสั่งซื้อได้ที่ แก้ไขข้อมูลพัสดุ) เรียงจากขาดมากที่สุด</p>
+        <section class="card"><ul class="rows">${low.map(lowRow).join('') || '<li class="empty">สต็อกทุกรายการอยู่ในระดับปกติ</li>'}</ul></section>`;
+    bindRowClicks($('#al-body', body));
+  };
+  $$('#al-tabs button', body).forEach((b) => b.addEventListener('click', () => { tab = b.dataset.t; draw(); }));
+  draw();
 }
 
 // ย่อเมนูเป็นปุ่ม ☰ เฉพาะเมื่อลิงก์ไม่พอดีกับความกว้างจอ (มือถือ, iPad แนวตั้งในโหมดเจ้าหน้าที่)
@@ -1121,6 +1199,12 @@ function renderRequestForm(page) {
   // ตัดรายการที่ถูกลบ/ปิดใช้งานออกจากที่เลือกไว้
   for (const id of Object.keys(state.picks)) if (!itemById(id)?.active) delete state.picks[id];
   drawList();
+}
+
+// รายการพัสดุในใบเบิก บรรทัดละ 1 รายการ ลงท้ายด้วยจำนวน (ยาวเกิน max แสดง "และอีก n รายการ")
+function itemLines(lines, max = 5) {
+  const shown = lines.slice(0, max);
+  return `<ul class="item-lines">${shown.map((l) => `<li><span>${esc(l.name)}</span><b>×${fmtNum(l.qty)} ${esc(l.unit)}</b></li>`).join('')}${lines.length > max ? `<li class="more">และอีก ${fmtNum(lines.length - max)} รายการ</li>` : ''}</ul>`;
 }
 
 // ป๊อปอัปยืนยันการเบิก: ผู้เบิก แผนก รายการพัสดุ จำนวน ราคา และยอดรวม
@@ -1667,9 +1751,10 @@ function renderRequests(page) {
         <span class="pick-icon">${ICON.withdraw}</span>
         <div class="row-body">
           <div class="row-title">${esc(r.borrower_name)} <span class="muted small" style="font-weight:400">· ${esc(r.department)}</span></div>
-          <div class="row-sub">${esc(r.request_no)} · ${esc(r.item_summary)}</div>
+          <div class="row-sub">${esc(r.request_no)}<span class="when-m"> · ${fmtDateTime(r.created_at)}</span></div>
+          ${itemLines(r.items)}
         </div>
-        <div class="row-end"><span>${fmtDateTime(r.created_at)}</span>${r.total ? `<span class="row-money">${fmtMoney(r.total)} บาท</span>` : ''}</div>
+        <div class="row-end"><span class="when">${fmtDateTime(r.created_at)}</span>${r.total ? `<span class="row-money">${fmtMoney(r.total)} บาท</span>` : ''}</div>
         <span class="chev">${ICON.chev}</span>
       </div></li>`).join('') || `<li class="empty">${when ? 'ไม่มีใบเบิกในช่วงเวลานี้' : 'ไม่พบรายการ'}</li>`;
     // แสดงทีละ 200 ใบ หน้าเว็บไม่หน่วงเมื่อมีใบเบิกหลายพันใบ
