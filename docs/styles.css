@@ -1050,6 +1050,12 @@ html.vt #rf-title { view-transition-name: page-title; }
 
 /* ============ ป๊อปอัปเข้าสู่ระบบเจ้าหน้าที่สำเร็จ (5 วินาที) ============ */
 .hud { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; pointer-events: none; }
+/* ป๊อปอัปเป็น <dialog> แบบ modal (ชั้นบนสุด เหนือหน้าต่างฟอร์ม) */
+dialog.hud { width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; border: 0; background: transparent; color: inherit; overflow: hidden; pointer-events: auto; outline: none; }
+dialog.hud:not([open]) { display: none; }
+dialog.hud::backdrop { background: transparent; }
+dialog.hud.busy { background: rgba(8, 12, 24, .16); animation: fade .2s; }
+dialog.hud.out { animation: fade-out .24s var(--ease-in) forwards; }
 .hud-card {
   pointer-events: auto; cursor: pointer; position: relative; overflow: hidden;
   width: min(340px, 100%); padding: 30px 26px 26px; border-radius: 28px; text-align: center;
@@ -1546,3 +1552,30 @@ dialog.ask.confirm p { font-size: 15px; }
 .mr-form { display: flex; flex-direction: column; gap: 14px; margin-bottom: 16px; }
 .mr-form .segmented { align-self: flex-start; }
 #mr-preview .stat .value.money { font-size: 22px; }
+
+/* หน้าเบิก: ราคาต่อหน่วย ราคารวม และป๊อปอัปยืนยันการเบิก */
+.pick-meta .price { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.pick-sum { margin-top: 3px; font-size: 13px; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
+.checkout .sum .sum-money { display: block; font-size: 15px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.slip-total { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 2px 0; margin-top: 6px; border-top: 1px solid var(--separator); font-size: 15px; }
+.slip-total b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.slip-name small b { color: var(--text); font-weight: 600; }
+.ask-ic.primary { background: linear-gradient(135deg, #3b9bff, #0062cc); box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 10px 22px -10px rgba(0,98,204,.7); }
+.ask-ic.primary svg { width: 28px; height: 28px; fill: #fff; }
+dialog.ask.wd-confirm { width: min(480px, calc(100% - 24px)); max-height: calc(100dvh - 32px); }
+dialog.ask.wd-confirm[open] { overflow: hidden; }
+.wd-who { margin-top: -2px; }
+.wd-lines { width: 100%; max-height: min(42vh, 360px); overflow-y: auto; overscroll-behavior: contain; text-align: left; border-radius: 14px; background: var(--fill); padding: 4px 12px; }
+.wd-lines table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.wd-lines th { font-size: 12px; font-weight: 600; color: var(--text-3); text-align: left; padding: 6px 0; }
+.wd-lines td { padding: 7px 0; border-top: 1px solid var(--separator); vertical-align: top; }
+.wd-lines .num { text-align: right; white-space: nowrap; padding-left: 10px; font-variant-numeric: tabular-nums; }
+.wd-total { width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 14px; color: var(--text-2); padding: 4px 2px 0; }
+.wd-total b { font-size: 20px; color: var(--text); font-variant-numeric: tabular-nums; }
+/* รายงานพัสดุคงเหลือ */
+.head-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+#sr-preview .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#sr-preview .stat { background: var(--bg); box-shadow: none; padding: 14px 16px; }
+#sr-preview .stat .value { font-size: 26px; }
+#sr-preview .stat .value.money { font-size: 22px; }
+#sr-preview > p { margin-top: 14px; }

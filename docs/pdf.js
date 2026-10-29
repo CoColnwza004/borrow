@@ -226,6 +226,57 @@ const PdfDoc = (() => {
     return `summary-${Number(p.slice(0, 4)) + 543}${p.length > 4 ? '-' + p.slice(5, 7) : ''}${slug}.pdf`;
   }
 
+  // ---------- รายงานพัสดุคงเหลือ (รายเดือน / รายปี) ----------
+  // sum = BorrowCore.stockSummary() · extra = { generatedAt, asOf (YYYY-MM-DD ยอด ณ วันที่), staff }
+  function stockTemplate(sum, org, extra) {
+    const t = sum.totals;
+    const period = sum.yearly ? `ประจำปี พ.ศ. ${Number(sum.period) + 543}` : `ประจำเดือน${monthName(sum.period)}`;
+    const empty = (cols) => `<tr><td colspan="${cols}" class="c muted">ไม่มีรายการ</td></tr>`;
+    const stat = (label, value, sub) => `<td><div class="pdf-stat-l">${label}</div><div class="pdf-stat-v">${value}</div><div class="pdf-stat-s">${sub}</div></td>`;
+    const m = (v) => (v ? money(v) : '-');
+    return `<div class="pdf-report">
+      <div class="pdf-head">
+        <div><div class="pdf-org">${esc(org || 'ระบบเบิกพัสดุ')}</div>
+          <div class="pdf-title">รายงานพัสดุคงเหลือ ${esc(period)}</div>
+          <div class="pdf-sub">ยอดคงเหลือ ณ วันที่ ${esc(thaiDate(extra.asOf))}</div></div>
+        <div class="pdf-meta">ข้อมูล ณ ${esc(thaiDateTime(extra.generatedAt))}</div>
+      </div>
+      <table class="pdf-stats pdf-keep"><tr>
+        ${stat('จ่ายออก', num(t.issued_qty) + ' หน่วย', num(t.issued_items) + ' รายการพัสดุ')}
+        ${stat('มูลค่าที่จ่ายออก', money(t.issued_value), 'บาท')}
+        ${stat('คงเหลือ', num(t.balance_qty) + ' หน่วย', num(t.items) + ' รายการพัสดุ')}
+        ${stat('มูลค่าคงเหลือ', money(t.balance_value), 'บาท')}
+      </tr></table>
+      <p class="pdf-baht">จ่ายออกรวม ${money(t.issued_value)} บาท ( ${bahtText(t.issued_value)} ) · คงเหลือรวม ${money(t.balance_value)} บาท ( ${bahtText(t.balance_value)} )</p>
+
+      <h2 class="pdf-h2">1. พัสดุที่จ่ายออก <span>(เรียงจากจำนวนมากไปน้อย · มูลค่าตามราคา ณ วันที่เบิก)</span></h2>
+      <table class="pdf-grid"><thead><tr><th style="width:6%">ลำดับ</th><th style="width:11%">รหัส</th><th>รายการ</th>
+        <th style="width:8%">หน่วย</th><th style="width:12%">ราคา/หน่วย</th><th style="width:10%">จ่ายออก</th><th style="width:14%">มูลค่า (บาท)</th></tr></thead>
+        <tbody>${sum.issued.map((x, i) => `<tr><td class="c">${i + 1}</td><td>${esc(x.code)}</td><td>${esc(x.name)}</td><td class="c">${esc(x.unit)}</td>
+          <td class="r">${m(x.price)}</td><td class="r">${num(x.issued)}</td><td class="r">${m(x.issued_value)}</td></tr>`).join('') || empty(7)}</tbody>
+        <tfoot><tr class="pdf-total"><th colspan="5">รวมจ่ายออก</th><td class="r">${num(t.issued_qty)}</td><td class="r"><b>${money(t.issued_value)}</b></td></tr></tfoot></table>
+
+      <h2 class="pdf-h2">2. ยอดคงเหลือทุกรายการ <span>(ณ สิ้นงวด · มูลค่าตามราคาปัจจุบัน)</span></h2>
+      <table class="pdf-grid pdf-small"><thead><tr><th style="width:5%">ลำดับ</th><th style="width:10%">รหัส</th><th>รายการ</th>
+        <th style="width:7%">หน่วย</th><th style="width:10%">ราคา/หน่วย</th><th style="width:8%">รับเข้า</th><th style="width:8%">จ่ายออก</th>
+        <th style="width:9%">คงเหลือ</th><th style="width:12%">มูลค่าคงเหลือ</th></tr></thead>
+        <tbody>${sum.items.map((x, i) => `<tr><td class="c">${i + 1}</td><td>${esc(x.code)}</td><td>${esc(x.name)}</td><td class="c">${esc(x.unit)}</td>
+          <td class="r">${m(x.price)}</td><td class="r">${x.received ? num(x.received) : '-'}</td><td class="r">${x.issued ? num(x.issued) : '-'}</td>
+          <td class="r">${num(x.balance)}</td><td class="r">${m(x.balance_value)}</td></tr>`).join('') || empty(9)}</tbody>
+        <tfoot><tr class="pdf-total"><th colspan="5">รวม ${num(t.items)} รายการ</th><td class="r">${num(t.received_qty)}</td><td class="r">${num(t.issued_qty)}</td>
+          <td class="r">${num(t.balance_qty)}</td><td class="r"><b>${money(t.balance_value)}</b></td></tr></tfoot></table>
+
+      <div class="pdf-sign pdf-keep">
+        <div class="pdf-sign-box"><div>ลงชื่อ .......................................... ผู้จัดทำรายงาน</div>
+          <div>( ${extra.staff ? esc(extra.staff) : '..........................................'} )</div><div>วันที่ ........ / ........ / ........</div></div>
+        <div class="pdf-sign-box"><div>ลงชื่อ .......................................... หัวหน้างานพัสดุ</div>
+          <div>( .......................................... )</div><div>วันที่ ........ / ........ / ........</div></div>
+      </div>
+    </div>`;
+  }
+  const buildStockReport = (sum, org, extra) => render(stockTemplate(sum, org, extra), { margin: [10, 0, 14, 0], pageNumbers: true });
+  const stockFileName = (p) => `stock-${Number(p.slice(0, 4)) + 543}${p.length > 4 ? '-' + p.slice(5, 7) : ''}.pdf`;
+
   // ต้องเรียกจาก click ของผู้ใช้โดยตรง (เตรียม blob ไว้ก่อน) เพื่อให้เบราว์เซอร์ยอมเปิดหน้าต่างบันทึกไฟล์
   // คืนค่า false ถ้าผู้ใช้กดยกเลิก
   async function save(blob, filename) {
@@ -268,5 +319,5 @@ const PdfDoc = (() => {
   }
 
   const preload = () => { loadLib().catch(() => {}); };
-  return { build, buildReport, save, preload, isIOS, monthName, reportFileName, bahtText, fileName: (r) => `${r.request_no}.pdf` };
+  return { build, buildReport, buildStockReport, stockFileName, save, preload, isIOS, monthName, reportFileName, bahtText, fileName: (r) => `${r.request_no}.pdf` };
 })();
