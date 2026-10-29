@@ -725,6 +725,10 @@ dialog.sheet.closing::backdrop { animation: fade-out .2s var(--ease-in) forwards
 .pdf-page tbody tr:last-child td { border-bottom: 1px solid #000; }
 .pdf-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 22px; }
 .pdf-sign-box { text-align: center; display: flex; flex-direction: column; gap: 8px; }
+.pdf-page tfoot th, .pdf-page tfoot td { border: 1px solid #000; }
+.pdf-total th { background: #f2f2f2; font-weight: 700; text-align: center; }
+.pdf-total td.c { font-size: 14px; }
+.pdf-total td.r b { font-weight: 700; }
 .pdf-foot { margin-top: auto; padding-top: 18px; font-size: 12px; color: #555; text-align: right; }
 
 /* ============ Touch (iPhone / iPad / Android) ============ */
@@ -771,6 +775,9 @@ button, .btn, a, input, select, .row, .item-card { -webkit-tap-highlight-color: 
 .pdf-h2 span { font-weight: 400; font-size: 13px; }
 .pdf-small { font-size: 12px; }
 .pdf-report .pdf-sign { margin-top: 28px; padding-bottom: 6mm; }
+.pdf-report .pdf-total th, .pdf-report .pdf-total td { background: #f2f2f2; font-weight: 600; }
+.pdf-sub { font-size: 15px; font-weight: 600; margin-top: 2px; }
+.pdf-baht { margin: 8px 0 0; font-size: 13.5px; }
 
 .top-list { margin: 6px 0 0; padding-left: 22px; font-size: 15px; display: flex; flex-direction: column; gap: 4px; }
 .top-list b { font-variant-numeric: tabular-nums; }
@@ -1411,7 +1418,7 @@ dialog.ask.confirm p { font-size: 15px; }
 .form-sec .hint { font-weight: 400; }
 .inline-add { display: flex; gap: 8px; align-items: center; }
 .inline-add input { flex: 1; min-width: 0; }
-.add-supplier { animation: fade-down .25s var(--ease-out); }
+.add-master { animation: fade-down .25s var(--ease-out); }
 .date-wrap { position: relative; display: block; }
 .date-pick { cursor: pointer; caret-color: transparent; }
 .date-clear { position: absolute; right: 44px; top: 50%; transform: translateY(-50%); font-size: 14px; }
@@ -1531,3 +1538,11 @@ dialog.ask.confirm p { font-size: 15px; }
 @media (max-width: 600px) { #help-dev button { font-size: 15px; padding: 10px 4px; } }
 #help-dev .l-short { display: none; }
 @media (max-width: 380px) { #help-dev .l-long { display: none; } #help-dev .l-short { display: inline; } }
+
+/* ราคา: ใบเบิก ประวัติ และสรุปรายงาน */
+.slip-table tfoot th { text-align: right; font-weight: 600; color: var(--text-2); }
+.slip-table tfoot td, .slip-table tfoot th { border-top: 1px solid var(--separator); }
+.row-money { display: block; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.mr-form { display: flex; flex-direction: column; gap: 14px; margin-bottom: 16px; }
+.mr-form .segmented { align-self: flex-start; }
+#mr-preview .stat .value.money { font-size: 22px; }

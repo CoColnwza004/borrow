@@ -22,6 +22,34 @@ const PdfDoc = (() => {
   };
   const thaiTime = (s) => (/\d{2}:\d{2}(:\d{2})?/.exec(s || '') || [''])[0];
 
+  const money = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // จำนวนเงินเป็นตัวอักษร เช่น 1,250.50 → หนึ่งพันสองร้อยห้าสิบบาทห้าสิบสตางค์ (แบบ BAHTTEXT ของ Excel)
+  const DIGIT = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
+  const PLACE = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน'];
+  function readThai(x) {
+    x = String(x).replace(/^0+/, '');
+    if (!x) return '';
+    if (x.length > 6) return readThai(x.slice(0, -6)) + 'ล้าน' + readThai(x.slice(-6));
+    let out = '';
+    for (let i = 0; i < x.length; i++) {
+      const d = Number(x[i]);
+      const pos = x.length - i - 1;
+      if (!d) continue;
+      if (pos === 1 && d === 1) out += 'สิบ';
+      else if (pos === 1 && d === 2) out += 'ยี่สิบ';
+      else if (pos === 0 && d === 1 && x.length > 1) out += 'เอ็ด';
+      else out += DIGIT[d] + PLACE[pos];
+    }
+    return out;
+  }
+  function bahtText(n) {
+    const satang = Math.round(Number(n || 0) * 100);
+    if (!satang) return 'ศูนย์บาทถ้วน';
+    const baht = Math.floor(satang / 100);
+    const st = satang % 100;
+    return (baht ? readThai(baht) + 'บาท' : '') + (st ? readThai(st) + 'สตางค์' : 'ถ้วน');
+  }
+
   function loadLib() {
     if (window.html2pdf) return Promise.resolve();
     libPromise ||= new Promise((resolve, reject) => {
@@ -38,8 +66,10 @@ const PdfDoc = (() => {
   function template(r, org, staff) {
     const rows = r.items.map((l, i) => `<tr>
       <td class="c">${i + 1}</td><td>${esc(l.code)}</td><td>${esc(l.name)}</td>
-      <td class="r">${Number(l.qty).toLocaleString('th-TH')}</td><td class="c">${esc(l.unit)}</td><td></td></tr>`);
-    for (let i = rows.length; i < MIN_ROWS; i++) rows.push('<tr class="blank"><td></td><td></td><td></td><td></td><td></td><td></td></tr>');
+      <td class="r">${Number(l.qty).toLocaleString('th-TH')}</td><td class="c">${esc(l.unit)}</td>
+      <td class="r">${l.price > 0 ? money(l.price) : '-'}</td><td class="r">${l.price > 0 ? money(l.value) : '-'}</td></tr>`);
+    for (let i = rows.length; i < MIN_ROWS; i++) rows.push('<tr class="blank"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>');
+    const total = r.total || 0;
     const dept = esc(r.department_full || r.department);
     const statement = `ข้าพเจ้าขอเบิกพัสดุตามรายการต่อไปนี้ เพื่อใช้ใน${dept}`;
     // วันที่ใต้ช่องลงชื่อทั้งสองฝั่ง = วันที่เบิก เช่น 24 / 10 / 2569
@@ -62,9 +92,10 @@ const PdfDoc = (() => {
       </table>
       <p class="pdf-statement">${statement}</p>
       <table class="pdf-items">
-        <thead><tr><th style="width:9%">ลำดับ</th><th style="width:14%">รหัส</th><th>รายการ</th>
-          <th style="width:11%">จำนวน</th><th style="width:11%">หน่วย</th><th style="width:15%">หมายเหตุ</th></tr></thead>
+        <thead><tr><th style="width:8%">ลำดับ</th><th style="width:13%">รหัส</th><th>รายการ</th>
+          <th style="width:9%">จำนวน</th><th style="width:9%">หน่วย</th><th style="width:13%">ราคา/หน่วย</th><th style="width:14%">จำนวนเงิน</th></tr></thead>
         <tbody>${rows.join('')}</tbody>
+        <tfoot><tr class="pdf-total"><td colspan="5" class="c">( ${bahtText(total)} )</td><th>รวมเป็นเงิน</th><td class="r"><b>${money(total)}</b></td></tr></tfoot>
       </table>
       <div class="pdf-sign">${sign('ผู้เบิก', r.borrower_name)}${sign('เจ้าหน้าที่พัสดุ', staff)}</div>
       <div class="pdf-foot">ออกโดยระบบเบิกพัสดุ · บันทึกเมื่อ ${esc(thaiDateTime(r.created_at))}</div>
@@ -120,45 +151,61 @@ const PdfDoc = (() => {
 
   const build = (r, org, staff) => render(template(r, org, staff));
 
-  // ---------- สรุปรายเดือน ----------
+  // ---------- สรุปรายเดือน / รายปี ----------
   const num = (n) => Number(n || 0).toLocaleString('th-TH');
   const monthName = (m) => new Date(m + '-01T00:00:00').toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
 
-  // sum = BorrowCore.monthlySummary(), extra = { deptFull(name), lines(r) -> [{name, qty, unit}], staff = ชื่อผู้จัดทำรายงาน }
+  // sum = BorrowCore.monthlySummary(db, 'YYYY-MM' | 'YYYY', แผนก) · extra = { deptFull(name), lines(r) -> [{name, qty, unit}], staff = ชื่อผู้จัดทำรายงาน }
   function reportTemplate(sum, org, extra) {
     const t = sum.totals;
+    const dept = sum.department;
     const empty = (cols) => `<tr><td colspan="${cols}" class="c muted">ไม่มีรายการ</td></tr>`;
     const stat = (label, value, sub) => `<td><div class="pdf-stat-l">${label}</div><div class="pdf-stat-v">${value}</div><div class="pdf-stat-s">${sub}</div></td>`;
+    const period = sum.yearly ? `ประจำปี พ.ศ. ${Number(sum.period) + 543}` : `ประจำเดือน${monthName(sum.period)}`;
+    let n = 0;
+    const h2 = (title, note = '') => `<h2 class="pdf-h2">${++n}. ${title}${note ? ` <span>${note}</span>` : ''}</h2>`;
+    const sections = [];
+    sections.push(`${h2('พัสดุที่ถูกเบิก', '(เรียงจากจำนวนมากไปน้อย · ราคาต่อหน่วย ณ วันที่เบิก)')}
+      <table class="pdf-grid"><thead><tr><th style="width:6%">ลำดับ</th><th style="width:11%">รหัส</th><th>รายการ</th>
+        <th style="width:9%">จำนวน</th><th style="width:8%">หน่วย</th><th style="width:8%">ใบเบิก</th><th style="width:12%">ราคา/หน่วย</th><th style="width:14%">มูลค่า (บาท)</th></tr></thead>
+        <tbody>${sum.withdrawn.map((x, i) => `<tr><td class="c">${i + 1}</td><td>${esc(x.code)}</td><td>${esc(x.name)}</td>
+          <td class="r">${num(x.qty)}</td><td class="c">${esc(x.unit)}</td><td class="r">${num(x.times)}</td>
+          <td class="r">${x.price ? money(x.price) : '-'}</td><td class="r">${x.value ? money(x.value) : '-'}</td></tr>`).join('') || empty(8)}</tbody>
+        <tfoot><tr class="pdf-total"><th colspan="3">รวมทั้งสิ้น</th><td class="r">${num(t.withdraw_qty)}</td><td></td><td class="r">${num(t.withdraw_docs)}</td><td></td><td class="r"><b>${money(t.withdraw_value)}</b></td></tr></tfoot></table>`);
+    if (sum.yearly) {
+      sections.push(`${h2('สรุปรายเดือน')}
+      <table class="pdf-grid"><thead><tr><th>เดือน</th><th style="width:16%">ใบเบิก</th><th style="width:18%">หน่วยที่เบิก</th><th style="width:20%">มูลค่า (บาท)</th></tr></thead>
+        <tbody>${sum.months.map((m) => `<tr><td>${esc(monthName(m.month))}</td><td class="r">${num(m.withdraw_docs)}</td>
+          <td class="r">${num(m.withdraw_qty)}</td><td class="r">${money(m.withdraw_value)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr class="pdf-total"><th>รวมทั้งปี</th><td class="r">${num(t.withdraw_docs)}</td><td class="r">${num(t.withdraw_qty)}</td><td class="r"><b>${money(t.withdraw_value)}</b></td></tr></tfoot></table>`);
+    }
+    if (!dept) {
+      sections.push(`${h2('สรุปตามแผนก', '(เรียงจากจำนวนมากไปน้อย)')}
+      <table class="pdf-grid"><thead><tr><th>แผนก</th><th style="width:16%">ใบเบิก</th><th style="width:18%">หน่วยที่เบิก</th><th style="width:20%">มูลค่า (บาท)</th></tr></thead>
+        <tbody>${sum.departments.map((d) => `<tr><td>${esc(extra.deptFull(d.name))}</td><td class="r">${num(d.withdraw_docs)}</td>
+          <td class="r">${num(d.withdraw_qty)}</td><td class="r">${money(d.withdraw_value)}</td></tr>`).join('') || empty(4)}</tbody></table>`);
+    }
+    sections.push(`${h2('รายการใบเบิกทั้งหมด')}
+      <table class="pdf-grid pdf-small"><thead><tr><th style="width:16%">วันเวลาที่เบิก</th><th style="width:11%">เลขที่</th>
+        <th style="width:16%">ผู้เบิก</th>${dept ? '' : '<th style="width:11%">แผนก</th>'}<th>พัสดุ</th><th style="width:12%">มูลค่า (บาท)</th></tr></thead>
+        <tbody>${sum.requests.map((r) => `<tr><td>${esc(thaiDateTime(r.created_at)).replace(/ (\d{1,2}:\d{2}(:\d{2})?)$/, '<br>$1')}</td><td>${esc(r.request_no)}</td>
+          <td>${esc(r.borrower_name)}</td>${dept ? '' : `<td>${esc(r.department)}</td>`}
+          <td>${extra.lines(r).map((l) => `${esc(l.name)} ×${num(l.qty)}`).join(', ')}</td><td class="r">${money(sum.values[r.id])}</td></tr>`).join('') || empty(dept ? 5 : 6)}</tbody></table>`);
     return `<div class="pdf-report">
       <div class="pdf-head">
         <div><div class="pdf-org">${esc(org || 'ระบบเบิกพัสดุ')}</div>
-          <div class="pdf-title">สรุปการเบิกพัสดุ ประจำเดือน${esc(monthName(sum.month))}</div></div>
+          <div class="pdf-title">สรุปการเบิกพัสดุ ${esc(period)}</div>
+          ${dept ? `<div class="pdf-sub">แผนก ${esc(extra.deptFull(dept))}</div>` : ''}</div>
         <div class="pdf-meta">ข้อมูล ณ ${esc(thaiDateTime(extra.generatedAt))}</div>
       </div>
       <table class="pdf-stats pdf-keep"><tr>
-        ${stat('ใบเบิก', num(t.withdraw_docs) + ' ใบ', 'ทั้งเดือน')}
-        ${stat('จำนวนที่เบิก', num(t.withdraw_qty) + ' หน่วย', 'รวมทุกรายการ')}
-        ${stat('รายการพัสดุ', num(sum.withdrawn.length) + ' รายการ', 'ที่ถูกเบิก')}
-        ${stat('แผนก', num(sum.departments.length) + ' แผนก', 'ที่มาเบิก')}
+        ${stat('ใบเบิก', num(t.withdraw_docs) + ' ใบ', sum.yearly ? 'ทั้งปี' : 'ทั้งเดือน')}
+        ${stat('จำนวนที่เบิก', num(t.withdraw_qty) + ' หน่วย', num(sum.withdrawn.length) + ' รายการพัสดุ')}
+        ${stat('มูลค่ารวม', money(t.withdraw_value), 'บาท')}
+        ${dept ? stat('ผู้เบิก', num(new Set(sum.requests.map((r) => r.borrower_name)).size) + ' คน', 'ในแผนกนี้') : stat('แผนก', num(sum.departments.length) + ' แผนก', 'ที่มาเบิก')}
       </tr></table>
-
-      <h2 class="pdf-h2">1. พัสดุที่ถูกเบิก <span>(เรียงจากจำนวนมากไปน้อย)</span></h2>
-      <table class="pdf-grid"><thead><tr><th style="width:7%">ลำดับ</th><th style="width:12%">รหัส</th><th>รายการ</th>
-        <th style="width:12%">จำนวน</th><th style="width:10%">หน่วย</th><th style="width:11%">จำนวนใบ</th></tr></thead>
-        <tbody>${sum.withdrawn.map((x, i) => `<tr><td class="c">${i + 1}</td><td>${esc(x.code)}</td><td>${esc(x.name)}</td>
-          <td class="r">${num(x.qty)}</td><td class="c">${esc(x.unit)}</td><td class="r">${num(x.times)}</td></tr>`).join('') || empty(6)}</tbody></table>
-
-      <h2 class="pdf-h2">2. สรุปตามแผนก <span>(เรียงจากจำนวนมากไปน้อย)</span></h2>
-      <table class="pdf-grid"><thead><tr><th>แผนก</th><th style="width:16%">ใบเบิก</th><th style="width:18%">หน่วยที่เบิก</th></tr></thead>
-        <tbody>${sum.departments.map((d) => `<tr><td>${esc(extra.deptFull(d.name))}</td><td class="r">${num(d.withdraw_docs)}</td>
-          <td class="r">${num(d.withdraw_qty)}</td></tr>`).join('') || empty(3)}</tbody></table>
-
-      <h2 class="pdf-h2">3. รายการใบเบิกทั้งหมด</h2>
-      <table class="pdf-grid pdf-small"><thead><tr><th style="width:17%">วันเวลาที่เบิก</th><th style="width:12%">เลขที่</th>
-        <th style="width:17%">ผู้เบิก</th><th style="width:12%">แผนก</th><th>พัสดุ</th></tr></thead>
-        <tbody>${sum.requests.map((r) => `<tr><td>${esc(thaiDateTime(r.created_at)).replace(/ (\d{1,2}:\d{2}(:\d{2})?)$/, '<br>$1')}</td><td>${esc(r.request_no)}</td>
-          <td>${esc(r.borrower_name)}</td><td>${esc(r.department)}</td>
-          <td>${extra.lines(r).map((l) => `${esc(l.name)} ×${num(l.qty)}`).join(', ')}</td></tr>`).join('') || empty(5)}</tbody></table>
+      <p class="pdf-baht">มูลค่าการเบิกรวม ${money(t.withdraw_value)} บาท ( ${bahtText(t.withdraw_value)} )</p>
+      ${sections.join('\n')}
 
       <div class="pdf-sign pdf-keep">
         <div class="pdf-sign-box"><div>ลงชื่อ .......................................... ผู้จัดทำรายงาน</div>
@@ -171,7 +218,13 @@ const PdfDoc = (() => {
 
   const buildReport = (sum, org, extra) => render(reportTemplate(sum, org, extra), { margin: [10, 0, 14, 0], pageNumbers: true });
   // ชื่อไฟล์ภาษาอังกฤษ: เบราว์เซอร์บางตัวตัดชื่อไฟล์ภาษาไทยเหลือ "download"
-  const reportFileName = (month) => `summary-${Number(month.slice(0, 4)) + 543}-${month.slice(5, 7)}.pdf`;
+  // summary-2569-10.pdf · summary-2569.pdf (รายปี) · summary-2569-10-ICU.pdf / summary-2569-10-dept3.pdf (เฉพาะแผนก)
+  function reportFileName(sum, deptNo) {
+    const p = typeof sum === 'string' ? sum : sum.period;
+    const dept = typeof sum === 'string' ? '' : sum.department;
+    const slug = dept ? '-' + (dept.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'dept' + (deptNo || '')) : '';
+    return `summary-${Number(p.slice(0, 4)) + 543}${p.length > 4 ? '-' + p.slice(5, 7) : ''}${slug}.pdf`;
+  }
 
   // ต้องเรียกจาก click ของผู้ใช้โดยตรง (เตรียม blob ไว้ก่อน) เพื่อให้เบราว์เซอร์ยอมเปิดหน้าต่างบันทึกไฟล์
   // คืนค่า false ถ้าผู้ใช้กดยกเลิก
@@ -215,5 +268,5 @@ const PdfDoc = (() => {
   }
 
   const preload = () => { loadLib().catch(() => {}); };
-  return { build, buildReport, save, preload, isIOS, monthName, reportFileName, fileName: (r) => `${r.request_no}.pdf` };
+  return { build, buildReport, save, preload, isIOS, monthName, reportFileName, bahtText, fileName: (r) => `${r.request_no}.pdf` };
 })();
