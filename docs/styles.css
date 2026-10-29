@@ -311,7 +311,7 @@ svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
   background: var(--fill); color: var(--text); margin-right: 10px; vertical-align: 2px;
 }
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
-@media (max-width: 860px) { .grid-2 { grid-template-columns: 1fr; } }
+@media (max-width: 860px) { .grid-2 { grid-template-columns: minmax(0, 1fr); } }
 
 /* ============ Forms ============ */
 .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
@@ -703,6 +703,12 @@ dialog.sheet.closing::backdrop { animation: fade-out .2s var(--ease-in) forwards
 
 /* ============ PDF template (A4, render นอกจอ) ============ */
 .pdf-stage { position: fixed; left: -10000px; top: 0; }
+/* แผ่น A4 ที่แบ่งหน้าแล้ว (สั้นกว่า 297 มม. เล็กน้อย กันภาพล้นเป็นหน้าว่าง) */
+.pdf-sheet { height: 296mm; overflow: hidden; }
+.pdf-page.pdf-sheet { min-height: 0; }
+.pdf-report.pdf-sheet { padding: 12mm 14mm 16mm; }
+.pdf-cont { font-size: 12px; color: #555; margin: 0 0 4px; }
+.pdf-page .pdf-cont { margin: 0; }
 .pdf-page {
   width: 210mm; min-height: 296mm; padding: 16mm 18mm 14mm; background: #fff; color: #000;
   font-family: 'Sarabun', 'Noto Sans Thai', sans-serif; font-size: 15px; line-height: 1.55; letter-spacing: 0;
@@ -1579,3 +1585,15 @@ dialog.ask.wd-confirm[open] { overflow: hidden; }
 #sr-preview .stat .value { font-size: 26px; }
 #sr-preview .stat .value.money { font-size: 22px; }
 #sr-preview > p { margin-top: 14px; }
+
+/* สรุปมูลค่ารับเข้า–จ่ายออก */
+#fr-preview .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#fr-preview .stat { background: var(--bg); box-shadow: none; padding: 14px 16px; }
+#fr-preview .stat .value { font-size: 26px; }
+#fr-preview .stat .value.money { font-size: 22px; }
+#fr-preview > p { margin-top: 14px; }
+.mr-form .segmented + .segmented { margin-top: -4px; }
+
+/* แสดงเพิ่ม (รายการยาว) */
+.more-row { list-style: none; display: flex; justify-content: center; padding: 14px; }
+tr.more-row td { text-align: center; padding: 14px; }

@@ -16,7 +16,8 @@ var BorrowCore = (function () {
     // price = ราคาต่อหน่วย ณ วันที่เบิก (ราคาพัสดุเปลี่ยนภายหลัง ใบเบิกเดิมไม่เปลี่ยน)
     request_items: ['request_id', 'item_id', 'qty', 'price'],
     // รับเข้า: บริษัทผู้จำหน่าย วันหมดอายุ (YYYY-MM-DD) และเลขใบส่งของ ของล็อตนั้น
-    movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'request_no', 'note', 'supplier', 'expiry_date', 'delivery_no'],
+    // price = ราคาต่อหน่วยของล็อตที่รับเข้า (บาท) ใช้สรุปมูลค่ารับเข้า
+    movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'request_no', 'note', 'supplier', 'expiry_date', 'delivery_no', 'price'],
     departments: ['name', 'full_name'],
     categories: ['name'],
     suppliers: ['name'],
@@ -76,7 +77,28 @@ var BorrowCore = (function () {
     return prefix + n;
   }
   function find(rows, pred) { for (var i = 0; i < rows.length; i++) if (pred(rows[i])) return rows[i]; return null; }
-  function byId(rows, id) { id = Number(id); return find(rows, function (r) { return r.id === id; }); }
+  // ดัชนีค้นหาเร็ว (ข้อมูลหลายพันแถว): สร้างใหม่เมื่อตารางเปลี่ยน (เพิ่ม/ลบแถว หรือแทนทั้งตาราง)
+  var INDEX = typeof WeakMap === 'function' ? new WeakMap() : null;
+  function indexOf(rows, key) {
+    if (!INDEX) return null;
+    var c = INDEX.get(rows);
+    if (!c || c.n !== rows.length || c.key !== key) {
+      var map = {};
+      rows.forEach(function (r) {
+        var k = r[key];
+        if (key === 'id') { if (!(k in map)) map[k] = r; } else (map[k] || (map[k] = [])).push(r);
+      });
+      c = { n: rows.length, key: key, map: map };
+      INDEX.set(rows, c);
+    }
+    return c.map;
+  }
+  function byId(rows, id) {
+    id = Number(id);
+    var m = indexOf(rows, 'id');
+    if (m) { var r = m[id]; if (r && r.id === id) return r; }
+    return find(rows, function (x) { return x.id === id; });
+  }
 
   function emptyDb() {
     var db = {};
@@ -148,11 +170,23 @@ var BorrowCore = (function () {
       id: nextId(db.movements), created_at: stamp(ctx.now), item_id: item.id, type: o.type, qty: o.delta,
       available_after: available, request_no: o.request_no || '', note: str(o.note),
       supplier: str(o.supplier), expiry_date: str(o.expiry_date), delivery_no: str(o.delivery_no),
+      price: o.type === 'receive' ? (o.price === undefined || str(o.price) === '' ? item.price || 0 : money(o.price, 'ราคาต่อหน่วย')) : 0,
     });
   }
 
   function lines(db, requestId) {
+    var m = indexOf(db.request_items, 'request_id');
+    if (m) return (m[requestId] || []).filter(function (l) { return l.request_id === requestId; });
     return db.request_items.filter(function (l) { return l.request_id === requestId; });
+  }
+  // ยอดยกมาตอนตั้งระบบ / ใส่ไฟล์สต็อกใหม่ (ไม่นับเป็นการรับเข้าในรายงาน)
+  var OPENING = 'ยอดยกมาเริ่มต้น';
+  function isReceipt(m) { return m.type === 'receive' && m.note !== OPENING; }
+  // มูลค่ารับเข้าของรายการ: ราคาของล็อตนั้น (ไม่ได้ใส่ = ราคาปัจจุบันของพัสดุ)
+  function movePrice(db, m) {
+    if (m.price > 0) return m.price;
+    var item = byId(db.items, m.item_id);
+    return item ? item.price || 0 : 0;
   }
 
   var MASTERS = { departments: 1, categories: 1, suppliers: 1, units: 1, locations: 1 };
@@ -234,7 +268,7 @@ var BorrowCore = (function () {
         item.available_qty = 0;
         db.items.push(item);
         var qty = int(p.initial_qty || 0, 'จำนวนเริ่มต้น');
-        if (qty) moveStock(db, ctx, withLot({ item_id: item.id, type: 'receive', delta: qty, note: str(p.note) || 'ยอดยกมาเริ่มต้น' }, p));
+        if (qty) moveStock(db, ctx, withLot({ item_id: item.id, type: 'receive', delta: qty, note: str(p.note) || 'รับเข้าครั้งแรก', price: p.receive_price }, p));
         else lot(p);
       }
       return item.id;
@@ -246,7 +280,7 @@ var BorrowCore = (function () {
       var q;
       if (p.type === 'receive') {
         q = int(p.qty, 'จำนวน', 1);
-        moveStock(db, ctx, withLot({ item_id: item.id, type: 'receive', delta: q, note: p.note }, p));
+        moveStock(db, ctx, withLot({ item_id: item.id, type: 'receive', delta: q, note: p.note, price: p.price }, p));
       } else if (p.type === 'lost') {
         q = int(p.qty, 'จำนวน', 1);
         moveStock(db, ctx, { item_id: item.id, type: 'lost', delta: -q, note: p.note });
@@ -447,7 +481,7 @@ var BorrowCore = (function () {
       var r = rows[m.item_id];
       if (!r) return;
       var p = m.created_at.slice(0, n);
-      if (p > period) { r.balance -= m.qty; r.moved = true; } else if (p === period) { r.moved = true; if (m.type === 'receive') r.received += m.qty; }
+      if (p > period) { r.balance -= m.qty; r.moved = true; } else if (p === period) { r.moved = true; if (isReceipt(m)) r.received += m.qty; }
     });
     db.requests.forEach(function (rq) {
       if (rq.created_at.slice(0, n) !== period) return;
@@ -480,6 +514,56 @@ var BorrowCore = (function () {
     };
   }
 
+  // สรุปมูลค่ารับเข้า / จ่ายออก period = 'YYYY-MM' หรือ 'YYYY'
+  // รับเข้า = การรับเข้าสต็อกในงวด (ไม่นับยอดยกมาเริ่มต้น) มูลค่าตามราคาของล็อต · จ่ายออก = ใบเบิกในงวด มูลค่าตามราคา ณ วันที่เบิก
+  function flowSummary(db, period) {
+    period = str(period);
+    var n = period.length;
+    var round = function (x) { return Math.round(x * 100) / 100; };
+    var rows = {}, months = {};
+    var t = { in_qty: 0, in_value: 0, in_items: 0, in_count: 0, out_qty: 0, out_value: 0, out_items: 0, out_count: 0 };
+    if (n === 4) for (var mo = 1; mo <= 12; mo++) months[period + '-' + pad(mo)] = { month: period + '-' + pad(mo), in_qty: 0, in_value: 0, out_qty: 0, out_value: 0 };
+    var row = function (id) {
+      if (!rows[id]) {
+        var it = byId(db.items, id) || { code: '', name: '(ลบแล้ว)', unit: '' };
+        rows[id] = { item_id: id, code: it.code, name: it.name, unit: it.unit, in_qty: 0, in_value: 0, out_qty: 0, out_value: 0 };
+      }
+      return rows[id];
+    };
+    var receipts = [];
+    db.movements.forEach(function (m) {
+      if (!isReceipt(m) || m.created_at.slice(0, n) !== period) return;
+      var price = movePrice(db, m);
+      var v = round(m.qty * price);
+      var r = row(m.item_id);
+      r.in_qty += m.qty; r.in_value = round(r.in_value + v);
+      t.in_qty += m.qty; t.in_value = round(t.in_value + v); t.in_count++;
+      var x = months[m.created_at.slice(0, 7)];
+      if (x) { x.in_qty += m.qty; x.in_value = round(x.in_value + v); }
+      receipts.push({ id: m.id, created_at: m.created_at, item_id: m.item_id, code: r.code, name: r.name, unit: r.unit, qty: m.qty, price: price, value: v,
+        supplier: m.supplier, delivery_no: m.delivery_no, expiry_date: m.expiry_date });
+    });
+    db.requests.forEach(function (rq) {
+      if (rq.created_at.slice(0, n) !== period) return;
+      t.out_count++;
+      var x = months[rq.created_at.slice(0, 7)];
+      lines(db, rq.id).forEach(function (l) {
+        var v = lineValue(db, l);
+        var r = row(l.item_id);
+        r.out_qty += l.qty; r.out_value = round(r.out_value + v);
+        t.out_qty += l.qty; t.out_value = round(t.out_value + v);
+        if (x) { x.out_qty += l.qty; x.out_value = round(x.out_value + v); }
+      });
+    });
+    var list = Object.keys(rows).map(function (k) { return rows[k]; }).sort(function (a, b) { return a.code.localeCompare(b.code); });
+    list.forEach(function (r) { if (r.in_qty) t.in_items++; if (r.out_qty) t.out_items++; });
+    return {
+      period: period, yearly: n === 4, totals: t, items: list,
+      receipts: receipts.sort(function (a, b) { return a.created_at.localeCompare(b.created_at) || a.id - b.id; }),
+      months: Object.keys(months).map(function (k) { return months[k]; }),
+    };
+  }
+
   // สร้างฐานข้อมูลตั้งต้นจาก SEED_DATA (ไฟล์ seed-data.js / SeedData.gs)
   function seed(now, data) {
     if (!data) data = typeof SEED_DATA !== 'undefined' ? SEED_DATA : { departments: [], categories: [], items: [] };
@@ -489,7 +573,7 @@ var BorrowCore = (function () {
     addNames(db, 'units', DEFAULT_UNITS);
     var ctx = { now: now || new Date(), isAdmin: true };
     data.items.forEach(function (x) {
-      run(db, 'saveItem', { code: x[0], name: x[1], category: x[2], unit: x[3], initial_qty: x[4], min_qty: x[5], location: x[6] }, ctx);
+      run(db, 'saveItem', { code: x[0], name: x[1], category: x[2], unit: x[3], initial_qty: x[4], min_qty: x[5], location: x[6], note: OPENING }, ctx);
     });
     return db;
   }
@@ -522,7 +606,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

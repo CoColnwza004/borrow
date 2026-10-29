@@ -114,8 +114,92 @@ const PdfDoc = (() => {
     nodes.forEach((n) => { n.nodeValue = [...seg.segment(n.nodeValue)].map((x) => x.segment).join('\u200B'); });
   }
 
-  // แปลง HTML เป็น PDF (A4) margin = [บน, ซ้าย, ล่าง, ขวา] หน่วย มม.
-  async function render(html, { margin = 0, pageNumbers = false } = {}) {
+  // ---------- แบ่งหน้า A4 เอง ----------
+  // เนื้อหาเรียงเป็นบล็อก (หัวกระดาษ ตาราง หัวข้อ ช่องลงชื่อ) ใส่ทีละบล็อกลงแผ่นสูง 1 หน้า
+  // ตารางยาวเกินหน้า: ตัดแบ่งทีละแถว แล้ว**ใส่หัวตารางซ้ำ**ทุกหน้า (พร้อมหัวข้อ "(ต่อ)") · ช่องลงชื่อไม่ถูกตัดครึ่ง ย้ายไปหน้าถัดไปทั้งบล็อก
+  function paginate(stage, src) {
+    const blocks = [...src.children];
+    src.remove();
+    const pages = [];
+    let page, bottom;
+    const newPage = () => {
+      page = src.cloneNode(false);
+      page.classList.add('pdf-sheet');
+      stage.appendChild(page);
+      pages.push(page);
+      const r = page.getBoundingClientRect();
+      bottom = r.top + page.clientHeight - parseFloat(getComputedStyle(page).paddingBottom);
+    };
+    const fits = (el) => el.getBoundingClientRect().bottom <= bottom + 0.5;
+    // หัวข้อที่อยู่ท้ายหน้า ย้ายไปพร้อมเนื้อหาของมัน
+    const takeHeading = () => {
+      const prev = page.lastElementChild;
+      if (prev && prev.matches('.pdf-h2')) { prev.remove(); return prev; }
+      return null;
+    };
+    const moveToNewPage = (el) => {
+      el.remove();
+      const h = takeHeading();
+      newPage();
+      if (h) page.appendChild(h);
+      page.appendChild(el);
+    };
+    let title = '';
+    const splitTable = (t) => {
+      const body = t.tBodies[0];
+      const rows = [...body.rows];
+      const foot = t.tFoot;
+      body.innerHTML = '';
+      if (foot) foot.remove();
+      const shell = () => {
+        const c = t.cloneNode(false);
+        if (t.tHead) c.appendChild(t.tHead.cloneNode(true));
+        c.appendChild(document.createElement('tbody'));
+        return c;
+      };
+      const continued = () => {
+        newPage();
+        if (title) page.insertAdjacentHTML('beforeend', `<div class="pdf-cont">${esc(title)} (ต่อ)</div>`);
+        const c = shell();
+        page.appendChild(c);
+        return c;
+      };
+      let cur = t;
+      for (const r of rows) {
+        cur.tBodies[0].appendChild(r);
+        if (fits(cur)) continue;
+        r.remove();
+        if (!cur.tBodies[0].rows.length && page.children.length > 1) { moveToNewPage(cur); cur.tBodies[0].appendChild(r); continue; }
+        if (!cur.tBodies[0].rows.length) { cur.tBodies[0].appendChild(r); continue; } // แถวเดียวยาวเกินหน้า: ปล่อยไว้
+        cur = continued();
+        cur.tBodies[0].appendChild(r);
+      }
+      if (foot) {
+        cur.appendChild(foot);
+        if (!fits(cur)) {
+          // แถวรวมไม่พอ: ยกแถวสุดท้ายไปหน้าใหม่พร้อมแถวรวม
+          foot.remove();
+          const last = cur.tBodies[0].lastElementChild;
+          if (last && cur.tBodies[0].rows.length > 1) last.remove();
+          cur = continued();
+          if (last && !last.isConnected) cur.tBodies[0].appendChild(last);
+          cur.appendChild(foot);
+        }
+      }
+    };
+    newPage();
+    for (const b of blocks) {
+      if (b.matches('.pdf-h2')) title = (b.firstChild?.textContent || '').trim();
+      page.appendChild(b);
+      if (fits(b)) continue;
+      if (b.tagName === 'TABLE' && b.tBodies[0]?.rows.length && !b.classList.contains('pdf-keep')) splitTable(b);
+      else if (page.children.length > 1) moveToNewPage(b);
+    }
+    return pages;
+  }
+
+  // แปลง HTML เป็น PDF (A4) ทีละหน้า · เลขหน้ามุมขวาล่างเมื่อมีหลายหน้า
+  async function render(html, { pageNumbers = false } = {}) {
     await loadLib();
     await Promise.all(['400 16px Sarabun', '600 16px Sarabun', '700 16px Sarabun'].map((f) => document.fonts.load(f).catch(() => null)));
     const stage = document.createElement('div');
@@ -124,26 +208,30 @@ const PdfDoc = (() => {
     markThaiWords(stage);
     document.body.appendChild(stage);
     try {
-      let worker = window.html2pdf().set({
-        margin,
+      const pages = paginate(stage, stage.firstElementChild);
+      const opt = {
+        margin: 0,
         image: { type: 'jpeg', quality: 0.96 },
         // scrollX/scrollY = 0 ป้องกันเนื้อหาเลื่อนลงในกระดาษเมื่อหน้าเว็บถูกเลื่อนอยู่
         html2canvas: { scale: 2, backgroundColor: '#ffffff', logging: false, scrollX: 0, scrollY: 0 },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: ['css'], avoid: ['tr', '.pdf-keep'] },
-      }).from(stage.firstElementChild).toPdf();
-      if (pageNumbers) {
-        worker = worker.get('pdf').then((pdf) => {
-          const n = pdf.internal.getNumberOfPages();
-          for (let i = 1; i <= n; i++) {
-            pdf.setPage(i);
-            pdf.setFontSize(9);
-            pdf.setTextColor(120);
-            pdf.text(`${i} / ${n}`, 196, 290, { align: 'right' });
-          }
-        });
+      };
+      const pdf = await window.html2pdf().set(opt).from(pages[0]).toPdf().get('pdf');
+      for (const page of pages.slice(1)) {
+        const canvas = await window.html2pdf().set(opt).from(page).toCanvas().get('canvas');
+        pdf.addPage();
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.96), 'JPEG', 0, 0, 210, (canvas.height * 210) / canvas.width);
       }
-      return await worker.outputPdf('blob');
+      const n = pdf.internal.getNumberOfPages();
+      if (pageNumbers || n > 1) {
+        for (let i = 1; i <= n; i++) {
+          pdf.setPage(i);
+          pdf.setFontSize(9);
+          pdf.setTextColor(120);
+          pdf.text(`${i} / ${n}`, 196, 290, { align: 'right' });
+        }
+      }
+      return pdf.output('blob');
     } finally {
       stage.remove();
     }
@@ -216,7 +304,7 @@ const PdfDoc = (() => {
     </div>`;
   }
 
-  const buildReport = (sum, org, extra) => render(reportTemplate(sum, org, extra), { margin: [10, 0, 14, 0], pageNumbers: true });
+  const buildReport = (sum, org, extra) => render(reportTemplate(sum, org, extra), { pageNumbers: true });
   // ชื่อไฟล์ภาษาอังกฤษ: เบราว์เซอร์บางตัวตัดชื่อไฟล์ภาษาไทยเหลือ "download"
   // summary-2569-10.pdf · summary-2569.pdf (รายปี) · summary-2569-10-ICU.pdf / summary-2569-10-dept3.pdf (เฉพาะแผนก)
   function reportFileName(sum, deptNo) {
@@ -274,8 +362,68 @@ const PdfDoc = (() => {
       </div>
     </div>`;
   }
-  const buildStockReport = (sum, org, extra) => render(stockTemplate(sum, org, extra), { margin: [10, 0, 14, 0], pageNumbers: true });
+  const buildStockReport = (sum, org, extra) => render(stockTemplate(sum, org, extra), { pageNumbers: true });
   const stockFileName = (p) => `stock-${Number(p.slice(0, 4)) + 543}${p.length > 4 ? '-' + p.slice(5, 7) : ''}.pdf`;
+
+  // ---------- สรุปมูลค่ารับเข้า / จ่ายออก ----------
+  // sum = BorrowCore.flowSummary() · kind = 'both' | 'in' | 'out' · extra = { generatedAt, staff }
+  const FLOW_TITLE = { both: 'สรุปมูลค่ารับเข้า–จ่ายออกพัสดุ', in: 'สรุปมูลค่ารับเข้าพัสดุ', out: 'สรุปมูลค่าจ่ายออกพัสดุ' };
+  function flowTemplate(sum, kind, org, extra) {
+    const t = sum.totals;
+    const IN = kind !== 'out';
+    const OUT = kind !== 'in';
+    const period = sum.yearly ? `ประจำปี พ.ศ. ${Number(sum.period) + 543}` : `ประจำเดือน${monthName(sum.period)}`;
+    const empty = (cols) => `<tr><td colspan="${cols}" class="c muted">ไม่มีรายการ</td></tr>`;
+    const stat = (label, value, sub) => `<td><div class="pdf-stat-l">${label}</div><div class="pdf-stat-v">${value}</div><div class="pdf-stat-s">${sub}</div></td>`;
+    const m = (v) => (v ? money(v) : '-');
+    const q = (v) => (v ? num(v) : '-');
+    let n = 0;
+    const h2 = (title, note = '') => `<h2 class="pdf-h2">${++n}. ${title}${note ? ` <span>${note}</span>` : ''}</h2>`;
+    const items = sum.items.filter((x) => (IN && x.in_qty) || (OUT && x.out_qty));
+    const sections = [];
+    if (sum.yearly) {
+      sections.push(`${h2('สรุปรายเดือน')}
+      <table class="pdf-grid"><thead><tr><th>เดือน</th>${IN ? '<th style="width:14%">รับเข้า (หน่วย)</th><th style="width:18%">มูลค่ารับเข้า</th>' : ''}${OUT ? '<th style="width:14%">จ่ายออก (หน่วย)</th><th style="width:18%">มูลค่าจ่ายออก</th>' : ''}</tr></thead>
+        <tbody>${sum.months.map((x) => `<tr><td>${esc(monthName(x.month))}</td>${IN ? `<td class="r">${q(x.in_qty)}</td><td class="r">${money(x.in_value)}</td>` : ''}${OUT ? `<td class="r">${q(x.out_qty)}</td><td class="r">${money(x.out_value)}</td>` : ''}</tr>`).join('')}</tbody>
+        <tfoot><tr class="pdf-total"><th>รวมทั้งปี</th>${IN ? `<td class="r">${num(t.in_qty)}</td><td class="r"><b>${money(t.in_value)}</b></td>` : ''}${OUT ? `<td class="r">${num(t.out_qty)}</td><td class="r"><b>${money(t.out_value)}</b></td>` : ''}</tr></tfoot></table>`);
+    }
+    sections.push(`${h2('สรุปตามรายการพัสดุ', '(เรียงตามรหัส)')}
+      <table class="pdf-grid${IN && OUT ? ' pdf-small' : ''}"><thead><tr><th style="width:6%">ลำดับ</th><th style="width:11%">รหัส</th><th>รายการ</th><th style="width:7%">หน่วย</th>
+        ${IN ? '<th style="width:9%">รับเข้า</th><th style="width:13%">มูลค่ารับเข้า</th>' : ''}${OUT ? '<th style="width:9%">จ่ายออก</th><th style="width:13%">มูลค่าจ่ายออก</th>' : ''}</tr></thead>
+        <tbody>${items.map((x, i) => `<tr><td class="c">${i + 1}</td><td>${esc(x.code)}</td><td>${esc(x.name)}</td><td class="c">${esc(x.unit)}</td>
+          ${IN ? `<td class="r">${q(x.in_qty)}</td><td class="r">${m(x.in_value)}</td>` : ''}${OUT ? `<td class="r">${q(x.out_qty)}</td><td class="r">${m(x.out_value)}</td>` : ''}</tr>`).join('') || empty(4 + (IN ? 2 : 0) + (OUT ? 2 : 0))}</tbody>
+        <tfoot><tr class="pdf-total"><th colspan="4">รวม ${num(items.length)} รายการ</th>${IN ? `<td class="r">${num(t.in_qty)}</td><td class="r"><b>${money(t.in_value)}</b></td>` : ''}${OUT ? `<td class="r">${num(t.out_qty)}</td><td class="r"><b>${money(t.out_value)}</b></td>` : ''}</tr></tfoot></table>`);
+    if (IN) {
+      sections.push(`${h2('รายการรับเข้าทั้งหมด', '(เรียงตามวันที่ · ราคาต่อหน่วยของล็อตที่รับเข้า)')}
+      <table class="pdf-grid pdf-small"><thead><tr><th style="width:13%">วันที่</th><th>รายการ</th><th style="width:8%">จำนวน</th><th style="width:10%">ราคา/หน่วย</th>
+        <th style="width:11%">มูลค่า</th><th style="width:18%">บริษัท</th><th style="width:11%">เลขใบส่งของ</th></tr></thead>
+        <tbody>${sum.receipts.map((x) => `<tr><td>${esc(thaiDateTime(x.created_at)).replace(/ (\d{1,2}:\d{2}(:\d{2})?)$/, '<br>$1')}</td><td>${esc(x.name)}<br><span class="muted">${esc(x.code)}</span></td>
+          <td class="r">${num(x.qty)} ${esc(x.unit)}</td><td class="r">${m(x.price)}</td><td class="r">${m(x.value)}</td><td>${esc(x.supplier || '-')}</td><td>${esc(x.delivery_no || '-')}</td></tr>`).join('') || empty(7)}</tbody>
+        <tfoot><tr class="pdf-total"><th colspan="4">รวมรับเข้า ${num(t.in_count)} ครั้ง</th><td class="r"><b>${money(t.in_value)}</b></td><td colspan="2"></td></tr></tfoot></table>`);
+    }
+    const stats = [];
+    if (IN) stats.push(stat('รับเข้า', num(t.in_qty) + ' หน่วย', num(t.in_items) + ' รายการ · ' + num(t.in_count) + ' ครั้ง'), stat('มูลค่ารับเข้า', money(t.in_value), 'บาท'));
+    if (OUT) stats.push(stat('จ่ายออก', num(t.out_qty) + ' หน่วย', num(t.out_items) + ' รายการ · ' + num(t.out_count) + ' ใบเบิก'), stat('มูลค่าจ่ายออก', money(t.out_value), 'บาท'));
+    const baht = [IN && `รับเข้ารวม ${money(t.in_value)} บาท ( ${bahtText(t.in_value)} )`, OUT && `จ่ายออกรวม ${money(t.out_value)} บาท ( ${bahtText(t.out_value)} )`].filter(Boolean).join(' · ');
+    return `<div class="pdf-report">
+      <div class="pdf-head">
+        <div><div class="pdf-org">${esc(org || 'ระบบเบิกพัสดุ')}</div>
+          <div class="pdf-title">${FLOW_TITLE[kind]} ${esc(period)}</div></div>
+        <div class="pdf-meta">ข้อมูล ณ ${esc(thaiDateTime(extra.generatedAt))}</div>
+      </div>
+      <table class="pdf-stats pdf-keep"><tr>${stats.join('')}</tr></table>
+      <p class="pdf-baht">${baht}</p>
+      ${sections.join('\n')}
+      <div class="pdf-sign pdf-keep">
+        <div class="pdf-sign-box"><div>ลงชื่อ .......................................... ผู้จัดทำรายงาน</div>
+          <div>( ${extra.staff ? esc(extra.staff) : '..........................................'} )</div><div>วันที่ ........ / ........ / ........</div></div>
+        <div class="pdf-sign-box"><div>ลงชื่อ .......................................... หัวหน้างานพัสดุ</div>
+          <div>( .......................................... )</div><div>วันที่ ........ / ........ / ........</div></div>
+      </div>
+    </div>`;
+  }
+  const buildFlowReport = (sum, kind, org, extra) => render(flowTemplate(sum, kind, org, extra), { pageNumbers: true });
+  const flowFileName = (p, kind) => `${{ both: 'in-out', in: 'receive', out: 'issue' }[kind]}-${Number(p.slice(0, 4)) + 543}${p.length > 4 ? '-' + p.slice(5, 7) : ''}.pdf`;
 
   // ต้องเรียกจาก click ของผู้ใช้โดยตรง (เตรียม blob ไว้ก่อน) เพื่อให้เบราว์เซอร์ยอมเปิดหน้าต่างบันทึกไฟล์
   // คืนค่า false ถ้าผู้ใช้กดยกเลิก
@@ -319,5 +467,5 @@ const PdfDoc = (() => {
   }
 
   const preload = () => { loadLib().catch(() => {}); };
-  return { build, buildReport, buildStockReport, stockFileName, save, preload, isIOS, monthName, reportFileName, bahtText, fileName: (r) => `${r.request_no}.pdf` };
+  return { build, buildReport, buildStockReport, stockFileName, buildFlowReport, flowFileName, save, preload, isIOS, monthName, reportFileName, bahtText, fileName: (r) => `${r.request_no}.pdf` };
 })();

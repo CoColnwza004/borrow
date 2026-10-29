@@ -576,6 +576,53 @@ test('core: stock report per month / year — issued qty & value, balance at per
   assert.equal(row(Core.stockSummary(db, '2027'), 'MD-005').balance, 3);
 });
 
+test('core: receive / issue value summary by month and year (opening balance not counted as received)', () => {
+  const db = Core.seed(new Date('2026-01-01T08:00:00'), FIXTURE);
+  assert.ok(db.movements.every((m) => m.note === Core.OPENING));
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const gloves = db.items.find((i) => i.code === 'MD-005');
+  Core.run(db, 'saveItem', { ...paper, price: 120 }, admin);
+  Core.run(db, 'saveItem', { ...gloves, price: 85.5 }, admin);
+  const at = (d) => ({ isAdmin: true, now: new Date(d + 'T09:00:00') });
+  // รับเข้าราคาของล็อตนี้ 110 บาท (ไม่ใส่ = ราคาปัจจุบัน)
+  Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 50, price: '110', supplier: 'บ.ก' }, at('2026-03-05'));
+  Core.run(db, 'stock', { item_id: gloves.id, type: 'receive', qty: 10 }, at('2026-03-06'));
+  assert.equal(db.movements.at(-1).price, 85.5);
+  assert.throws(() => Core.run(db, 'stock', { item_id: gloves.id, type: 'receive', qty: 1, price: '-5' }, at('2026-03-06')), /ราคาต่อหน่วย/);
+  Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 4 }] }, at('2026-03-10'));
+  Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 5 }, at('2026-07-01'));
+  // พัสดุใหม่จากเว็บพร้อมจำนวนเริ่มต้น = รับเข้า (ไม่ใช่ยอดยกมา)
+  const nid = Core.run(db, 'saveItem', { name: 'เทป', price: 10, initial_qty: 3, receive_price: 9 }, at('2026-07-02'));
+  const mar = Core.flowSummary(db, '2026-03');
+  assert.deepEqual(mar.totals, { in_qty: 60, in_value: 6355, in_items: 2, in_count: 2, out_qty: 4, out_value: 480, out_items: 1, out_count: 1 });
+  assert.deepEqual(mar.receipts.map((r) => [r.code, r.qty, r.price, r.value, r.supplier]), [['OF-001', 50, 110, 5500, 'บ.ก'], ['MD-005', 10, 85.5, 855, '']]);
+  assert.deepEqual(mar.items.map((r) => [r.code, r.in_value, r.out_value]), [['MD-005', 855, 0], ['OF-001', 5500, 480]]);
+  const y = Core.flowSummary(db, '2026');
+  assert.equal(y.totals.in_value, 6355 + 600 + 27);
+  assert.equal(y.months.length, 12);
+  assert.deepEqual(y.months.filter((m) => m.in_value || m.out_value).map((m) => [m.month, m.in_value, m.out_value]), [['2026-03', 6355, 480], ['2026-07', 627, 0]]);
+  assert.ok(y.receipts.some((r) => r.item_id === nid && r.price === 9));
+  assert.equal(Core.flowSummary(db, '2026-01').totals.in_qty, 0, 'ยอดยกมาไม่นับเป็นรับเข้า');
+  assert.equal(Core.stockSummary(db, '2026-01').totals.received_qty, 0);
+});
+
+test('core: lookups stay correct as rows are added and removed (indexes)', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const a = Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 1 }] }, user);
+  assert.equal(Core.requestValue(db, a), 0);
+  Core.run(db, 'saveItem', { ...paper, price: 10 }, admin);
+  const b = Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 2 }] }, user);
+  assert.equal(Core.requestValue(db, b), 20);
+  Core.run(db, 'deleteRequest', { id: a, restock: true }, admin);
+  assert.equal(Core.requestValue(db, a), 0);
+  const c = Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 3 }] }, user);
+  assert.equal(Core.requestValue(db, c), 30);
+  const nid = Core.run(db, 'saveItem', { name: 'ใหม่', price: 5 }, admin);
+  const d = Core.run(db, 'createRequest', { ...person, items: [{ item_id: nid, qty: 2 }] }, user);
+  assert.equal(Core.requestValue(db, d), 10);
+});
+
 test('Apps Script: an old borrow-system sheet is cleaned up and keeps its data', () => {
   const { sheets, ctx, triggers } = mockAppsScript();
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
