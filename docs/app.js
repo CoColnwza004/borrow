@@ -12,6 +12,17 @@ const DEMO_KEY = 'supply-demo-db-v3';
 const DEMO_PIN = '1234';
 // สต็อก/แผนกล่าสุด (ข้อมูลสาธารณะเท่านั้น) เก็บไว้ในเครื่อง เพื่อเปิดหน้าได้ทันทีโดยไม่ต้องรอ Google Sheets
 const CACHE_KEY = 'supply-public-cache-v1';
+// ข้อมูลของเจ้าหน้าที่พัสดุ (มีชื่อผู้เบิก) เก็บเฉพาะในแท็บนี้ (sessionStorage) ปิดแท็บ/ออกจากระบบแล้วหายไป
+const ADMIN_CACHE_KEY = 'supply-admin-cache-v1';
+const ssGet = (k) => { try { return sessionStorage.getItem(k) || ''; } catch { return ''; } };
+const ssSet = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* เต็ม/ปิดไว้: ไม่ใช้แคช */ } };
+const ssDel = (k) => { try { sessionStorage.removeItem(k); } catch { /* ignore */ } };
+// จำข้อมูลล่าสุดไว้ เปิดหน้า/รีเฟรชครั้งถัดไปแสดงได้ทันทีโดยไม่ต้องรอ Google Sheets
+function rememberDb() {
+  if (DEMO) return;
+  if (state.pin) ssSet(ADMIN_CACHE_KEY, JSON.stringify(state.db));
+  else lsSet(CACHE_KEY, JSON.stringify(state.db));
+}
 const { STATUS, MOVE } = BorrowCore;
 
 const state = {
@@ -148,27 +159,48 @@ const store = {
     } else {
       state.db = BorrowCore.normalize((await remote('load')).state);
       state.syncedAt = new Date();
-      if (!state.pin) lsSet(CACHE_KEY, JSON.stringify(state.db));
+      rememberDb();
     }
   },
-  async act(action, payload, { quiet = false } = {}) {
-    if (!quiet) $('#loading').hidden = false;
+  // ทุกคำสั่งที่บันทึกข้อมูล: ป๊อปอัปกลางจอ "กำลังดำเนินการ" → "สำเร็จ"
+  // done = false: หน้าถัดไปแสดงผลสำเร็จเอง · done = (result) => [หัวข้อ, รายละเอียด] ข้อความสำเร็จเฉพาะงาน
+  async act(action, payload, { quiet = false, done = true, busy } = {}) {
+    const text = ACT_TEXT[action] || ACT_TEXT.default;
+    const hud = quiet ? null : progressHud(...(busy || text.slice(0, 2)));
     try {
-      if (DEMO) {
-        const db = structuredClone(demoDb); // ถ้า error กลางทาง ข้อมูลเดิมไม่เสีย
-        const result = BorrowCore.run(db, action, payload, { isAdmin: state.pin === DEMO_PIN });
-        demoDb = db;
-        demoSave(db);
-        state.db = demoView(action === 'createRequest' ? result : 0);
-        return result;
-      }
-      const data = await remote(action, payload);
-      state.db = BorrowCore.normalize(data.state);
-      return data.result;
-    } finally {
-      $('#loading').hidden = true;
+      const result = await this.run(action, payload);
+      if (hud) done ? hud.success(...(typeof done === 'function' ? done(result) : text.slice(2))) : hud.close();
+      return result;
+    } catch (e) {
+      if (hud) { hud.fail(e.message); e.shown = true; }
+      throw e;
     }
   },
+  async run(action, payload) {
+    if (DEMO) {
+      const db = structuredClone(demoDb); // ถ้า error กลางทาง ข้อมูลเดิมไม่เสีย
+      const result = BorrowCore.run(db, action, payload, { isAdmin: state.pin === DEMO_PIN });
+      demoDb = db;
+      demoSave(db);
+      state.db = demoView(action === 'createRequest' ? result : 0);
+      return result;
+    }
+    const data = await remote(action, payload);
+    state.db = BorrowCore.normalize(data.state);
+    state.syncedAt = new Date();
+    if (state.pin) rememberDb(); // ผู้ใช้ทั่วไป: ไม่เก็บใบเบิกที่มีชื่อผู้เบิกไว้ในเครื่อง
+    return data.result;
+  },
+};
+// ข้อความป๊อปอัป: [กำลังทำ, รายละเอียด, สำเร็จ, รายละเอียด]
+const ACT_TEXT = {
+  createRequest: ['กำลังบันทึกใบเบิก', 'กำลังตัดสต็อกและบันทึกลง Google Sheet…', 'บันทึกใบเบิกเรียบร้อย', ''],
+  saveItem: ['กำลังบันทึกข้อมูลพัสดุ', 'กำลังบันทึกลง Google Sheet…', 'บันทึกข้อมูลพัสดุเรียบร้อย', ''],
+  stock: ['กำลังบันทึกสต็อก', 'กำลังปรับยอดและบันทึกลง Google Sheet…', 'บันทึกสต็อกเรียบร้อย', 'ยอดคงเหลืออัปเดตแล้ว'],
+  addMaster: ['กำลังเพิ่มรายการ', 'กำลังบันทึกลง Google Sheet…', 'เพิ่มเรียบร้อย', ''],
+  removeMaster: ['กำลังลบรายการ', 'กำลังบันทึกลง Google Sheet…', 'ลบเรียบร้อย', ''],
+  deleteRequest: ['กำลังลบใบเบิก', 'กำลังบันทึกลง Google Sheet…', 'ลบใบเบิกเรียบร้อย', ''],
+  default: ['กำลังดำเนินการ', 'กรุณารอสักครู่…', 'ดำเนินการสำเร็จ', ''],
 };
 
 // ===================== Derived views =====================
@@ -238,7 +270,7 @@ function closeModal() {
 modal.addEventListener('cancel', (e) => { e.preventDefault(); closeModal(); });
 $('.sheet-head').addEventListener('submit', (e) => { e.preventDefault(); closeModal(); });
 const safe = (fn) => async (...args) => {
-  try { await fn(...args); } catch (e) { toast(e.message, true); }
+  try { await fn(...args); } catch (e) { if (!e.shown) toast(e.message, true); }
 };
 // ช่องกรอกที่ผิด: ขอบแดง + สั่นเบา ๆ จนกว่าจะแก้
 function flag(inp) {
@@ -320,6 +352,7 @@ $('#btn-admin').addEventListener('click', safe(async () => {
     state.pin = '';
     state.sheet = null;
     sessionStorage.removeItem('pin');
+    ssDel(ADMIN_CACHE_KEY);
     renderMode();
     await store.load();
     refresh();
@@ -420,53 +453,86 @@ async function login(pin) {
 }
 
 // ป๊อปอัปกลางจอ: "กำลังเข้าสู่ระบบ" → "เข้าสู่ระบบสำเร็จ" แสดง 5 วินาที (แตะหรือกด Esc เพื่อปิดก่อนได้)
-function loginHud() {
-  $('.hud')?.remove();
-  const el = document.createElement('div');
-  el.className = 'hud';
+// ป๊อปอัปกลางจอเป็น <dialog> แบบ modal: อยู่ชั้นบนสุด เหนือหน้าต่างฟอร์มที่เปิดอยู่ และกันกดซ้ำระหว่างทำงาน
+function mountHud(cls = '') {
+  $$('.hud').forEach((h) => { try { h.close(); } catch { /* ignore */ } h.remove(); });
+  const el = document.createElement('dialog');
+  el.className = ('hud ' + cls).trim();
   el.setAttribute('role', 'status');
   el.setAttribute('aria-live', 'polite');
+  document.body.append(el);
+  try { el.showModal(); } catch { el.setAttribute('open', ''); }
+  return el;
+}
+// ปิดป๊อปอัปพร้อมอนิเมชัน
+function dismissHud(el) {
+  if (!el.isConnected || el.classList.contains('out')) return;
+  el.classList.add('out');
+  setTimeout(() => { try { el.close(); } catch { /* ignore */ } el.remove(); }, motionOK() ? 240 : 0);
+}
+// ถ้ามีหน้าต่างอื่นเปิดทับหลังจากนี้ ยกป๊อปอัปขึ้นมาไว้บนสุดอีกครั้ง
+function raiseHud(el) {
+  setTimeout(() => {
+    if (!el.isConnected || !el.open || el.classList.contains('out')) return;
+    if (![...document.querySelectorAll('dialog[open]')].some((d) => d !== el && !d.classList.contains('hud'))) return;
+    try { el.close(); el.showModal(); } catch { /* ignore */ }
+  }, 0);
+}
+const HUD_OK = '<span class="hud-ic" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="30"/><path d="M20 33.5 28.5 42 45 24"/></svg></span>';
+const HUD_ERR = '<span class="hud-ic" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="30"/><path d="M23 23 41 41M41 23 23 41"/></svg></span>';
+
+// "กำลังดำเนินการ…" → success() / fail() / close()
+function progressHud(title, sub = '') {
+  const el = mountHud('busy');
   el.innerHTML = `<div class="hud-card" data-state="loading" tabindex="-1">
       <span class="hud-spin" aria-hidden="true"></span>
-      <h3>กำลังเข้าสู่ระบบ</h3>
-      <p>กำลังตรวจสอบรหัส PIN…</p>
+      <h3>${esc(title)}</h3>
+      ${sub ? `<p>${esc(sub)}</p>` : ''}
     </div>`;
-  document.body.append(el);
   const card = $('.hud-card', el);
   let timer;
-  const close = () => {
-    if (!el.isConnected || el.classList.contains('out')) return;
-    clearTimeout(timer);
-    document.removeEventListener('keydown', onKey);
-    el.classList.add('out');
-    setTimeout(() => el.remove(), motionOK() ? 260 : 0);
-  };
-  const onKey = (e) => { if (e.key === 'Escape' && card.dataset.state === 'ok') close(); };
-  card.addEventListener('click', () => { if (card.dataset.state === 'ok') close(); });
-  document.addEventListener('keydown', onKey);
+  const close = () => { clearTimeout(timer); dismissHud(el); };
+  // ระหว่างทำงานกด Esc ไม่ได้ · เสร็จแล้วแตะที่ใดก็ได้ / Esc เพื่อปิด
+  el.addEventListener('cancel', (e) => { e.preventDefault(); if (card.dataset.state !== 'loading') close(); });
+  el.addEventListener('click', () => { if (card.dataset.state !== 'loading') close(); });
   const swap = (state, html) => {
+    el.classList.remove('busy');
     card.dataset.state = state;
     card.innerHTML = html;
     if (motionOK()) card.animate([{ transform: 'scale(.96)' }, { transform: 'scale(1.02)' }, { transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.34,1.56,.64,1)' });
   };
   return {
+    el,
+    close,
+    // ms = เวลาแสดงก่อนปิดเอง · html = เนื้อหาเพิ่มเติม (escape แล้ว)
+    success(t = 'ดำเนินการสำเร็จ', p = '', { ms = 1500, html = '' } = {}) {
+      swap('ok', `${HUD_OK}<h3>${esc(t)}</h3>${p ? `<p>${esc(p)}</p>` : ''}${html}<span class="hud-bar" aria-hidden="true"><i style="animation-duration:${ms}ms"></i></span>`);
+      if (motionOK()) navigator.vibrate?.(12);
+      timer = setTimeout(close, ms);
+      raiseHud(el);
+    },
+    async fail(msg, t = 'ดำเนินการไม่สำเร็จ') {
+      swap('error', `${HUD_ERR}<h3>${esc(t)}</h3><p>${esc(msg)}</p><span class="hud-bar" aria-hidden="true"><i style="animation-duration:2600ms"></i></span>`);
+      raiseHud(el);
+      timer = setTimeout(close, 2600);
+      await sleep(1400);
+    },
+  };
+}
+
+function loginHud() {
+  const hud = progressHud('กำลังเข้าสู่ระบบ', 'กำลังตรวจสอบรหัส PIN…');
+  return {
     success() {
-      swap('ok', `
-        <span class="hud-ic" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="30"/><path d="M20 33.5 28.5 42 45 24"/></svg></span>
-        <h3>เข้าสู่ระบบสำเร็จ</h3>
-        <p>ยินดีต้อนรับ เจ้าหน้าที่พัสดุ</p>
-        <div class="hud-tags"><span>พัสดุคงเหลือ</span><span>ประวัติเบิก</span><span>ภาพรวม</span><span>Google Sheet</span><span>ตั้งค่า</span></div>
-        <p class="hud-hint">${$('#nav-bar').classList.contains('compact') ? 'เปิดเมนูเจ้าหน้าที่พัสดุได้ที่ปุ่ม ☰ มุมขวาบน' : 'เมนูเจ้าหน้าที่พัสดุอยู่ที่แถบด้านบน'}</p>
-        <span class="hud-bar" aria-hidden="true"><i></i></span>`);
-      timer = setTimeout(close, 5000);
+      hud.success('เข้าสู่ระบบสำเร็จ', 'ยินดีต้อนรับ เจ้าหน้าที่พัสดุ', {
+        ms: 5000,
+        html: `<div class="hud-tags"><span>พัสดุคงเหลือ</span><span>ประวัติเบิก</span><span>ภาพรวม</span><span>Google Sheet</span><span>ตั้งค่า</span></div>
+          <p class="hud-hint">${$('#nav-bar').classList.contains('compact') ? 'เปิดเมนูเจ้าหน้าที่พัสดุได้ที่ปุ่ม ☰ มุมขวาบน' : 'เมนูเจ้าหน้าที่พัสดุอยู่ที่แถบด้านบน'}</p>`,
+      });
     },
     async fail(msg) {
-      swap('error', `
-        <span class="hud-ic" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="30"/><path d="M23 23 41 41M41 23 23 41"/></svg></span>
-        <h3>เข้าสู่ระบบไม่สำเร็จ</h3>
-        <p>${esc(msg)}</p>`);
-      await sleep(1500);
-      close();
+      await hud.fail(msg, 'เข้าสู่ระบบไม่สำเร็จ');
+      hud.close();
       await sleep(motionOK() ? 260 : 0);
     },
   };
@@ -556,7 +622,11 @@ $('#menu-toggle').addEventListener('click', () => setMenu(!$('#nav-bar').classLi
 $('#nav-links').addEventListener('click', (e) => { if (e.target.closest('a')) setMenu(false); });
 
 // ปุ่ม "สรุปรายเดือน" ในหน้าภาพรวม / ประวัติ
-document.addEventListener('click', (e) => { const b = e.target.closest('[data-monthly]'); if (b && isAdmin()) showMonthlyReport(b.dataset.month); });
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-monthly]');
+  if (b && isAdmin()) showMonthlyReport(b.dataset.month);
+  if (e.target.closest('[data-stockreport]') && isAdmin()) showStockReport();
+});
 
 // องค์ประกอบที่ค่อย ๆ ลอยขึ้นตามลำดับการอ่าน เมื่อเปลี่ยนหน้า (ไม่เล่นซ้ำตอนซิงก์ข้อมูล/พิมพ์ค้นหา)
 const ENTER = '.page > .banner, .hero > *, .choice, .stat-strip, .page > .page-head, #rf > .page-head, .page > .page-head-row, .page > .toolbar, #rf > .group, .item-card, .rows > li, .stats > .stat, .grid-2 > .card, .page > section.card';
@@ -664,16 +734,18 @@ async function syncFromSheet({ manual = false } = {}) {
   const key = currentRoute();
   syncing = true;
   showLive(true);
+  const hud = manual ? progressHud('กำลังดึงข้อมูลล่าสุด', 'จาก Google Sheet…') : null;
   try {
     await store.load();
     const snap = JSON.stringify(state.db);
-    if (snap === lastSnapshot) { if (manual) toast('ยอดเป็นปัจจุบันแล้ว'); return; }
+    hud?.success(snap === lastSnapshot ? 'ข้อมูลเป็นปัจจุบันแล้ว' : 'อัปเดตข้อมูลแล้ว', liveText());
+    if (snap === lastSnapshot) return;
     lastSnapshot = snap;
     if (modalOpen() || currentRoute() !== key) return;
     if (key === 'request') redrawPickList?.();
     else if (key === 'items' && redrawItems) redrawItems();
     else render();
-  } catch (e) { toast(e.message, true); } finally {
+  } catch (e) { if (hud) hud.fail(e.message); else toast(e.message, true); } finally {
     syncing = false;
     showLive(false);
   }
@@ -768,7 +840,7 @@ function renderRequestForm(page) {
         </div>
         <div class="slip-items" id="rf-slip" aria-live="polite"></div>
         <div class="checkout">
-          <div class="sum"><strong id="rf-count"></strong><span id="rf-detail"></span></div>
+          <div class="sum"><strong id="rf-count"></strong><b class="sum-money" id="rf-money" hidden></b><span id="rf-detail"></span></div>
           <button class="btn primary lg" id="rf-submit"></button>
         </div>
       </aside>
@@ -814,19 +886,22 @@ function renderRequestForm(page) {
     const chosen = Object.entries(state.picks).map(([id, q]) => ({ item: itemById(id), q })).filter((x) => x.item);
     $('#rf-count').textContent = chosen.length ? `${chosen.length} รายการ · ${fmtNum(chosen.reduce((s, x) => s + x.q, 0))} ชิ้น` : 'ยังไม่ได้เลือกพัสดุ';
     const money = round2(chosen.reduce((s, x) => s + x.q * (x.item.price || 0), 0));
-    $('#rf-detail').textContent = chosen.length ? (money ? `รวม ${fmtMoney(money)} บาท · ` : '') + chosen.map((x) => `${x.item.name} ×${x.q}`).join(', ') : 'เลือกพัสดุที่ต้องการเบิกจากรายการด้านบน';
+    $('#rf-money').hidden = !money;
+    $('#rf-money').textContent = `ราคารวม ${fmtMoney(money)} บาท`;
+    $('#rf-detail').textContent = chosen.length ? chosen.map((x) => `${x.item.name} ×${x.q}`).join(', ') : 'เลือกพัสดุที่ต้องการเบิกจากรายการด้านบน';
     $('#rf-submit').textContent = 'ยืนยันการเบิก';
     form.classList.toggle('has-picks', chosen.length > 0);
     // ใบเบิกด้านขวา (จอกว้าง): รายการที่เลือกพร้อมปุ่มปรับจำนวน
     $('#rf-slip').innerHTML = chosen.length
       ? `<ul class="slip-list">${chosen.map(({ item: i, q }) => `<li>
-          <div class="slip-name"><span>${esc(i.name)}</span><small>${esc(i.code)} · ${esc(i.unit)}${q > i.available_qty ? ' · <em class="neg">ยอดจะติดลบ</em>' : ''}</small></div>
+          <div class="slip-name"><span>${esc(i.name)}</span><small>${esc(i.code)} · ${esc(i.unit)}${i.price > 0 ? ` · ${fmtMoney(i.price)} × ${fmtNum(q)} = <b>${fmtMoney(i.price * q)}</b> บาท` : ''}${q > i.available_qty ? ' · <em class="neg">ยอดจะติดลบ</em>' : ''}</small></div>
           <div class="mini-step">
             <button type="button" data-dec="${i.id}" aria-label="${q === 1 ? 'นำออก' : 'ลด'} ${esc(i.name)}">${q === 1 ? IC.trash : IC.minus}</button>
             <b>${fmtNum(q)}</b>
             <button type="button" data-inc="${i.id}" aria-label="เพิ่ม ${esc(i.name)}" ${q >= MAX_QTY ? 'disabled' : ''}>${IC.plus}</button>
           </div></li>`).join('')}</ul>`
       : `<div class="slip-empty">${ICON.box}<span>ยังไม่ได้เลือกพัสดุ<br><small>แตะ "+ เลือก" ที่รายการด้านซ้าย</small></span></div>`;
+    if (chosen.length && money) $('#rf-slip').insertAdjacentHTML('beforeend', `<div class="slip-total"><span>ราคารวมทั้งหมด</span><b>${fmtMoney(money)} บาท</b></div>`);
   }
 
   // ค้นหาแบบไม่สนตัวพิมพ์เล็ก/ใหญ่ ช่องว่าง และวงเล็บ: "airway100" เจอ "Airway 100mm"
@@ -872,7 +947,8 @@ function renderRequestForm(page) {
       return `<li class="pick ${out ? 'out' : ''} ${n ? 'selected' : ''}">
         <div class="pick-body">
           <div class="pick-name">${esc(i.name)}</div>
-          <div class="pick-meta"><span class="code">${esc(i.code)}</span>${stockBadge(i)}</div>
+          <div class="pick-meta"><span class="code">${esc(i.code)}</span>${stockBadge(i)}${i.price > 0 ? `<span class="price">${fmtMoney(i.price)} บาท / ${esc(i.unit)}</span>` : ''}</div>
+          ${n && i.price > 0 ? `<div class="pick-sum">รวม ${fmtMoney(i.price * n)} บาท</div>` : ''}
         </div>
         ${n ? `<div class="stepper">
             <button type="button" data-dec="${i.id}" class="${n === 1 ? 'rm' : ''}" aria-label="${n === 1 ? 'นำออก' : 'ลด'}">${n === 1 ? IC.trash : IC.minus}</button>
@@ -997,6 +1073,10 @@ function renderRequestForm(page) {
     const items = Object.entries(state.picks).map(([item_id, qty]) => ({ item_id: Number(item_id), qty }));
     if (!items.length) throw new Error('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
     primeSound();
+    // ป๊อปอัปสรุปรายการและยอดเงินก่อนบันทึกจริง
+    confirmWithdraw(data, items, () => submit(data, items));
+  }));
+  async function submit(data, items) {
     const btn = $('#rf-submit');
     btn.disabled = true;
     btn.classList.add('busy');
@@ -1004,7 +1084,7 @@ function renderRequestForm(page) {
       let id;
       try {
         // type: 'withdraw' ให้ Apps Script เวอร์ชันเก่า (ก่อนตัดระบบยืม) ยังรับใบเบิกได้จนกว่าจะอัปเดต
-        id = await store.act('createRequest', { ...data, type: 'withdraw', items });
+        id = await store.act('createRequest', { ...data, type: 'withdraw', items }, { done: false });
       } catch (err) {
         // Apps Script เวอร์ชันเก่ายังไม่ให้เบิกของที่หมด (ยอดติดลบ)
         if (/คงเหลือไม่พอ/.test(err.message)) {
@@ -1024,11 +1104,38 @@ function renderRequestForm(page) {
       btn.disabled = false;
       btn.classList.remove('busy');
     }
-  }));
+  }
 
   // ตัดรายการที่ถูกลบ/ปิดใช้งานออกจากที่เลือกไว้
   for (const id of Object.keys(state.picks)) if (!itemById(id)?.active) delete state.picks[id];
   drawList();
+}
+
+// ป๊อปอัปยืนยันการเบิก: ผู้เบิก แผนก รายการพัสดุ จำนวน ราคา และยอดรวม
+function confirmWithdraw(data, items, onOk) {
+  const lines = items.map(({ item_id, qty }) => {
+    const i = itemById(item_id);
+    return { name: i.name, code: i.code, unit: i.unit, qty, price: i.price || 0, value: round2(qty * (i.price || 0)), neg: qty > i.available_qty };
+  });
+  const total = round2(lines.reduce((s, l) => s + l.value, 0));
+  const qty = lines.reduce((s, l) => s + l.qty, 0);
+  confirmBox({
+    title: 'ยืนยันการเบิกพัสดุ?',
+    tone: 'primary',
+    icon: ICON.withdraw,
+    cls: 'wd-confirm',
+    cancel: 'กลับไปแก้ไข',
+    ok: 'ยืนยันเบิก',
+    html: `<p class="wd-who"><b>${esc(data.borrower_name.trim())}</b> · ${esc(deptFull(data.department))}</p>
+      <div class="wd-lines"><table>
+        <thead><tr><th>พัสดุ</th><th class="num">จำนวน</th><th class="num">รวม (บาท)</th></tr></thead>
+        <tbody>${lines.map((l) => `<tr><td>${esc(l.name)}<div class="muted small">${esc(l.code)}${l.price ? ` · ${fmtMoney(l.price)} บาท / ${esc(l.unit)}` : ''}${l.neg ? ' · <em class="neg">ยอดจะติดลบ</em>' : ''}</div></td>
+          <td class="num">${fmtNum(l.qty)} ${esc(l.unit)}</td><td class="num">${l.price ? fmtMoney(l.value) : '-'}</td></tr>`).join('')}</tbody>
+      </table></div>
+      <div class="wd-total"><span>${fmtNum(lines.length)} รายการ · ${fmtNum(qty)} หน่วย</span><span>ราคารวม <b>${fmtMoney(total)}</b> บาท</span></div>
+      ${data.note ? `<p class="muted small">หมายเหตุ: ${esc(data.note)}</p>` : ''}`,
+    onOk,
+  });
 }
 
 // ===================== Google Sheet (เจ้าหน้าที่) =====================
@@ -1172,11 +1279,7 @@ function savedPopup(name) {
 }
 // ป๊อปอัปกลางจอ (เครื่องหมายถูก) ปิดเองใน 6 วินาที หรือแตะ/กด Esc · text เป็น HTML ที่ escape แล้ว
 function donePopup({ title, tag, name, text = '', cls = '' }) {
-  $('.hud')?.remove();
-  const el = document.createElement('div');
-  el.className = 'hud saved ' + cls;
-  el.setAttribute('role', 'status');
-  el.setAttribute('aria-live', 'polite');
+  const el = mountHud('saved ' + cls);
   el.innerHTML = `<div class="hud-card" data-state="ok" tabindex="-1">
       <span class="hud-ic ok" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="30"/><path d="M20 33.5 28.5 42 45 24"/></svg></span>
       <h3>${esc(title)}</h3>
@@ -1185,19 +1288,12 @@ function donePopup({ title, tag, name, text = '', cls = '' }) {
       <button type="button" class="btn primary lg saved-ok">ตกลง</button>
       <span class="hud-bar" aria-hidden="true"><i style="animation-duration:6s"></i></span>
     </div>`;
-  document.body.append(el);
-  const close = () => {
-    if (!el.isConnected || el.classList.contains('out')) return;
-    clearTimeout(timer);
-    document.removeEventListener('keydown', onKey);
-    el.classList.add('out');
-    setTimeout(() => el.remove(), motionOK() ? 260 : 0);
-  };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const close = () => { clearTimeout(timer); dismissHud(el); };
   const timer = setTimeout(close, 6000);
-  $('.hud-card', el).addEventListener('click', close);
-  document.addEventListener('keydown', onKey);
+  el.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+  el.addEventListener('click', close);
   $('.saved-ok', el).focus({ preventScroll: true });
+  raiseHud(el);
   if (motionOK()) navigator.vibrate?.(30);
 }
 
@@ -1205,8 +1301,10 @@ async function downloadPdf(r, btn) {
   const label = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> กำลังสร้าง PDF';
+  const hud = progressHud('กำลังสร้างไฟล์ PDF', `ใบเบิก ${r.request_no}`);
   try {
     const blob = await PdfDoc.build(r, CONFIG.HOSPITAL_NAME, CONFIG.STAFF_NAME);
+    hud.success('สร้าง PDF เรียบร้อย', `กดปุ่ม "บันทึก ${PdfDoc.fileName(r)}" เพื่อเก็บไฟล์`);
     // การสร้างอาจใช้เวลา เบราว์เซอร์อาจไม่ยอมเปิดหน้าต่างบันทึกโดยไม่มีการคลิกใหม่ จึงให้กดยืนยันอีกครั้ง
     btn.innerHTML = `${ICON.doc} บันทึก ${esc(PdfDoc.fileName(r))}`;
     btn.disabled = false;
@@ -1217,6 +1315,8 @@ async function downloadPdf(r, btn) {
   } catch (e) {
     btn.innerHTML = label;
     btn.disabled = false;
+    hud.fail(e.message);
+    e.shown = true;
     throw e;
   }
 }
@@ -1237,7 +1337,7 @@ function renderItems(page) {
       <select id="f-cat" style="width:auto">${options(state.db.categories, params.get('cat'), 'ทุกหมวดหมู่')}</select>
       <label class="check"><input type="checkbox" id="f-low" ${params.get('low') === '1' ? 'checked' : ''}> ใกล้หมด</label>
       <span class="spacer"></span>
-      ${isAdmin() ? '<button class="btn" id="btn-export">ส่งออก CSV</button>' : ''}
+      ${isAdmin() ? `<button class="btn" id="btn-export">ส่งออก CSV</button><button class="btn primary" data-stockreport>${ICON.doc} รายงานคงเหลือ (PDF)</button>` : ''}
     </div>
     <div class="item-grid" id="items-grid"></div>`);
 
@@ -1376,11 +1476,13 @@ function bindMasterFields(form) {
       const name = inp.value.trim();
       if (!name) { inp.focus(); throw new Error('กรุณาพิมพ์ชื่อ' + MASTER_UI[table].label); }
       if (state.oldServer) throw new Error(OLD_SERVER_MSG);
-      if (!(state.db[table] || []).some((s) => s.name === name)) await store.act('addMaster', { table, name }, { quiet: true });
+      const label = MASTER_UI[table].label;
+      if (!(state.db[table] || []).some((s) => s.name === name)) {
+        await store.act('addMaster', { table, name }, { busy: [`กำลังเพิ่ม${label}`, name], done: () => [`เพิ่ม${label}เรียบร้อย`, `${name} · บันทึกลงแท็บ${label}ใน Google Sheet แล้ว`] });
+      }
       sel.innerHTML = masterOptions(table, name, sel.dataset.blank);
       inp.value = '';
       sel.dispatchEvent(new Event('change'));
-      toast(`เพิ่ม${MASTER_UI[table].label} ${name} แล้ว`);
     });
     $('[data-a="add"]', box).addEventListener('click', add);
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
@@ -1471,8 +1573,9 @@ function itemForm(item) {
       // Apps Script เวอร์ชันเก่ายังต้องการรหัส: ส่งรหัสที่คำนวณไว้ให้ (เวอร์ชันใหม่ตั้งให้เองที่เซิร์ฟเวอร์ ไม่ชนกันแม้เพิ่มพร้อมกัน)
       if (state.oldServer) data.code = nextCode;
     }
-    const id = await store.act('saveItem', data);
-    toast(item ? 'บันทึกเรียบร้อย' : `เพิ่มพัสดุ ${itemById(id)?.code || ''} เรียบร้อย`);
+    const id = await store.act('saveItem', data, {
+      done: (id) => (item ? ['บันทึกข้อมูลพัสดุเรียบร้อย', data.name] : ['เพิ่มพัสดุใหม่เรียบร้อย', `${itemById(id)?.code || ''} · ${data.name}`]),
+    });
     refresh();
     showItem(id);
   }));
@@ -1497,8 +1600,10 @@ function stockForm(item, type) {
   form.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
     const data = { item_id: item.id, type, ...formValues(form), ...(type === 'receive' ? lotData(form) : {}) };
-    await store.act('stock', data);
-    toast('ปรับปรุงสต็อกเรียบร้อย');
+    await store.act('stock', data, {
+      done: () => [{ receive: 'รับเข้าสต็อกเรียบร้อย', adjust: 'ปรับยอดตามที่นับได้เรียบร้อย', lost: 'ตัดชำรุด/สูญหายเรียบร้อย' }[type],
+        `${item.name} · คงเหลือ ${fmtNum(itemById(item.id)?.available_qty)} ${item.unit}`],
+    });
     refresh();
     showItem(item.id);
   }));
@@ -1604,7 +1709,7 @@ function confirmDeleteRequest(r) {
     ok: 'ลบใบเบิก',
     onOk: async (d) => {
       const restock = $('[name=restock]', d).checked;
-      await store.act('deleteRequest', { id: r.id, restock });
+      await store.act('deleteRequest', { id: r.id, restock }, { done: false });
       closeModal();
       refresh();
       donePopup({
@@ -1617,19 +1722,19 @@ function confirmDeleteRequest(r) {
   });
 }
 
-// ป๊อปอัปยืนยันกลางจอ (ปุ่มยืนยันสีแดง) onOk ทำงานเสร็จจึงปิด ถ้า error แสดงข้อความแล้วค้างไว้ให้ลองใหม่
-function confirmBox({ title, html = '', ok = 'ยืนยัน', onOk }) {
+// ป๊อปอัปยืนยันกลางจอ (danger = ปุ่มยืนยันสีแดง) onOk ทำงานเสร็จจึงปิด ถ้า error แสดงข้อความแล้วค้างไว้ให้ลองใหม่
+function confirmBox({ title, html = '', ok = 'ยืนยัน', cancel = 'ยกเลิก', onOk, tone = 'danger', icon = IC.trash, cls = '' }) {
   $('dialog.ask')?.remove();
   const d = document.createElement('dialog');
-  d.className = 'ask confirm';
+  d.className = `ask confirm ${cls}`.trim();
   d.setAttribute('aria-labelledby', 'confirm-t');
   d.innerHTML = `
-    <span class="ask-ic danger" aria-hidden="true">${IC.trash}</span>
+    <span class="ask-ic ${tone}" aria-hidden="true">${icon}</span>
     <h3 id="confirm-t">${esc(title)}</h3>
     ${html}
     <div class="ask-actions">
-      <button type="button" class="btn lg" data-c="no">ยกเลิก</button>
-      <button type="button" class="btn danger lg" data-c="ok">${esc(ok)}</button>
+      <button type="button" class="btn lg" data-c="no">${esc(cancel)}</button>
+      <button type="button" class="btn ${tone === 'danger' ? 'danger' : 'primary'} lg" data-c="ok">${esc(ok)}</button>
     </div>`;
   document.body.append(d);
   const close = () => {
@@ -1642,7 +1747,7 @@ function confirmBox({ title, html = '', ok = 'ยืนยัน', onOk }) {
   const okBtn = $('[data-c="ok"]', d);
   okBtn.addEventListener('click', async () => {
     okBtn.disabled = true;
-    try { await onOk(d); close(); } catch (e) { toast(e.message, true); okBtn.disabled = false; }
+    try { await onOk(d); close(); } catch (e) { if (!e.shown) toast(e.message, true); okBtn.disabled = false; }
   });
   d.showModal();
   $('[data-c="no"]', d).focus();
@@ -1706,6 +1811,7 @@ function showMonthlyReport(pick) {
     const btn = $('#mr-pdf', body);
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> กำลังสร้าง PDF';
+    const hud = progressHud('กำลังสร้างรายงาน PDF', 'กรุณารอสักครู่…');
     try {
       const blob = await PdfDoc.buildReport(sum, CONFIG.HOSPITAL_NAME, {
         generatedAt: nowStamp(),
@@ -1714,10 +1820,13 @@ function showMonthlyReport(pick) {
         lines: (r) => requestView(r).items,
       });
       const name = PdfDoc.reportFileName(sum, depts.indexOf(sum.department) + 1);
+      hud.success('สร้างรายงานเรียบร้อย', `กดปุ่ม "บันทึก ${name}" เพื่อเก็บไฟล์`);
       btn.innerHTML = `${ICON.doc} บันทึก ${esc(name)}`;
       btn.onclick = safe(async () => { if (await PdfDoc.save(blob, name)) { closeModal(); savedPopup(name); } });
     } catch (e) {
       btn.innerHTML = `${ICON.doc} สร้าง PDF`;
+      hud.fail(e.message);
+      e.shown = true;
       throw e;
     } finally {
       btn.disabled = false;
@@ -1733,6 +1842,86 @@ function showMonthlyReport(pick) {
   }));
   periodSel.addEventListener('change', preview);
   $('#mr-dept', body).addEventListener('change', preview);
+  preview();
+}
+// ===================== รายงานพัสดุคงเหลือ (เจ้าหน้าที่): รายเดือน / รายปี =====================
+function showStockReport() {
+  const thisMonth = today().slice(0, 7);
+  const used = [...state.db.movements, ...state.db.requests].map((x) => x.created_at.slice(0, 7));
+  const months = [...new Set([thisMonth, ...used])].filter(Boolean).sort().reverse();
+  const years = [...new Set(months.map((m) => m.slice(0, 4)))].sort().reverse();
+  const body = openModal('รายงานพัสดุคงเหลือ', `
+    <div class="mr-form">
+      <div class="segmented" id="sr-kind" role="group" aria-label="ช่วงเวลา">
+        <button type="button" data-k="month" class="active">รายเดือน</button><button type="button" data-k="year">รายปี</button></div>
+      <div class="fields"><label class="field full" id="sr-period-l">เลือกเดือน<select id="sr-period"></select></label></div>
+    </div>
+    <div id="sr-preview"></div>
+    <div class="actions"><button class="btn" id="sr-csv">ส่งออก CSV</button><span class="spacer"></span><button class="btn primary lg" id="sr-pdf">${ICON.doc} สร้าง PDF</button></div>`);
+  let kind = 'month';
+  let sum;
+  const sel = $('#sr-period', body);
+  const fill = (keep) => {
+    const list = kind === 'month' ? months : years;
+    sel.innerHTML = list.map((m) => `<option value="${m}">${esc(kind === 'month' ? PdfDoc.monthName(m) : 'ปี พ.ศ. ' + (Number(m) + 543))}</option>`).join('');
+    sel.value = list.includes(keep) ? keep : list[0];
+    $('#sr-period-l', body).firstChild.textContent = kind === 'month' ? 'เลือกเดือน' : 'เลือกปี';
+  };
+  // ยอด ณ วันที่: สิ้นเดือน/สิ้นปีที่เลือก (งวดปัจจุบัน = วันนี้)
+  const asOf = (p) => {
+    const end = p.length === 4 ? `${p}-12-31` : BorrowCore.ymd(new Date(Number(p.slice(0, 4)), Number(p.slice(5, 7)), 0));
+    return end < today() ? end : today();
+  };
+  const preview = () => {
+    sum = BorrowCore.stockSummary(state.db, sel.value);
+    const t = sum.totals;
+    $('#sr-preview', body).innerHTML = `
+      <div class="stats stock-stats">
+        <div class="card stat"><span class="label">จ่ายออก</span><span class="value">${fmtNum(t.issued_qty)}</span><span class="sub">หน่วย · ${fmtNum(t.issued_items)} รายการ</span></div>
+        <div class="card stat"><span class="label">มูลค่าที่จ่ายออก</span><span class="value money">${fmtMoney(t.issued_value)}</span><span class="sub">บาท</span></div>
+        <div class="card stat"><span class="label">คงเหลือ ณ ${esc(fmtDate(asOf(sel.value)))}</span><span class="value">${fmtNum(t.balance_qty)}</span><span class="sub">หน่วย · ${fmtNum(t.items)} รายการ</span></div>
+        <div class="card stat"><span class="label">มูลค่าคงเหลือ</span><span class="value money">${fmtMoney(t.balance_value)}</span><span class="sub">บาท</span></div>
+      </div>
+      <h4 style="margin-top:14px">จ่ายออกมากที่สุด</h4>
+      <ol class="top-list">${sum.issued.slice(0, 5).map((x) => `<li>${esc(x.name)} <b>${fmtNum(x.issued)}</b> ${esc(x.unit)}${x.issued_value ? ` <span class="muted small">· ${fmtMoney(x.issued_value)} บาท</span>` : ''}</li>`).join('') || '<li class="muted">ไม่มีการจ่ายออก</li>'}</ol>
+      <p class="muted small">PDF มี: ยอดรวม · พัสดุที่จ่ายออกพร้อมมูลค่า · ยอดคงเหลือทุกรายการ (รับเข้า จ่ายออก คงเหลือ มูลค่าคงเหลือ)</p>`;
+    const btn = $('#sr-pdf', body);
+    btn.innerHTML = `${ICON.doc} สร้าง PDF`;
+    btn.onclick = safe(build);
+  };
+  async function build() {
+    const btn = $('#sr-pdf', body);
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> กำลังสร้าง PDF';
+    const hud = progressHud('กำลังสร้างรายงานคงเหลือ', 'กรุณารอสักครู่…');
+    try {
+      const blob = await PdfDoc.buildStockReport(sum, CONFIG.HOSPITAL_NAME, { generatedAt: nowStamp(), asOf: asOf(sum.period), staff: CONFIG.STAFF_NAME });
+      const name = PdfDoc.stockFileName(sum.period);
+      hud.success('สร้างรายงานเรียบร้อย', `กดปุ่ม "บันทึก ${name}" เพื่อเก็บไฟล์`);
+      btn.innerHTML = `${ICON.doc} บันทึก ${esc(name)}`;
+      btn.onclick = safe(async () => { if (await PdfDoc.save(blob, name)) { closeModal(); savedPopup(name); } });
+    } catch (e) {
+      btn.innerHTML = `${ICON.doc} สร้าง PDF`;
+      hud.fail(e.message);
+      e.shown = true;
+      throw e;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  $('#sr-csv', body).addEventListener('click', () => downloadCsv('stock-' + sum.period,
+    ['รหัส', 'ชื่อ', 'หน่วย', 'ราคาต่อหน่วย', 'รับเข้า', 'จ่ายออก', 'มูลค่าจ่ายออก', 'คงเหลือ', 'มูลค่าคงเหลือ'],
+    sum.items.map((x) => [x.code, x.name, x.unit, x.price, x.received, x.issued, x.issued_value, x.balance, x.balance_value])));
+  $$('#sr-kind button', body).forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.k === kind) return;
+    const cur = sel.value;
+    kind = b.dataset.k;
+    $$('#sr-kind button', body).forEach((x) => x.classList.toggle('active', x === b));
+    fill(kind === 'year' ? cur.slice(0, 4) : months.find((m) => m.startsWith(cur)) || thisMonth);
+    preview();
+  }));
+  sel.addEventListener('change', preview);
+  fill(thisMonth);
   preview();
 }
 // เวลาปัจจุบันแบบที่บันทึกในระบบ เช่น 2026-10-24 09:15:42
@@ -1756,7 +1945,8 @@ function renderDashboard(page) {
   page.insertAdjacentHTML('beforeend', `
     <div class="page-head-row">
       <div class="page-head"><h1>ภาพรวม</h1><p class="lead">สรุปสต็อกและการเบิกพัสดุ</p></div>
-      <button class="btn primary" data-monthly>${ICON.doc} สรุปรายงาน (PDF)</button>
+      <div class="head-actions"><button class="btn primary" data-monthly>${ICON.doc} สรุปรายงาน (PDF)</button>
+      <button class="btn" data-stockreport>${ICON.doc} รายงานคงเหลือ (PDF)</button></div>
     </div>
     <div class="stats">
       <a class="card stat" href="#/items"><span class="label">พัสดุในระบบ</span><span class="value">${fmtNum(items.length)}</span><span class="sub">รายการ</span></a>
@@ -1864,8 +2054,8 @@ function renderSettings(page) {
   $$('[data-add]').forEach((f) => f.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
     if (MASTER_UI[f.dataset.add] && state.oldServer) throw new Error(OLD_SERVER_MSG);
-    await store.act('addMaster', { table: f.dataset.add, name: f.name.value, full_name: f.full_name?.value });
-    toast('เพิ่มเรียบร้อย');
+    const name = f.name.value.trim();
+    await store.act('addMaster', { table: f.dataset.add, name, full_name: f.full_name?.value }, { done: () => ['เพิ่มเรียบร้อย', name] });
     refresh();
   })));
   for (const table of ['departments', 'categories', 'units', 'locations', 'suppliers']) {
@@ -1876,8 +2066,7 @@ function renderSettings(page) {
         html: '<p class="muted small">ข้อมูลเดิมที่เคยบันทึกชื่อนี้ไว้ยังอยู่ครบ</p>',
         ok: 'ลบ',
         onOk: async () => {
-          await store.act('removeMaster', { table, name });
-          toast('ลบเรียบร้อย');
+          await store.act('removeMaster', { table, name }, { done: () => ['ลบเรียบร้อย', name] });
           refresh();
         },
       });
@@ -2330,9 +2519,37 @@ function buzzWhenTouched(d) {
       }
     } catch { /* ใช้วิธีปกติด้านล่าง */ }
   }
+  // เจ้าหน้าที่พัสดุรีเฟรชหน้า: แสดงข้อมูลล่าสุดของแท็บนี้ทันที แล้วตรวจรหัส + ดึงข้อมูลใหม่ตามมา
+  if (!DEMO && state.pin) {
+    try {
+      const cached = JSON.parse(ssGet(ADMIN_CACHE_KEY) || 'null');
+      if (cached?.items) {
+        state.db = BorrowCore.normalize(cached);
+        lastSnapshot = JSON.stringify(state.db);
+        lastRoute = currentRoute();
+        render(true);
+        showLive(true);
+        try {
+          await store.act('checkPin', undefined, { quiet: true });
+        } catch (e) {
+          // รหัสถูกเปลี่ยน: ออกจากโหมดเจ้าหน้าที่ แสดงข้อมูลสาธารณะ
+          if (!/PIN/.test(e.message)) throw e;
+          state.pin = '';
+          sessionStorage.removeItem('pin');
+          ssDel(ADMIN_CACHE_KEY);
+          renderMode();
+          await store.load();
+        }
+        const snap = JSON.stringify(state.db);
+        if (snap !== lastSnapshot && !modalOpen()) { lastSnapshot = snap; render(); }
+        showLive(false);
+        return;
+      }
+    } catch (e) { showLive(false); toast(e.message, true); return; }
+  }
   try {
     if (state.pin) {
-      try { await store.act('checkPin'); } catch { state.pin = ''; sessionStorage.removeItem('pin'); renderMode(); }
+      try { await store.act('checkPin', undefined, { quiet: true }); } catch { state.pin = ''; sessionStorage.removeItem('pin'); renderMode(); }
     }
     if (!state.pin) await store.load();
     lastSnapshot = JSON.stringify(state.db);

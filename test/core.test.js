@@ -547,6 +547,35 @@ test('core: summary by department, by month or by year, with money totals', () =
   assert.equal(Core.monthlySummary(db, '2026-03').months.length, 0);
 });
 
+test('core: stock report per month / year — issued qty & value, balance at period end & value', () => {
+  const db = Core.seed(new Date('2026-01-01T08:00:00'), FIXTURE); // ยอดยกมา กระดาษ 120 ถุงมือ 6 ผ้าก๊อซ 3
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const gloves = db.items.find((i) => i.code === 'MD-005');
+  Core.run(db, 'saveItem', { ...paper, price: 120 }, admin);
+  Core.run(db, 'saveItem', { ...gloves, price: 85.5 }, admin);
+  const at = (d) => ({ isAdmin: true, now: new Date(d + 'T09:00:00') });
+  Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 10 }, { item_id: gloves.id, qty: 2 }] }, at('2026-03-02'));
+  Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 50 }, at('2026-03-20'));
+  Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 5 }] }, at('2026-04-01'));
+  Core.run(db, 'createRequest', { ...person, items: [{ item_id: gloves.id, qty: 1 }] }, at('2027-01-05'));
+  const mar = Core.stockSummary(db, '2026-03');
+  const row = (sum, code) => sum.items.find((r) => r.code === code);
+  assert.deepEqual([row(mar, 'OF-001').issued, row(mar, 'OF-001').issued_value, row(mar, 'OF-001').received, row(mar, 'OF-001').balance, row(mar, 'OF-001').balance_value],
+    [10, 1200, 50, 160, 19200]);
+  assert.deepEqual([row(mar, 'MD-005').issued, row(mar, 'MD-005').balance, row(mar, 'MD-005').balance_value], [2, 4, 342]);
+  assert.deepEqual(row(mar, 'MD-006').balance, 3);
+  assert.deepEqual(mar.totals, { items: 3, issued_items: 2, issued_qty: 12, issued_value: 1371, received_qty: 50, balance_qty: 167, balance_value: 19542 });
+  assert.deepEqual(mar.issued.map((r) => r.code), ['OF-001', 'MD-005']);
+  // รายปี: คงเหลือ ณ สิ้นปี 2569 ไม่นับการเบิกปี 2570
+  const y = Core.stockSummary(db, '2026');
+  assert.equal(y.yearly, true);
+  assert.deepEqual([row(y, 'OF-001').issued, row(y, 'OF-001').balance, row(y, 'MD-005').balance], [15, 155, 4]);
+  assert.equal(y.totals.issued_value, 1971);
+  // เดือนก่อนมีการเคลื่อนไหว: ยอดคงเหลือ = ยอดยกมา
+  assert.equal(row(Core.stockSummary(db, '2026-02'), 'OF-001').balance, 120);
+  assert.equal(row(Core.stockSummary(db, '2027'), 'MD-005').balance, 3);
+});
+
 test('Apps Script: an old borrow-system sheet is cleaned up and keeps its data', () => {
   const { sheets, ctx, triggers } = mockAppsScript();
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);

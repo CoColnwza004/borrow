@@ -431,6 +431,55 @@ var BorrowCore = (function () {
     };
   }
 
+  // รายงานพัสดุคงเหลือ period = 'YYYY-MM' (รายเดือน) หรือ 'YYYY' (รายปี)
+  // จ่ายออก = ใบเบิกในงวด (มูลค่าตามราคา ณ วันที่เบิก) · รับเข้า = การรับเข้าในงวด
+  // คงเหลือ ณ สิ้นงวด = คงเหลือปัจจุบัน − การเคลื่อนไหวหลังสิ้นงวด · มูลค่าคงเหลือ = คงเหลือ × ราคาปัจจุบัน
+  function stockSummary(db, period) {
+    period = str(period);
+    var n = period.length;
+    var round = function (x) { return Math.round(x * 100) / 100; };
+    var rows = {};
+    db.items.forEach(function (i) {
+      rows[i.id] = { item_id: i.id, code: i.code, name: i.name, unit: i.unit, category: i.category, price: i.price || 0, active: i.active,
+        received: 0, issued: 0, issued_value: 0, balance: i.available_qty, balance_value: 0, moved: false };
+    });
+    db.movements.forEach(function (m) {
+      var r = rows[m.item_id];
+      if (!r) return;
+      var p = m.created_at.slice(0, n);
+      if (p > period) { r.balance -= m.qty; r.moved = true; } else if (p === period) { r.moved = true; if (m.type === 'receive') r.received += m.qty; }
+    });
+    db.requests.forEach(function (rq) {
+      if (rq.created_at.slice(0, n) !== period) return;
+      lines(db, rq.id).forEach(function (l) {
+        var r = rows[l.item_id];
+        if (!r) return;
+        r.issued += l.qty;
+        r.issued_value = round(r.issued_value + lineValue(db, l));
+      });
+    });
+    var t = { items: 0, issued_items: 0, issued_qty: 0, issued_value: 0, received_qty: 0, balance_qty: 0, balance_value: 0 };
+    var list = Object.keys(rows).map(function (k) { return rows[k]; })
+      // พัสดุที่ปิดใช้งาน ไม่มีความเคลื่อนไหว และไม่มีของเหลือ ไม่ต้องแสดง
+      .filter(function (r) { return r.active || r.moved || r.issued || r.balance; })
+      .sort(function (a, b) { return a.code.localeCompare(b.code); });
+    list.forEach(function (r) {
+      r.balance_value = r.balance > 0 ? round(r.balance * r.price) : 0;
+      delete r.moved;
+      t.items++;
+      if (r.issued) t.issued_items++;
+      t.issued_qty += r.issued;
+      t.issued_value = round(t.issued_value + r.issued_value);
+      t.received_qty += r.received;
+      if (r.balance > 0) t.balance_qty += r.balance;
+      t.balance_value = round(t.balance_value + r.balance_value);
+    });
+    return {
+      period: period, yearly: n === 4, totals: t, items: list,
+      issued: list.filter(function (r) { return r.issued; }).sort(function (a, b) { return b.issued - a.issued || a.code.localeCompare(b.code); }),
+    };
+  }
+
   // สร้างฐานข้อมูลตั้งต้นจาก SEED_DATA (ไฟล์ seed-data.js / SeedData.gs)
   function seed(now, data) {
     if (!data) data = typeof SEED_DATA !== 'undefined' ? SEED_DATA : { departments: [], categories: [], items: [] };
@@ -473,7 +522,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;
