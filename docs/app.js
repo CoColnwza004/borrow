@@ -37,9 +37,15 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const isAdmin = () => !!state.pin;
 const today = () => BorrowCore.ymd(new Date());
-const fmtNum = (n) => Number(n || 0).toLocaleString('th-TH');
+// ตัวจัดรูปแบบสร้างครั้งเดียว (toLocaleString สร้างใหม่ทุกครั้ง ช้ามากเมื่อแสดงหลายพันแถว)
+const NUM_FMT = new Intl.NumberFormat('th-TH');
+const MONEY_FMT = new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const DATE_FMT = new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
+const DT_FMT = new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+const DTS_FMT = new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const fmtNum = (n) => NUM_FMT.format(Number(n || 0));
 // เงินบาท ทศนิยม 2 ตำแหน่ง เช่น 1,250.50
-const fmtMoney = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtMoney = (n) => MONEY_FMT.format(Number(n || 0));
 const round2 = (n) => Math.round(n * 100) / 100;
 const lsGet = (k) => { try { return localStorage.getItem(k) || ''; } catch { return ''; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
@@ -50,14 +56,15 @@ const bump = (el) => { if (!el || !motionOK()) return; el.classList.remove('bump
 // th-TH แสดงปี พ.ศ. อัตโนมัติ
 function fmtDate(s) {
   if (!s) return '-';
-  return new Date(s.slice(0, 10) + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
+  const d = new Date(s.slice(0, 10) + 'T00:00:00');
+  return isNaN(d) ? s : DATE_FMT.format(d);
 }
 function fmtDateTime(s) {
   if (!s) return '-';
   const d = new Date(s.replace(' ', 'T'));
   // วันเวลาที่เบิกแสดงถึงวินาที (ข้อมูลเก่าที่ไม่มีวินาทีแสดงแค่นาที)
   const sec = /\d{2}:\d{2}:\d{2}/.test(s);
-  return isNaN(d) ? s : d.toLocaleString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit', ...(sec ? { second: '2-digit' } : {}) });
+  return isNaN(d) ? s : (sec ? DTS_FMT : DT_FMT).format(d);
 }
 
 // ไอคอนปุ่มจำนวน (คมชัด อยู่กึ่งกลางพอดี)
@@ -207,11 +214,12 @@ const ACT_TEXT = {
 function itemsView() {
   return state.db.items.slice().sort((a, b) => a.code.localeCompare(b.code));
 }
+// ค้นหาผ่านดัชนีของ BorrowCore (เร็วแม้มีใบเบิกหลายพันใบ)
 function itemById(id) {
-  return state.db.items.find((i) => i.id === Number(id));
+  return BorrowCore.byId(state.db.items, id);
 }
 function requestView(r) {
-  const lines = state.db.request_items.filter((l) => l.request_id === r.id).map((l) => {
+  const lines = BorrowCore.lines(state.db, r.id).map((l) => {
     const item = itemById(l.item_id) || { name: '(ลบแล้ว)', code: '', unit: '', available_qty: 0, price: 0 };
     // ราคา ณ วันที่เบิก · ใบที่เบิกก่อนใส่ราคาใช้ราคาปัจจุบันของพัสดุ (เหมือน BorrowCore.linePrice)
     const price = l.price > 0 ? l.price : item.price || 0;
@@ -225,8 +233,11 @@ function requestView(r) {
     department_full: deptFull(r.department),
   };
 }
+// จำผลไว้จนกว่าข้อมูลจะเปลี่ยน (หน้า ประวัติเบิก / ภาพรวม เรียกซ้ำทุกครั้งที่พิมพ์ค้นหา)
+let rvCache = { db: null, list: [] };
 function requestsView() {
-  return state.db.requests.map(requestView).sort((a, b) => b.id - a.id);
+  if (rvCache.db !== state.db) rvCache = { db: state.db, list: state.db.requests.map(requestView).sort((a, b) => b.id - a.id) };
+  return rvCache.list;
 }
 const isLow = (i) => i.available_qty <= i.min_qty;
 
@@ -626,6 +637,7 @@ document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-monthly]');
   if (b && isAdmin()) showMonthlyReport(b.dataset.month);
   if (e.target.closest('[data-stockreport]') && isAdmin()) showStockReport();
+  if (e.target.closest('[data-flowreport]') && isAdmin()) showFlowReport();
 });
 
 // องค์ประกอบที่ค่อย ๆ ลอยขึ้นตามลำดับการอ่าน เมื่อเปลี่ยนหน้า (ไม่เล่นซ้ำตอนซิงก์ข้อมูล/พิมพ์ค้นหา)
@@ -1337,7 +1349,7 @@ function renderItems(page) {
       <select id="f-cat" style="width:auto">${options(state.db.categories, params.get('cat'), 'ทุกหมวดหมู่')}</select>
       <label class="check"><input type="checkbox" id="f-low" ${params.get('low') === '1' ? 'checked' : ''}> ใกล้หมด</label>
       <span class="spacer"></span>
-      ${isAdmin() ? `<button class="btn" id="btn-export">ส่งออก CSV</button><button class="btn primary" data-stockreport>${ICON.doc} รายงานคงเหลือ (PDF)</button>` : ''}
+      ${isAdmin() ? `<button class="btn" id="btn-export">ส่งออก CSV</button><button class="btn primary" data-stockreport>${ICON.doc} รายงานคงเหลือ (PDF)</button><button class="btn" data-flowreport>${ICON.doc} สรุปรับเข้า–จ่ายออก</button>` : ''}
     </div>
     <div class="item-grid" id="items-grid"></div>`);
 
@@ -1527,7 +1539,8 @@ function lotData(form) {
 }
 // บริษัท · เลขใบส่งของ · วันหมดอายุ ของรายการรับเข้า (แสดงใต้ประวัติสต็อก)
 function lotInfo(m) {
-  const parts = [m.supplier && esc(m.supplier), m.delivery_no && 'ใบส่งของ ' + esc(m.delivery_no), m.expiry_date && 'หมดอายุ ' + fmtDate(m.expiry_date)].filter(Boolean);
+  const parts = [m.supplier && esc(m.supplier), m.delivery_no && 'ใบส่งของ ' + esc(m.delivery_no), m.expiry_date && 'หมดอายุ ' + fmtDate(m.expiry_date),
+    m.type === 'receive' && m.price > 0 && `${fmtMoney(m.price)} บาท/หน่วย`].filter(Boolean);
   return parts.length ? `<div class="muted small lot">${parts.join(' · ')}</div>` : '';
 }
 // Apps Script ที่ยังไม่อัปเดตจะไม่บันทึกข้อมูลใหม่ (หน่วยนับ สถานที่เก็บ ราคา บริษัท ฯลฯ)
@@ -1590,7 +1603,8 @@ function stockForm(item, type) {
   const body = openModal(`${titles[type]} · ${item.name}`, `
     <form id="stock-form" class="fields">
       ${field}
-      ${type === 'receive' ? lotFields() : ''}
+      ${type === 'receive' ? `<label class="field full">ราคาต่อหน่วยของล็อตนี้ (บาท) <span class="hint">(ไม่ใส่ = ราคาปัจจุบัน ${item.price > 0 ? fmtMoney(item.price) : '0.00'} บาท / ${esc(item.unit)})</span>
+        <input name="price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="${item.price > 0 ? item.price : '0.00'}"></label>${lotFields()}` : ''}
       <label class="field full">หมายเหตุ${type === 'receive' ? '' : ' / เลขที่เอกสาร'}<input name="note"></label>
       <div class="actions full"><button class="btn primary lg">บันทึก</button></div>
     </form>`);
@@ -1647,7 +1661,8 @@ function renderRequests(page) {
     const qty = rows.reduce((s, r) => s + r.items.reduce((n, l) => n + l.qty, 0), 0);
     const money = rows.reduce((s, r) => s + r.total, 0);
     $('#r-sum').textContent = `${fmtNum(rows.length)} ใบ · ${fmtNum(qty)} หน่วย${money ? ` · รวม ${fmtMoney(money)} บาท` : ''}`;
-    $('#req-body').innerHTML = rows.map((r) => `
+    const shown = rows.slice(0, limit);
+    $('#req-body').innerHTML = shown.map((r) => `
       <li><div class="row" data-request="${r.id}">
         <span class="pick-icon">${ICON.withdraw}</span>
         <div class="row-body">
@@ -1657,10 +1672,16 @@ function renderRequests(page) {
         <div class="row-end"><span>${fmtDateTime(r.created_at)}</span>${r.total ? `<span class="row-money">${fmtMoney(r.total)} บาท</span>` : ''}</div>
         <span class="chev">${ICON.chev}</span>
       </div></li>`).join('') || `<li class="empty">${when ? 'ไม่มีใบเบิกในช่วงเวลานี้' : 'ไม่พบรายการ'}</li>`;
+    // แสดงทีละ 200 ใบ หน้าเว็บไม่หน่วงเมื่อมีใบเบิกหลายพันใบ
+    if (rows.length > limit) $('#req-body').insertAdjacentHTML('beforeend', `<li class="more-row"><button type="button" class="btn" id="r-more">แสดงเพิ่ม (อีก ${fmtNum(rows.length - limit)} ใบ)</button></li>`);
+    $('#r-more')?.addEventListener('click', () => { limit += PAGE; draw(); });
     bindRowClicks($('#req-body'));
   };
-  $('#r-month').addEventListener('change', (e) => { when = e.target.value; draw(); });
-  $('#r-q').addEventListener('input', draw);
+  const PAGE = 200;
+  let limit = PAGE;
+  $('#r-month').addEventListener('change', (e) => { when = e.target.value; limit = PAGE; draw(); });
+  let qFrame = 0;
+  $('#r-q').addEventListener('input', () => { limit = PAGE; cancelAnimationFrame(qFrame); qFrame = requestAnimationFrame(draw); });
   $('#r-export').addEventListener('click', () => downloadCsv('requests' + (when ? '-' + when : ''),
     ['เลขที่', 'วันเวลาที่เบิก', 'ผู้เบิก', 'แผนก', 'หมายเหตุ', 'รหัสพัสดุ', 'พัสดุ', 'จำนวน', 'หน่วย', 'ราคาต่อหน่วย', 'รวมเงิน (บาท)'],
     filtered().flatMap((r) => r.items.map((l) => [r.request_no, r.created_at, r.borrower_name, r.department, r.note, l.code, l.name, l.qty, l.unit, l.price, l.value]))));
@@ -1844,6 +1865,98 @@ function showMonthlyReport(pick) {
   $('#mr-dept', body).addEventListener('change', preview);
   preview();
 }
+// ===================== สรุปมูลค่ารับเข้า / จ่ายออก (เจ้าหน้าที่) =====================
+function showFlowReport() {
+  const thisMonth = today().slice(0, 7);
+  const used = [...state.db.movements.filter((m) => m.type === 'receive'), ...state.db.requests].map((x) => x.created_at.slice(0, 7));
+  const months = [...new Set([thisMonth, ...used])].filter(Boolean).sort().reverse();
+  const years = [...new Set(months.map((m) => m.slice(0, 4)))].sort().reverse();
+  const body = openModal('สรุปมูลค่ารับเข้า–จ่ายออก', `
+    <div class="mr-form">
+      <div class="segmented" id="fr-type" role="group" aria-label="ประเภท">
+        <button type="button" data-k="both" class="active">ทั้งสองอย่าง</button><button type="button" data-k="in">รับเข้า</button><button type="button" data-k="out">จ่ายออก</button></div>
+      <div class="segmented" id="fr-kind" role="group" aria-label="ช่วงเวลา">
+        <button type="button" data-k="month" class="active">รายเดือน</button><button type="button" data-k="year">รายปี</button></div>
+      <div class="fields"><label class="field full" id="fr-period-l">เลือกเดือน<select id="fr-period"></select></label></div>
+    </div>
+    <div id="fr-preview"></div>
+    <div class="actions"><button class="btn" id="fr-csv">ส่งออก CSV</button><span class="spacer"></span><button class="btn primary lg" id="fr-pdf">${ICON.doc} สร้าง PDF</button></div>`);
+  let span = 'month';
+  let type = 'both';
+  let sum;
+  const sel = $('#fr-period', body);
+  const fill = (keep) => {
+    const list = span === 'month' ? months : years;
+    sel.innerHTML = list.map((m) => `<option value="${m}">${esc(span === 'month' ? PdfDoc.monthName(m) : 'ปี พ.ศ. ' + (Number(m) + 543))}</option>`).join('');
+    sel.value = list.includes(keep) ? keep : list[0];
+    $('#fr-period-l', body).firstChild.textContent = span === 'month' ? 'เลือกเดือน' : 'เลือกปี';
+  };
+  const preview = () => {
+    sum = BorrowCore.flowSummary(state.db, sel.value);
+    const t = sum.totals;
+    const IN = type !== 'out', OUT = type !== 'in';
+    const card = (label, value, sub, money) => `<div class="card stat"><span class="label">${label}</span><span class="value${money ? ' money' : ''}">${value}</span><span class="sub">${sub}</span></div>`;
+    const top = (key, unitKey) => sum.items.filter((x) => x[key]).sort((a, b) => b[key + '_value'] - a[key + '_value'] || b[key] - a[key]).slice(0, 5)
+      .map((x) => `<li>${esc(x.name)} <b>${fmtNum(x[key])}</b> ${esc(x.unit)} <span class="muted small">· ${fmtMoney(x[key + '_value'])} บาท</span></li>`).join('') || '<li class="muted">ไม่มี</li>';
+    $('#fr-preview', body).innerHTML = `
+      <div class="stats flow-stats">
+        ${IN ? card('รับเข้า', fmtNum(t.in_qty), `หน่วย · ${fmtNum(t.in_count)} ครั้ง`) + card('มูลค่ารับเข้า', fmtMoney(t.in_value), 'บาท', true) : ''}
+        ${OUT ? card('จ่ายออก', fmtNum(t.out_qty), `หน่วย · ${fmtNum(t.out_count)} ใบเบิก`) + card('มูลค่าจ่ายออก', fmtMoney(t.out_value), 'บาท', true) : ''}
+      </div>
+      <div class="grid-2" style="margin-top:14px">
+        ${IN ? `<div><h4>รับเข้ามูลค่ามากที่สุด</h4><ol class="top-list">${top('in_qty')}</ol></div>` : ''}
+        ${OUT ? `<div><h4>จ่ายออกมูลค่ามากที่สุด</h4><ol class="top-list">${top('out_qty')}</ol></div>` : ''}
+      </div>
+      <p class="muted small">PDF มี: ยอดรวม${sum.yearly ? ' · สรุปรายเดือน' : ''} · สรุปตามรายการพัสดุ${IN ? ' · รายการรับเข้าทั้งหมด (บริษัท เลขใบส่งของ)' : ''}</p>`;
+    const btn = $('#fr-pdf', body);
+    btn.innerHTML = `${ICON.doc} สร้าง PDF`;
+    btn.onclick = safe(build);
+  };
+  async function build() {
+    const btn = $('#fr-pdf', body);
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> กำลังสร้าง PDF';
+    const hud = progressHud('กำลังสร้างรายงาน PDF', 'กรุณารอสักครู่…');
+    try {
+      const blob = await PdfDoc.buildFlowReport(sum, type, CONFIG.HOSPITAL_NAME, { generatedAt: nowStamp(), staff: CONFIG.STAFF_NAME });
+      const name = PdfDoc.flowFileName(sum.period, type);
+      hud.success('สร้างรายงานเรียบร้อย', `กดปุ่ม "บันทึก ${name}" เพื่อเก็บไฟล์`);
+      btn.innerHTML = `${ICON.doc} บันทึก ${esc(name)}`;
+      btn.onclick = safe(async () => { if (await PdfDoc.save(blob, name)) { closeModal(); savedPopup(name); } });
+    } catch (e) {
+      btn.innerHTML = `${ICON.doc} สร้าง PDF`;
+      hud.fail(e.message);
+      e.shown = true;
+      throw e;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  $('#fr-csv', body).addEventListener('click', () => {
+    const IN = type !== 'out', OUT = type !== 'in';
+    downloadCsv(PdfDoc.flowFileName(sum.period, type).replace('.pdf', ''),
+      ['รหัส', 'ชื่อ', 'หน่วย', ...(IN ? ['รับเข้า', 'มูลค่ารับเข้า'] : []), ...(OUT ? ['จ่ายออก', 'มูลค่าจ่ายออก'] : [])],
+      sum.items.filter((x) => (IN && x.in_qty) || (OUT && x.out_qty))
+        .map((x) => [x.code, x.name, x.unit, ...(IN ? [x.in_qty, x.in_value] : []), ...(OUT ? [x.out_qty, x.out_value] : [])]));
+  });
+  $$('#fr-type button', body).forEach((b) => b.addEventListener('click', () => {
+    type = b.dataset.k;
+    $$('#fr-type button', body).forEach((x) => x.classList.toggle('active', x === b));
+    preview();
+  }));
+  $$('#fr-kind button', body).forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.k === span) return;
+    const cur = sel.value;
+    span = b.dataset.k;
+    $$('#fr-kind button', body).forEach((x) => x.classList.toggle('active', x === b));
+    fill(span === 'year' ? cur.slice(0, 4) : months.find((m) => m.startsWith(cur)) || thisMonth);
+    preview();
+  }));
+  sel.addEventListener('change', preview);
+  fill(thisMonth);
+  preview();
+}
+
 // ===================== รายงานพัสดุคงเหลือ (เจ้าหน้าที่): รายเดือน / รายปี =====================
 function showStockReport() {
   const thisMonth = today().slice(0, 7);
@@ -1946,7 +2059,8 @@ function renderDashboard(page) {
     <div class="page-head-row">
       <div class="page-head"><h1>ภาพรวม</h1><p class="lead">สรุปสต็อกและการเบิกพัสดุ</p></div>
       <div class="head-actions"><button class="btn primary" data-monthly>${ICON.doc} สรุปรายงาน (PDF)</button>
-      <button class="btn" data-stockreport>${ICON.doc} รายงานคงเหลือ (PDF)</button></div>
+      <button class="btn" data-stockreport>${ICON.doc} รายงานคงเหลือ (PDF)</button>
+      <button class="btn" data-flowreport>${ICON.doc} สรุปรับเข้า–จ่ายออก (PDF)</button></div>
     </div>
     <div class="stats">
       <a class="card stat" href="#/items"><span class="label">พัสดุในระบบ</span><span class="value">${fmtNum(items.length)}</span><span class="sub">รายการ</span></a>
@@ -2009,16 +2123,21 @@ function renderMovements(page) {
     return state.db.movements.filter((m) => (!item || m.item_id === item) && (!type || m.type === type) &&
       (!from || m.created_at.slice(0, 10) >= from) && (!to || m.created_at.slice(0, 10) <= to)).sort((a, b) => b.id - a.id);
   };
+  const PAGE = 300;
+  let limit = PAGE;
   const draw = () => {
-    $('#m-body').innerHTML = filtered().slice(0, 1000).map((m) => {
+    const all = filtered();
+    $('#m-body').innerHTML = all.slice(0, limit).map((m) => {
       const i = itemById(m.item_id);
       return `<tr><td>${fmtDateTime(m.created_at)}</td><td>${esc(i?.name)}<div class="muted small">${esc(i?.code)}</div></td>
         <td>${movePill(m)}</td><td class="num">${m.qty > 0 ? '+' : ''}${fmtNum(m.qty)}</td>
         <td class="num">${fmtNum(m.available_after)}</td>
         <td>${esc(m.request_no)} ${m.note ? `<div class="muted small">${esc(m.note)}</div>` : ''}${lotInfo(m)}</td></tr>`;
     }).join('') || '<tr><td colspan="6" class="empty">ไม่พบรายการ</td></tr>';
+    if (all.length > limit) $('#m-body').insertAdjacentHTML('beforeend', `<tr class="more-row"><td colspan="6"><button type="button" class="btn" id="m-more">แสดงเพิ่ม (อีก ${fmtNum(all.length - limit)} รายการ)</button></td></tr>`);
+    $('#m-more')?.addEventListener('click', () => { limit += PAGE; draw(); });
   };
-  ['#m-item', '#m-type', '#m-from', '#m-to'].forEach((s) => $(s).addEventListener('change', draw));
+  ['#m-item', '#m-type', '#m-from', '#m-to'].forEach((s) => $(s).addEventListener('change', () => { limit = PAGE; draw(); }));
   $('#m-export').addEventListener('click', () => downloadCsv('stock-movements',
     ['วันเวลา', 'รหัส', 'พัสดุ', 'ประเภท', 'จำนวน', 'คงเหลือหลังทำรายการ', 'เลขที่เอกสาร', 'หมายเหตุ', 'บริษัท', 'วันหมดอายุ', 'เลขใบส่งของ'],
     filtered().map((m) => [m.created_at, itemById(m.item_id)?.code, itemById(m.item_id)?.name, MOVE[m.type] || m.type, m.qty, m.available_after, m.request_no, m.note, m.supplier, m.expiry_date, m.delivery_no])));
