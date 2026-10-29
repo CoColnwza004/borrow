@@ -669,6 +669,24 @@ test('Apps Script: an item row typed straight into the sheet (no id/active/unit)
   assert.equal(inv.data.filter((r, i) => i > 0 && r[0] === '2').length, 1);
 });
 
+test('Apps Script: updateSheet adds missing tabs (บริษัท) and keeps every row', () => {
+  const { sheets, ctx, logs } = mockAppsScript();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
+  ctx.setup();
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  assert.equal(post({ action: 'createRequest', payload: { borrower_name: 'ก', department: 'ICU', items: [{ item_id: 1, qty: 2 }] } }).ok, true);
+  assert.throws(() => ctx.setup(), /updateSheet/);
+  delete sheets['บริษัท']; // ชีตที่ใช้โค้ดเวอร์ชันก่อนมีแท็บบริษัท
+  const before = JSON.stringify(sheets['ประวัติการเบิก'].data);
+  ctx.updateSheet();
+  assert.match(logs.at(-1), /สร้างแท็บ บริษัท/);
+  assert.equal(sheets['บริษัท'].data[0][0], 'name');
+  assert.equal(JSON.stringify(sheets['ประวัติการเบิก'].data), before);
+  assert.equal(post({ action: 'load', pin: '1234' }).state.requests.length, 1);
+  ctx.updateSheet();
+  assert.match(logs.at(-1), /มีแท็บครบแล้ว/);
+});
+
 test('Apps Script: loadNewStock replaces every item with the new stock file and keeps departments', () => {
   const { sheets, ctx, logs } = mockAppsScript();
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);

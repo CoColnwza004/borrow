@@ -46,10 +46,31 @@ function setup() {
   if (typeof SEED_DATA === 'undefined') throw new Error('ไม่พบไฟล์ SeedData กรุณาคัดลอก docs/seed-data.js มาเป็นไฟล์ SeedData ก่อน');
   var sh = sheet_(SpreadsheetApp.getActiveSpreadsheet(), 'requests');
   if (sh && sh.getLastRow() > 1) {
-    throw new Error('มีรายการเบิกในชีตแล้ว ไม่ได้เขียนทับ (ถ้าต้องการเริ่มใหม่ให้ลบแท็บ "' + SHEET_NAMES.requests + '" ก่อน)');
+    throw new Error('มีรายการเบิกในชีตแล้ว ไม่ได้เขียนทับ — ถ้าจะเพิ่มแท็บ/คอลัมน์ใหม่หลังอัปเดตโค้ด ให้รัน updateSheet แทน');
   }
   saveDb_(BorrowCore.seed(new Date(), SEED_DATA));
   removeAutoReturnTrigger_();
+}
+
+/**
+ * หลังวางโค้ดเวอร์ชันใหม่: รันฟังก์ชันนี้ได้ทุกเมื่อ (เลือก updateSheet แล้วกด เรียกใช้) ข้อมูลเดิมอยู่ครบ
+ * สร้างแท็บที่ยังไม่มี (เช่น บริษัท) เพิ่มคอลัมน์ใหม่ และลบแท็บของระบบยืมเดิม · ปกติระบบทำให้เองตอนบันทึกครั้งแรกอยู่แล้ว
+ */
+function updateSheet() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var missing = Object.keys(SHEET_NAMES).filter(function (t) { return !sheet_(ss, t); })
+      .map(function (t) { return SHEET_NAMES[t]; });
+    var db = loadDb_();
+    saveDb_(db);
+    removeAutoReturnTrigger_();
+    Logger.log('อัปเดตชีตเรียบร้อย' + (missing.length ? ': สร้างแท็บ ' + missing.join(', ') : ' (มีแท็บครบแล้ว)') +
+      ' · พัสดุ ' + db.items.length + ' รายการ, ใบเบิก ' + db.requests.length + ' ใบ อยู่ครบ');
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ระบบยืมเดิมตั้งเวลา "คืนอัตโนมัติ" ไว้ทุกวัน ตอนนี้เลิกใช้แล้ว: ลบตัวตั้งเวลานั้นออก
