@@ -278,7 +278,7 @@ const PdfDoc = (() => {
         <th style="width:16%">ผู้เบิก</th>${dept ? '' : '<th style="width:11%">แผนก</th>'}<th>พัสดุ</th><th style="width:12%">มูลค่า (บาท)</th></tr></thead>
         <tbody>${sum.requests.map((r) => `<tr><td>${esc(thaiDateTime(r.created_at)).replace(/ (\d{1,2}:\d{2}(:\d{2})?)$/, '<br>$1')}</td><td>${esc(r.request_no)}</td>
           <td>${esc(r.borrower_name)}</td>${dept ? '' : `<td>${esc(r.department)}</td>`}
-          <td>${extra.lines(r).map((l) => `${esc(l.name)} ×${num(l.qty)}`).join(', ')}</td><td class="r">${money(sum.values[r.id])}</td></tr>`).join('') || empty(dept ? 5 : 6)}</tbody></table>`);
+          <td>${extra.lines(r).map((l) => `${esc(l.name)} ×${num(l.qty)} ${esc(l.unit)}`).join('<br>')}</td><td class="r">${money(sum.values[r.id])}</td></tr>`).join('') || empty(dept ? 5 : 6)}</tbody></table>`);
     return `<div class="pdf-report">
       <div class="pdf-head">
         <div><div class="pdf-org">${esc(org || 'ระบบเบิกพัสดุ')}</div>

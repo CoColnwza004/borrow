@@ -13,5 +13,7 @@ window.APP_CONFIG = {
   HOSPITAL_NAME: 'โรงพยาบาลปากเกร็ด',
   STAFF_NAME: 'เสาวลักษณ์ ถาน้อย',
   PIN_LENGTH: 4,
+  // กระดิ่งแจ้งเตือนของเจ้าหน้าที่พัสดุ: เตือนพัสดุที่จะหมดอายุภายในกี่เดือน
+  EXPIRY_ALERT_MONTHS: 8,
   TEST_API_URL: '',
 };

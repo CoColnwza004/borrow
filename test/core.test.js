@@ -623,6 +623,26 @@ test('core: lookups stay correct as rows are added and removed (indexes)', () =>
   assert.equal(Core.requestValue(db, d), 10);
 });
 
+test('core: expiry alerts within N months, lot quantity estimated first-in-first-out', () => {
+  const db = Core.seed(new Date('2026-01-01T08:00:00'), { departments: [['ICU', '']], categories: [], items: [['A', 'น้ำเกลือ', '', 'ขวด', 0, 0, ''], ['B', 'ถุงมือ', '', 'กล่อง', 0, 0, '']] });
+  const at = (d) => ({ isAdmin: true, now: new Date(d + 'T09:00:00') });
+  const rc = (id, qty, exp, d) => Core.run(db, 'stock', { item_id: id, type: 'receive', qty, expiry_date: exp, supplier: 'บ.ก' }, at(d));
+  rc(1, 10, '2026-06-30', '2026-01-05'); // ล็อตเก่า
+  rc(1, 10, '2027-12-31', '2026-02-05'); // ล็อตใหม่ (เกิน 8 เดือน)
+  rc(2, 5, '2026-03-01', '2026-01-10'); // หมดอายุแล้ว
+  rc(2, 5, '', '2026-02-10'); // ไม่ระบุวันหมดอายุ
+  Core.run(db, 'createRequest', { borrower_name: 'ก', department: 'ICU', items: [{ item_id: 1, qty: 4 }] }, at('2026-03-01'));
+  let a = Core.expiryAlerts(db, '2026-04-01', 8);
+  assert.deepEqual(a.map((x) => [x.code, x.qty, x.expiry_date, x.days, x.expired]), [['B', 5, '2026-03-01', -31, true], ['A', 6, '2026-06-30', 90, false]]);
+  // ใช้ไปจนเหลือแค่ล็อตใหม่: ล็อตเก่าไม่ต้องเตือนแล้ว
+  Core.run(db, 'createRequest', { borrower_name: 'ก', department: 'ICU', items: [{ item_id: 1, qty: 6 }, { item_id: 2, qty: 5 }] }, at('2026-04-02'));
+  a = Core.expiryAlerts(db, '2026-04-03', 8);
+  assert.deepEqual(a.map((x) => x.code), []);
+  // ล็อตใหม่เข้าช่วง 8 เดือน
+  assert.deepEqual(Core.expiryAlerts(db, '2027-05-01', 8).map((x) => [x.code, x.qty]), [['A', 10]]);
+  assert.deepEqual(Core.expiryAlerts(db, '2027-04-29', 8).map((x) => x.code), []);
+});
+
 test('Apps Script: an old borrow-system sheet is cleaned up and keeps its data', () => {
   const { sheets, ctx, triggers } = mockAppsScript();
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);

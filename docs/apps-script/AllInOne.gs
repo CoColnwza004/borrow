@@ -888,6 +888,31 @@ var BorrowCore = (function () {
     };
   }
 
+  // ล็อตที่ใกล้หมดอายุ (วันหมดอายุภายใน months เดือนจาก today 'YYYY-MM-DD') รวมล็อตที่หมดอายุแล้ว
+  // ยอดคงเหลือของแต่ละล็อตประมาณแบบเข้าก่อนออกก่อน: ของที่ยังเหลือในคลังเป็นของล็อตที่รับเข้าล่าสุด ล็อตเก่าที่ถูกใช้หมดแล้วไม่ต้องเตือน
+  function expiryAlerts(db, today, months) {
+    var d = new Date(today + 'T00:00:00');
+    var limit = ymd(new Date(d.getFullYear(), d.getMonth() + Number(months || 0), d.getDate()));
+    var byItem = {};
+    db.movements.forEach(function (m) { if (m.type === 'receive' && m.qty > 0) (byItem[m.item_id] || (byItem[m.item_id] = [])).push(m); });
+    var out = [];
+    Object.keys(byItem).forEach(function (id) {
+      var item = byId(db.items, id);
+      if (!item || !item.active) return;
+      var left = Math.max(0, item.available_qty);
+      byItem[id].sort(function (a, b) { return b.created_at.localeCompare(a.created_at) || b.id - a.id; }).forEach(function (m) {
+        var q = Math.min(m.qty, left);
+        left -= q;
+        if (q > 0 && isDate(m.expiry_date) && m.expiry_date <= limit) {
+          out.push({ item_id: item.id, code: item.code, name: item.name, unit: item.unit, qty: q, expiry_date: m.expiry_date,
+            days: Math.round((new Date(m.expiry_date + 'T00:00:00') - d) / 864e5), expired: m.expiry_date < today,
+            supplier: m.supplier, delivery_no: m.delivery_no, received_at: m.created_at });
+        }
+      });
+    });
+    return out.sort(function (a, b) { return a.expiry_date.localeCompare(b.expiry_date) || a.code.localeCompare(b.code); });
+  }
+
   // สร้างฐานข้อมูลตั้งต้นจาก SEED_DATA (ไฟล์ seed-data.js / SeedData.gs)
   function seed(now, data) {
     if (!data) data = typeof SEED_DATA !== 'undefined' ? SEED_DATA : { departments: [], categories: [], items: [] };
@@ -930,7 +955,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;
