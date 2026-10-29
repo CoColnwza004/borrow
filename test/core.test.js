@@ -158,10 +158,10 @@ test('core: rows from the old borrow system still load as withdrawals', () => {
     requests: [{ id: 1, request_no: 'BR2601-0001', borrower_name: 'a', department: 'b', status: 'borrowed', type: 'borrow', due_date: '2026-01-31' }],
     request_items: [{ request_id: 1, item_id: 1, qty: 3, returned_qty: 0, lost_qty: 0 }],
   });
-  assert.deepEqual(db.items[0], { id: 1, code: 'X', name: 'old', category: '', unit: 'ชิ้น', available_qty: 2, min_qty: 0, location: '', active: 1 });
+  assert.deepEqual(db.items[0], { id: 1, code: 'X', name: 'old', category: '', unit: 'ชิ้น', available_qty: 2, min_qty: 0, location: '', active: 1, price: 0 });
   assert.equal(db.requests[0].status, 'issued');
   assert.equal(db.requests[0].due_date, undefined);
-  assert.deepEqual(db.request_items[0], { request_id: 1, item_id: 1, qty: 3 });
+  assert.deepEqual(db.request_items[0], { request_id: 1, item_id: 1, qty: 3, price: 0 });
   assert.equal(Core.fieldOf('requests', 'ผู้เบิก/ผู้ยืม'), 'borrower_name'); // หัวคอลัมน์เดิมในชีต
   assert.equal(Core.fieldOf('requests', 'ผู้เบิก'), 'borrower_name');
 });
@@ -250,7 +250,7 @@ test('Apps Script: only changed tabs are rewritten, shrinking tabs leave no stal
   const after = writes();
   for (const t of ['อุปกรณ์', 'ประวัติการเบิก', 'รายการในคำขอ', 'ประวัติสต็อก', 'รายการเบิก']) assert.equal(after[t], before[t] + 1, t);
   for (const t of ['หน่วยงาน', 'หมวดหมู่']) assert.equal(after[t], before[t], t + ' ไม่ต้องเขียนใหม่');
-  assert.deepEqual(Object.keys(sheets).sort(), ['บริษัท', 'ประวัติการเบิก', 'ประวัติสต็อก', 'รายการในคำขอ', 'รายการเบิก', 'หน่วยงาน', 'หมวดหมู่', 'อุปกรณ์'].sort());
+  assert.deepEqual(Object.keys(sheets).sort(), ['บริษัท', 'หน่วยนับ', 'สถานที่เก็บ', 'ประวัติการเบิก', 'ประวัติสต็อก', 'รายการในคำขอ', 'รายการเบิก', 'หน่วยงาน', 'หมวดหมู่', 'อุปกรณ์'].sort());
   // ลบแผนก: แท็บสั้นลง ต้องไม่มีแถวเก่าค้าง
   assert.equal(post({ action: 'removeMaster', payload: { table: 'departments', name: 'ICU' }, pin: '1234' }).ok, true);
   assert.equal(sheets['หน่วยงาน'].data.length, 22);
@@ -460,13 +460,91 @@ test('core: monthly summary of withdrawals', () => {
   Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 3 }] }, ctxAt('2026-10-05T09:00:00'));
   Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 50 }] }, ctxAt('2026-11-01T09:00:00'));
   const sum = Core.monthlySummary(db, '2026-10');
-  assert.deepEqual(sum.totals, { withdraw_docs: 2, withdraw_qty: 10 });
+  assert.deepEqual(sum.totals, { withdraw_docs: 2, withdraw_qty: 10, withdraw_value: 0 });
   assert.deepEqual(sum.withdrawn.map((r) => [r.code, r.qty, r.times]), [['OF-001', 8, 2], ['MD-005', 2, 1]]);
   assert.deepEqual(sum.departments.map((d) => [d.name, d.withdraw_docs, d.withdraw_qty]), [['ICU', 1, 7], ['งานธุรการ', 1, 3]]);
   assert.equal(sum.borrowed, undefined);
   assert.equal(sum.requests.length, 2);
   assert.equal(Core.monthlySummary(db, '2026-11').totals.withdraw_qty, 50);
   assert.equal(Core.monthlySummary(db, '2026-09').requests.length, 0);
+});
+
+test('core: item price, price kept on each slip, and slip totals', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const gloves = db.items.find((i) => i.code === 'MD-005');
+  // ใบที่เบิกก่อนใส่ราคา ใช้ราคาปัจจุบันของพัสดุ
+  const before = Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 2 }] }, user);
+  Core.run(db, 'saveItem', { ...paper, price: '1,250.50' }, admin);
+  Core.run(db, 'saveItem', { ...gloves, price: 89 }, admin);
+  assert.equal(paper.price, 1250.5);
+  assert.throws(() => Core.run(db, 'saveItem', { ...gloves, price: '-1' }, admin), /ราคาต่อหน่วย/);
+  assert.throws(() => Core.run(db, 'saveItem', { ...gloves, price: 'abc' }, admin), /ราคาต่อหน่วย/);
+  assert.equal(Core.requestValue(db, before), 2501);
+  const id = Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 1 }, { item_id: gloves.id, qty: 3 }] }, user);
+  assert.deepEqual(db.request_items.filter((l) => l.request_id === id).map((l) => l.price), [1250.5, 89]);
+  assert.equal(Core.requestValue(db, id), 1517.5);
+  // ราคาเปลี่ยนภายหลัง ใบเบิกเดิมยังใช้ราคา ณ วันที่เบิก
+  Core.run(db, 'saveItem', { ...gloves, price: 100 }, admin);
+  assert.equal(Core.requestValue(db, id), 1517.5);
+  const d = Core.sheetData(db);
+  const req = d.requests.rows.find((r) => r[0] === db.requests.find((x) => x.id === id).request_no);
+  assert.equal(req[d.requests.header.indexOf('รวมเงิน (บาท)')], 1517.5);
+  const lc = (n) => d.log.header.indexOf(n);
+  assert.deepEqual(d.log.rows.slice(0, 2).map((r) => [r[lc('ราคาต่อหน่วย')], r[lc('รวมเงิน (บาท)')]]), [[1250.5, 1250.5], [89, 267]]);
+  // ราคาที่พิมพ์ในชีตเองแบบมีคอมมา/สัญลักษณ์บาท อ่านได้
+  assert.equal(Core.normalize({ items: [{ id: 1, code: 'X', name: 'x', price: '฿1,000' }] }).items[0].price, 1000);
+});
+
+test('core: units and storage locations are dropdown lists that grow from the web or the sheet', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const names = (t) => db[t].map((x) => x.name);
+  for (const u of ['ชิ้น', 'กล่อง', 'ขวด', 'ม้วน', 'โหล', 'รีม', 'ห่อ']) assert.ok(names('units').includes(u), u);
+  assert.deepEqual(names('locations'), ['คลัง']);
+  Core.run(db, 'addMaster', { table: 'units', name: 'แพ็ค' }, admin);
+  Core.run(db, 'addMaster', { table: 'locations', name: 'ตู้ A ชั้น 2' }, admin);
+  assert.throws(() => Core.run(db, 'addMaster', { table: 'units', name: 'แพ็ค' }, admin), /มีชื่อนี้อยู่แล้ว/);
+  assert.throws(() => Core.run(db, 'addMaster', { table: 'units', name: 'x' }, user), /PIN/);
+  assert.throws(() => Core.run(db, 'addMaster', { table: 'nope', name: 'x' }, admin), /ไม่รู้จักรายการ/);
+  // พัสดุที่ใช้หน่วย/ที่เก็บใหม่ เพิ่มลงรายการให้เอง
+  Core.run(db, 'saveItem', { name: 'เทปกาว', unit: 'แถว', location: 'ห้องเก็บของ 2' }, admin);
+  assert.ok(names('units').includes('แถว') && names('locations').includes('ห้องเก็บของ 2'));
+  Core.run(db, 'removeMaster', { table: 'units', name: 'โหล' }, admin);
+  assert.ok(!names('units').includes('โหล'));
+  // ชีตเดิมที่ยังไม่มีแท็บหน่วยนับ/สถานที่เก็บ: ตั้งจากค่าที่พัสดุใช้อยู่
+  const old = Core.normalize({ items: [{ id: 1, code: 'A', name: 'a', unit: 'แกลลอน', location: 'ตู้ 1' }] });
+  assert.deepEqual(old.units.map((u) => u.name), ['ชิ้น', 'กล่อง', 'ขวด', 'ม้วน', 'โหล', 'แกลลอน']);
+  assert.deepEqual(old.locations.map((u) => u.name), ['ตู้ 1']);
+  assert.ok(Core.sheetData(db).units.rows.some((r) => r[0] === 'แพ็ค'));
+});
+
+test('core: summary by department, by month or by year, with money totals', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const gloves = db.items.find((i) => i.code === 'MD-005');
+  Core.run(db, 'saveItem', { ...paper, price: 120 }, admin);
+  Core.run(db, 'saveItem', { ...gloves, price: 85.5 }, admin);
+  const at = (d) => ({ isAdmin: false, now: new Date(d + 'T09:00:00') });
+  const icu = { borrower_name: 'ก', department: 'ICU' };
+  Core.run(db, 'createRequest', { ...icu, items: [{ item_id: paper.id, qty: 2 }, { item_id: gloves.id, qty: 2 }] }, at('2026-03-02'));
+  Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 1 }] }, at('2026-03-05'));
+  Core.run(db, 'createRequest', { ...icu, items: [{ item_id: paper.id, qty: 5 }] }, at('2026-10-01'));
+  Core.run(db, 'createRequest', { ...icu, items: [{ item_id: paper.id, qty: 1 }] }, at('2027-01-01'));
+  const march = Core.monthlySummary(db, '2026-03');
+  assert.deepEqual(march.totals, { withdraw_docs: 2, withdraw_qty: 5, withdraw_value: 531 });
+  assert.deepEqual(march.withdrawn.map((w) => [w.code, w.qty, w.price, w.value]), [['OF-001', 3, 120, 360], ['MD-005', 2, 85.5, 171]]);
+  assert.deepEqual(march.departments.map((d) => [d.name, d.withdraw_value]), [['ICU', 411], ['งานธุรการ', 120]]);
+  const icuMarch = Core.monthlySummary(db, '2026-03', 'ICU');
+  assert.deepEqual(icuMarch.totals, { withdraw_docs: 1, withdraw_qty: 4, withdraw_value: 411 });
+  assert.equal(icuMarch.department, 'ICU');
+  assert.equal(icuMarch.values[icuMarch.requests[0].id], 411);
+  const year = Core.monthlySummary(db, '2026', 'ICU');
+  assert.equal(year.yearly, true);
+  assert.deepEqual(year.totals, { withdraw_docs: 2, withdraw_qty: 9, withdraw_value: 1011 });
+  assert.equal(year.months.length, 12);
+  assert.deepEqual(year.months.filter((m) => m.withdraw_docs).map((m) => [m.month, m.withdraw_value]), [['2026-03', 411], ['2026-10', 600]]);
+  assert.equal(Core.monthlySummary(db, '2026').totals.withdraw_docs, 3);
+  assert.equal(Core.monthlySummary(db, '2026-03').months.length, 0);
 });
 
 test('Apps Script: an old borrow-system sheet is cleaned up and keeps its data', () => {
@@ -492,11 +570,11 @@ test('Apps Script: an old borrow-system sheet is cleaned up and keeps its data',
   assert.equal(post({ action: 'createRequest', payload: { borrower_name: 'คนใหม่', department: 'ICU', items: [{ item_id: 1, qty: 1 }] } }).ok, true);
   assert.equal(sheets['พัสดุที่ถูกยืมอยู่'], undefined, 'แท็บของระบบยืมถูกลบ');
   assert.equal(sheets['รายการเบิก-ยืม'], undefined);
-  assert.deepEqual(sheets['รายการเบิก'].data[0], ['วันที่เวลาที่เบิก', 'เลขที่', 'ผู้เบิก', 'แผนก', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'จำนวน', 'หน่วย']);
+  assert.deepEqual(sheets['รายการเบิก'].data[0], ['วันที่เวลาที่เบิก', 'เลขที่', 'ผู้เบิก', 'แผนก', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'จำนวน', 'หน่วย', 'ราคาต่อหน่วย', 'รวมเงิน (บาท)']);
   assert.equal(sheets['รายการเบิก'].data.length, 3);
   assert.deepEqual(sheets['อุปกรณ์'].data[0], [...Core.TABLES.items, 'เบิกไปแล้วรวม']);
   assert.equal(sheets['อุปกรณ์'].data[1][Core.TABLES.items.indexOf('available_qty')], '9');
-  assert.deepEqual(sheets['รายการในคำขอ'].data[0], ['request_id', 'item_id', 'qty', 'เลขที่', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'หน่วย']);
+  assert.deepEqual(sheets['รายการในคำขอ'].data[0], ['request_id', 'item_id', 'qty', 'price', 'เลขที่', 'รหัสพัสดุ', 'ชื่อพัสดุ', 'หน่วย', 'รวมเงิน (บาท)']);
   const hdr = sheets['ประวัติการเบิก'].data[0];
   assert.ok(!hdr.some((h) => /ยืม|คืน|ประเภท|due|return|type|approved|borrow_date|สถานะ/.test(h)), hdr.join());
   assert.ok(sheets['ประวัติการเบิก'].cleared, 'สีหัวตารางเดิมถูกล้าง');
@@ -532,10 +610,10 @@ test('core: sheet tables add readable Thai columns (withdraw only, time to the s
   Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 3 }] }, user);
   Core.run(db, 'createRequest', { ...person, items: [{ item_id: gloves.id, qty: 2 }] }, user);
   const d = Core.sheetData(db);
-  assert.deepEqual(Object.keys(d).sort(), ['categories', 'departments', 'items', 'log', 'movements', 'request_items', 'requests', 'suppliers']);
+  assert.deepEqual(Object.keys(d).sort(), ['categories', 'departments', 'items', 'locations', 'log', 'movements', 'request_items', 'requests', 'suppliers', 'units']);
   const col = (t, name) => d[t].header.indexOf(name);
   // แท็บประวัติการเบิก: คอลัมน์อ่านง่ายอยู่หน้า ครบทุกช่องของระบบ (หัวไทยแปลงกลับได้) ล่าสุดอยู่บน
-  assert.deepEqual(d.requests.header.slice(0, 7), ['เลขที่', 'วันที่เวลาที่เบิก', 'ผู้เบิก', 'แผนก', 'รายการพัสดุ', 'จำนวนรวม', 'หมายเหตุ']);
+  assert.deepEqual(d.requests.header.slice(0, 8), ['เลขที่', 'วันที่เวลาที่เบิก', 'ผู้เบิก', 'แผนก', 'รายการพัสดุ', 'จำนวนรวม', 'รวมเงิน (บาท)', 'หมายเหตุ']);
   assert.equal(d.requests.header[d.requests.wide - 1], 'รายการพัสดุ');
   assert.deepEqual(Core.TABLES.requests.filter((c) => !d.requests.header.map((h) => Core.fieldOf('requests', h)).includes(c)), []);
   const req = d.requests.rows[0];
