@@ -1,21 +1,23 @@
 /*
  * BorrowCore — กฎการเบิกพัสดุและการตัดสต็อก
  * ไฟล์เดียวกันนี้ใช้ทั้งในเบราว์เซอร์ (โหมดทดลอง) และใน Google Apps Script (คัดลอกไปเป็น Core.gs)
- * ข้อมูลทั้งหมดอยู่ในอ็อบเจกต์ db = { items, requests, request_items, movements, departments, categories }
+ * ข้อมูลทั้งหมดอยู่ในอ็อบเจกต์ db = { items, requests, request_items, movements, departments, categories, suppliers }
  */
 var BorrowCore = (function () {
   // ระบบเบิกอย่างเดียว (ของออกจากคลังถาวร ไม่ต้องคืน) ใบเบิกทุกใบมีสถานะ "เบิกแล้ว"
   var STATUS = { issued: 'เบิกแล้ว' };
-  var MOVE = { receive: 'รับเข้า', withdraw: 'เบิกจ่าย', adjust: 'ปรับปรุงยอด', lost: 'ชำรุด/สูญหาย' };
+  var MOVE = { receive: 'รับเข้า', withdraw: 'เบิกจ่าย', adjust: 'ปรับปรุงยอด', lost: 'ชำรุด/สูญหาย', cancel: 'คืนจากใบเบิกที่ลบ' };
 
   // คอลัมน์ที่ระบบอ่าน/เขียน · ชีตเวอร์ชันก่อนที่มีคอลัมน์ของระบบยืม (total_qty, kind, due_date ฯลฯ) อ่านได้ ระบบข้ามคอลัมน์นั้นไป
   var TABLES = {
     items: ['id', 'code', 'name', 'category', 'unit', 'available_qty', 'min_qty', 'location', 'active'],
     requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'status', 'created_at', 'note'],
     request_items: ['request_id', 'item_id', 'qty'],
-    movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'request_no', 'note'],
+    // รับเข้า: บริษัทผู้จำหน่าย วันหมดอายุ (YYYY-MM-DD) และเลขใบส่งของ ของล็อตนั้น
+    movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'request_no', 'note', 'supplier', 'expiry_date', 'delivery_no'],
     departments: ['name', 'full_name'],
     categories: ['name'],
+    suppliers: ['name'],
   };
   // หัวคอลัมน์ภาษาไทยในแท็บประวัติการเบิก ที่เป็นข้อมูลจริง (อ่านกลับเข้าระบบ) · ชื่อหัวเดิมยังอ่านได้
   var LABELS = { requests: { request_no: 'เลขที่', borrower_name: 'ผู้เบิก', department: 'แผนก', note: 'หมายเหตุ' } };
@@ -41,7 +43,24 @@ var BorrowCore = (function () {
     if (!isFinite(n) || Math.floor(n) !== n || n < min) fail(label + ' ต้องเป็นจำนวนเต็มตั้งแต่ ' + min + ' ขึ้นไป');
     return n;
   }
+  function isDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(s || ''); }
   function nextId(rows) { var m = 0; rows.forEach(function (r) { if (r.id > m) m = r.id; }); return m + 1; }
+  // รหัสพัสดุถัดไป: ตามรูปแบบที่ใช้มากที่สุด เช่น NSO-301 → NSO-302 (จำนวนหลักเท่าเดิม) · ยังไม่มีพัสดุ = NSO-001
+  function nextItemCode(items) {
+    var count = {}, max = {}, width = {};
+    items.forEach(function (i) {
+      var m = /^(.*?)(\d+)$/.exec(str(i.code));
+      if (!m) return;
+      count[m[1]] = (count[m[1]] || 0) + 1;
+      max[m[1]] = Math.max(max[m[1]] || 0, Number(m[2]));
+      width[m[1]] = Math.max(width[m[1]] || 0, m[2].length);
+    });
+    var prefix = Object.keys(count).sort(function (a, b) { return count[b] - count[a]; })[0];
+    if (prefix === undefined) return 'NSO-001';
+    var n = String(max[prefix] + 1);
+    while (n.length < width[prefix]) n = '0' + n;
+    return prefix + n;
+  }
   function find(rows, pred) { for (var i = 0; i < rows.length; i++) if (pred(rows[i])) return rows[i]; return null; }
   function byId(rows, id) { id = Number(id); return find(rows, function (r) { return r.id === id; }); }
 
@@ -72,6 +91,7 @@ var BorrowCore = (function () {
     db.items.forEach(function (i) {
       if (!(i.id > 0) || i.id % 1 || seen[i.id]) i.id = ++maxId;
       seen[i.id] = true;
+      if (!i.code) i.code = nextItemCode(db.items); // แถวที่พิมพ์ในชีตเองโดยไม่ใส่รหัส
       if (!i.name) i.name = i.code || 'พัสดุ #' + i.id;
       if (!i.unit) i.unit = 'ชิ้น';
     });
@@ -91,6 +111,7 @@ var BorrowCore = (function () {
     db.movements.push({
       id: nextId(db.movements), created_at: stamp(ctx.now), item_id: item.id, type: o.type, qty: o.delta,
       available_after: available, request_no: o.request_no || '', note: str(o.note),
+      supplier: str(o.supplier), expiry_date: str(o.expiry_date), delivery_no: str(o.delivery_no),
     });
   }
 
@@ -98,7 +119,16 @@ var BorrowCore = (function () {
     return db.request_items.filter(function (l) { return l.request_id === requestId; });
   }
 
-  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster'];
+  var MASTERS = { departments: 1, categories: 1, suppliers: 1 };
+  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest'];
+
+  // ข้อมูลล็อตที่รับเข้า (ไม่บังคับ): บริษัท วันหมดอายุ เลขใบส่งของ
+  function lot(p) {
+    var expiry = str(p.expiry_date);
+    if (expiry && !isDate(expiry)) fail('วันหมดอายุไม่ถูกต้อง กรุณาเลือกจากปฏิทิน');
+    return { supplier: str(p.supplier), expiry_date: expiry, delivery_no: str(p.delivery_no) };
+  }
+  function withLot(o, p) { var l = lot(p); o.supplier = l.supplier; o.expiry_date = l.expiry_date; o.delivery_no = l.delivery_no; return o; }
 
   var actions = {
     checkPin: function () { return true; },
@@ -122,8 +152,10 @@ var BorrowCore = (function () {
       var be = String(ctx.now.getFullYear() + 543).slice(2);
       var prefix = 'WD' + be + '-';
       var seq = 0;
-      db.requests.forEach(function (r) {
-        if (r.request_no.indexOf(prefix) === 0) seq = Math.max(seq, Number(r.request_no.slice(prefix.length)));
+      // นับจากประวัติสต็อกด้วย: ใบที่ถูกลบไปแล้วจะไม่ถูกนำเลขกลับมาใช้ซ้ำ (เลขบน PDF ที่ออกไปแล้วไม่ชนกัน)
+      db.requests.concat(db.movements).forEach(function (r) {
+        var no = str(r.request_no);
+        if (no.indexOf(prefix) === 0) seq = Math.max(seq, Number(no.slice(prefix.length)) || 0);
       });
       var r = {
         id: nextId(db.requests), request_no: prefix + (seq + 1 < 1000 ? ('00' + (seq + 1)).slice(-3) : String(seq + 1)), borrower_name: name, phone: str(p.phone),
@@ -138,8 +170,9 @@ var BorrowCore = (function () {
       return r.id;
     },
 
+    // เพิ่มพัสดุใหม่: ไม่ส่งรหัสมา = ระบบตั้งรหัสถัดไปให้เอง
     saveItem: function (db, p, ctx) {
-      var code = req(p.code, 'รหัสพัสดุ');
+      var code = str(p.code) || (p.id ? req(p.code, 'รหัสพัสดุ') : nextItemCode(db.items));
       var dup = find(db.items, function (i) { return i.code === code && i.id !== Number(p.id || 0); });
       if (dup) fail('รหัสพัสดุนี้มีอยู่แล้ว');
       var fields = {
@@ -156,7 +189,8 @@ var BorrowCore = (function () {
         item.available_qty = 0;
         db.items.push(item);
         var qty = int(p.initial_qty || 0, 'จำนวนเริ่มต้น');
-        if (qty) moveStock(db, ctx, { item_id: item.id, type: 'receive', delta: qty, note: 'ยอดยกมาเริ่มต้น' });
+        if (qty) moveStock(db, ctx, withLot({ item_id: item.id, type: 'receive', delta: qty, note: str(p.note) || 'ยอดยกมาเริ่มต้น' }, p));
+        else lot(p);
       }
       return item.id;
     },
@@ -167,7 +201,7 @@ var BorrowCore = (function () {
       var q;
       if (p.type === 'receive') {
         q = int(p.qty, 'จำนวน', 1);
-        moveStock(db, ctx, { item_id: item.id, type: 'receive', delta: q, note: p.note });
+        moveStock(db, ctx, withLot({ item_id: item.id, type: 'receive', delta: q, note: p.note }, p));
       } else if (p.type === 'lost') {
         q = int(p.qty, 'จำนวน', 1);
         moveStock(db, ctx, { item_id: item.id, type: 'lost', delta: -q, note: p.note });
@@ -180,16 +214,30 @@ var BorrowCore = (function () {
       return item.id;
     },
 
+    // ลบใบเบิก (เจ้าหน้าที่): restock = คืนจำนวนพัสดุในใบนั้นเข้าสต็อก (บันทึกในประวัติสต็อกว่า "คืนจากใบเบิกที่ลบ")
+    deleteRequest: function (db, p, ctx) {
+      var r = byId(db.requests, p.id) || fail('ไม่พบใบเบิกนี้ (อาจถูกลบไปแล้ว)');
+      if (p.restock) {
+        lines(db, r.id).forEach(function (l) {
+          if (byId(db.items, l.item_id)) moveStock(db, ctx, { item_id: l.item_id, type: 'cancel', delta: l.qty, request_no: r.request_no, note: 'ลบใบเบิก ' + r.request_no });
+        });
+      }
+      db.requests = db.requests.filter(function (x) { return x.id !== r.id; });
+      db.request_items = db.request_items.filter(function (l) { return l.request_id !== r.id; });
+      return r.request_no;
+    },
+
+    // table: departments (แผนก) | categories (หมวดหมู่) | suppliers (บริษัท)
     addMaster: function (db, p) {
-      var table = p.table === 'categories' ? db.categories : db.departments;
+      var key = MASTERS[p.table] ? p.table : 'departments';
       var name = req(p.name, 'ชื่อ');
-      if (find(table, function (r) { return r.name === name; })) fail('มีชื่อนี้อยู่แล้ว');
-      table.push(p.table === 'categories' ? { name: name } : { name: name, full_name: str(p.full_name) });
+      if (find(db[key], function (r) { return r.name === name; })) fail('มีชื่อนี้อยู่แล้ว');
+      db[key].push(key === 'departments' ? { name: name, full_name: str(p.full_name) } : { name: name });
       return name;
     },
 
     removeMaster: function (db, p) {
-      var key = p.table === 'categories' ? 'categories' : 'departments';
+      var key = MASTERS[p.table] ? p.table : 'departments';
       db[key] = db[key].filter(function (r) { return r.name !== p.name; });
       return p.name;
     },
@@ -357,7 +405,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;
