@@ -78,6 +78,10 @@ const TOAST_IC = {
   err: '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 15h-2v-2h2v2Zm0-4h-2V7h2v6Z"/></svg>',
 };
 const ICON = {
+  truck: '<svg viewBox="0 0 24 24"><path d="M20 8h-3V4H3a2 2 0 0 0-2 2v11h2a3 3 0 0 0 6 0h6a3 3 0 0 0 6 0h2v-5l-3-4ZM6 18.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm13.5-9 1.96 2.5H17V9.5h2.5ZM18 18.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/></svg>',
+  tv: '<svg viewBox="0 0 24 24"><path d="M21 3H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5v2h8v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 14H3V5h18v12Z"/></svg>',
+  phone: '<svg viewBox="0 0 24 24"><path d="M6.62 10.79a15.2 15.2 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2Z"/></svg>',
+  full: '<svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3Zm-2-4h2V7h3V5H5v5Zm12 7h-3v2h5v-5h-2v3ZM14 5v2h3v3h2V5h-5Z"/></svg>',
   box: '<svg viewBox="0 0 24 24"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Zm0 2.3L18.7 8 12 11.7 5.3 8 12 4.3ZM5 9.7l6 3.3v6.6l-6-3.3V9.7Zm8 9.9V13l6-3.3v6.6l-6 3.3Z"/></svg>',
   withdraw: '<svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2Zm7-3 6-6-1.4-1.4-3.6 3.6V3h-2v10.2L7.4 9.6 6 11l6 6Z"/></svg>',
   search: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 14 15.5l.3.3v.8l5 5 1.5-1.5-5-5Zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9Z"/></svg>',
@@ -573,6 +577,8 @@ const ROUTES = {
   movements: { title: 'ประวัติสต็อก', render: renderMovements, admin: true },
   settings: { title: 'ตั้งค่า', render: renderSettings, admin: true },
   sheet: { title: 'Google Sheet', render: renderSheet, admin: true },
+  suppliers: { title: 'บริษัทผู้จำหน่าย', render: renderSuppliers, admin: true },
+  board: { title: 'Live board', render: renderBoard, admin: true },
   help: { title: 'วิธีใช้งาน', render: renderHelp },
 };
 
@@ -750,6 +756,7 @@ function countUp(root) {
 
 function render(enter = false) {
   const key = currentRoute();
+  if (key !== 'board') leaveBoard();
   document.title = `${TEST_SITE ? '[ทดสอบ] ' : ''}${ROUTES[key].title} · ระบบเบิกพัสดุ`;
   renderNav();
   const page = $('#page');
@@ -829,6 +836,7 @@ async function syncFromSheet({ manual = false } = {}) {
     await store.load();
     const snap = JSON.stringify(state.db);
     hud?.success(snap === lastSnapshot ? 'ข้อมูลเป็นปัจจุบันแล้ว' : 'อัปเดตข้อมูลแล้ว', liveText());
+    if ($('#bd-sync')) $('#bd-sync').textContent = 'อัปเดต ' + state.syncedAt.toLocaleTimeString('th-TH');
     if (snap === lastSnapshot) return;
     lastSnapshot = snap;
     if (modalOpen() || currentRoute() !== key) return;
@@ -2147,6 +2155,10 @@ function renderDashboard(page) {
       <button class="btn" data-stockreport>${ICON.doc} รายงานคงเหลือ (PDF)</button>
       <button class="btn" data-flowreport>${ICON.doc} สรุปรับเข้า–จ่ายออก (PDF)</button></div>
     </div>
+    <div class="shortcuts">
+      <a class="card shortcut" href="#/board"><span class="sc-ic tv">${ICON.tv}</span><span><b>Live board</b><small>เปิดบนจอทีวีห้องพัสดุ</small></span></a>
+      <a class="card shortcut" href="#/suppliers"><span class="sc-ic">${ICON.truck}</span><span><b>บริษัทผู้จำหน่าย</b><small>ข้อมูลติดต่อ · ยอดซื้อ</small></span></a>
+    </div>
     <div class="stats">
       <a class="card stat" href="#/items"><span class="label">พัสดุในระบบ</span><span class="value">${fmtNum(items.length)}</span><span class="sub">รายการ</span></a>
       <a class="card stat" href="#/requests?tab=today"><span class="label">เบิกวันนี้</span><span class="value">${fmtNum(todayN)}</span><span class="sub">ใบเบิก</span></a>
@@ -2229,6 +2241,235 @@ function renderMovements(page) {
   draw();
 }
 
+// ===================== Live board: จอทีวีในห้องพัสดุ (เจ้าหน้าที่) =====================
+// เต็มจอ ตัวใหญ่ อ่านได้จากไกล · ดึงข้อมูลใหม่ทุก 60 วินาที · ใบเบิกใหม่เด้งเรืองแสง + เสียงเตือน (ถ้าเปิดเสียง) · หน้าจอไม่ดับเอง
+const BOARD_POLL = 60e3;
+const board = { timers: [], seen: null, fresh: {}, sound: lsGet('board-sound') === '1', wake: null };
+function leaveBoard() {
+  board.timers.forEach(clearInterval);
+  board.timers = [];
+  document.body.classList.remove('board-mode');
+  board.wake?.release?.().catch(() => {});
+  board.wake = null;
+}
+async function keepAwake() {
+  if (currentRoute() !== 'board' || board.wake || !navigator.wakeLock || document.visibilityState !== 'visible') return;
+  try { board.wake = await navigator.wakeLock.request('screen'); board.wake.addEventListener('release', () => { board.wake = null; }); } catch { /* ไม่รองรับ */ }
+}
+document.addEventListener('visibilitychange', keepAwake);
+setInterval(() => { if (currentRoute() === 'board' && document.visibilityState === 'visible') syncFromSheet(); }, BOARD_POLL);
+
+function renderBoard(page) {
+  board.timers.forEach(clearInterval);
+  board.timers = [];
+  document.body.classList.add('board-mode');
+  keepAwake();
+  const day = today();
+  const reqs = requestsView().filter((r) => r.created_at.startsWith(day));
+  // ใบเบิกที่เพิ่งเข้ามาหลังเปิดจอ: เรืองแสง 10 นาที + เสียงเตือน
+  const ids = reqs.map((r) => r.id);
+  const arrived = board.seen ? ids.filter((id) => !board.seen.has(id)) : [];
+  board.seen = new Set([...(board.seen || []), ...ids]);
+  const now = Date.now();
+  arrived.forEach((id) => { board.fresh[id] = now; });
+  if (arrived.length && board.sound) alertSignal();
+  const isNew = (r) => board.fresh[r.id] && now - board.fresh[r.id] < 10 * 60e3;
+  const { low, exp } = alertsView();
+  const qty = reqs.reduce((s, r) => s + r.items.reduce((n, l) => n + l.qty, 0), 0);
+  const money = reqs.reduce((s, r) => s + r.total, 0);
+  const urgent = exp.filter((x) => x.days <= 30).length;
+  const depts = {};
+  reqs.forEach((r) => { depts[r.department] = (depts[r.department] || 0) + r.items.reduce((n, l) => n + l.qty, 0); });
+  const deptRows = Object.entries(depts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const maxDept = Math.max(1, ...deptRows.map((d) => d[1]));
+  const tile = (label, value, sub, tone = '') => `<div class="bd-tile ${tone}"><span class="bd-label">${label}</span><b class="bd-value">${value}</b><span class="bd-sub">${sub}</span></div>`;
+  page.insertAdjacentHTML('beforeend', `
+    <div class="bd">
+      <header class="bd-top">
+        <div class="bd-brand"><span class="bd-mark">${ICON.box}</span><div><b>Live board · งานพัสดุ</b><span>${esc(CONFIG.HOSPITAL_NAME || '')}</span></div></div>
+        <div class="bd-clock"><b id="bd-time"></b><span id="bd-date"></span></div>
+        <div class="bd-tools">
+          <span class="bd-live"><i></i><span id="bd-sync">${state.syncedAt ? 'อัปเดต ' + state.syncedAt.toLocaleTimeString('th-TH') : 'กำลังเชื่อมต่อ…'}</span></span>
+          <button type="button" class="bd-btn" id="bd-sound" aria-pressed="${board.sound}">${board.sound ? '🔔 เสียงเปิด' : '🔕 เปิดเสียง'}</button>
+          <button type="button" class="bd-btn" id="bd-full">${ICON.full} เต็มจอ</button>
+          <a class="bd-btn" href="#/dashboard">ออก</a>
+        </div>
+      </header>
+      <section class="bd-tiles">
+        ${tile('ใบเบิกวันนี้', fmtNum(reqs.length), 'ใบ')}
+        ${tile('จ่ายออกวันนี้', fmtNum(qty), 'หน่วย')}
+        ${tile('มูลค่าวันนี้', fmtMoney(money), 'บาท')}
+        ${tile('ใกล้หมดสต็อก', fmtNum(low.length), 'รายการ', low.length ? 'warn' : '')}
+        ${tile('ใกล้หมดอายุ', fmtNum(exp.length), urgent ? `ล็อต · ด่วน ${fmtNum(urgent)}` : `ล็อต · ภายใน ${EXPIRY_MONTHS} เดือน`, urgent ? 'danger' : exp.length ? 'warn' : '')}
+      </section>
+      <section class="bd-main">
+        <div class="bd-panel bd-reqs">
+          <h2>ใบเบิกวันนี้ <span>${reqs.length > 6 ? `ล่าสุด 6 จาก ${fmtNum(reqs.length)} ใบ` : ''}</span></h2>
+          ${reqs.slice(0, 6).map((r) => `
+            <article class="bd-req${isNew(r) ? ' new' : ''}${arrived.includes(r.id) ? ' arrive' : ''}">
+              <div class="bd-req-head">
+                <b class="bd-req-time">${esc((r.created_at.split(' ')[1] || '').slice(0, 5))}</b>
+                <div class="bd-req-who"><b>${esc(r.borrower_name)}</b><span>${esc(r.department)} · ${esc(r.request_no)}</span></div>
+                ${isNew(r) ? '<span class="bd-new">ใหม่</span>' : ''}
+              </div>
+              ${itemLines(r.items, 4)}
+            </article>`).join('') || '<p class="bd-empty">ยังไม่มีใบเบิกวันนี้</p>'}
+        </div>
+        <div class="bd-side">
+          <div class="bd-panel">
+            <h2>ใกล้หมดสต็อก <span>${low.length > 7 ? `7 จาก ${fmtNum(low.length)}` : ''}</span></h2>
+            <ul class="bd-list">${low.slice(0, 7).map((i) => `<li><span>${esc(i.name)}</span><b class="${i.available_qty <= 0 ? 'neg' : 'low'}">${i.available_qty <= 0 ? (i.available_qty < 0 ? 'ติดลบ ' + fmtNum(-i.available_qty) : 'หมด') : 'เหลือ ' + fmtNum(i.available_qty)} ${esc(i.unit)}</b></li>`).join('') || '<li class="bd-empty">สต็อกปกติทุกรายการ</li>'}</ul>
+          </div>
+          <div class="bd-panel">
+            <h2>ใกล้หมดอายุ <span>${exp.length > 5 ? `5 จาก ${fmtNum(exp.length)}` : ''}</span></h2>
+            <ul class="bd-list">${exp.slice(0, 5).map((x) => `<li><span>${esc(x.name)}<small>หมดอายุ ${fmtDate(x.expiry_date)} · ~${fmtNum(x.qty)} ${esc(x.unit)}</small></span><b class="${x.expired || x.days <= 30 ? 'neg' : x.days <= 90 ? 'low' : 'soon'}">${x.expired ? 'หมดแล้ว' : 'อีก ' + fmtNum(x.days) + ' วัน'}</b></li>`).join('') || '<li class="bd-empty">ไม่มีของใกล้หมดอายุ</li>'}</ul>
+          </div>
+          <div class="bd-panel">
+            <h2>แผนกที่เบิกวันนี้</h2>
+            <ul class="bd-bars">${deptRows.map(([d, n]) => `<li><span>${esc(d)}</span><i style="--w:${Math.round((n / maxDept) * 100)}%"></i><b>${fmtNum(n)}</b></li>`).join('') || '<li class="bd-empty">-</li>'}</ul>
+          </div>
+        </div>
+      </section>
+    </div>`);
+  const tick = () => {
+    const d = new Date();
+    const t = $('#bd-time');
+    if (!t) return;
+    t.textContent = d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    $('#bd-date').textContent = d.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    // ข้ามวัน: เริ่มนับของวันใหม่
+    if (BorrowCore.ymd(d) !== day) render();
+  };
+  tick();
+  board.timers.push(setInterval(tick, 1000));
+  $('#bd-sound').addEventListener('click', () => {
+    board.sound = !board.sound;
+    lsSet('board-sound', board.sound ? '1' : '');
+    if (board.sound) { primeSound(); alertSignal(); }
+    render();
+  });
+  $('#bd-full').addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else document.documentElement.requestFullscreen?.().catch(() => toast('เบราว์เซอร์นี้เต็มจอไม่ได้ ลองกด F11', true));
+  });
+}
+
+// ===================== บริษัทผู้จำหน่าย (เจ้าหน้าที่) =====================
+// ข้อมูลติดต่อ · ส่งของกี่ครั้ง · ยอดซื้อรวม / รายปี · พัสดุที่ส่ง · ประวัติแยกตามใบส่งของ
+let supCache = { db: null };
+function suppliersView(year) {
+  if (supCache.db !== state.db || supCache.year !== year) supCache = { db: state.db, year, list: BorrowCore.supplierSummary(state.db, year) };
+  return supCache.list;
+}
+const telLink = (p) => (p ? `<a class="tel" href="tel:${esc(p.replace(/[^\d+]/g, ''))}">${ICON.phone}${esc(p)}</a>` : '');
+function renderSuppliers(page) {
+  const params = hashParams();
+  const thisYear = today().slice(0, 4);
+  const years = [...new Set([thisYear, ...state.db.movements.filter((m) => m.type === 'receive').map((m) => m.created_at.slice(0, 4))])].sort().reverse();
+  let year = years.includes(params.get('y')) ? params.get('y') : thisYear;
+  page.insertAdjacentHTML('beforeend', `
+    <div class="page-head-row">
+      <div class="page-head"><h1>บริษัทผู้จำหน่าย</h1><p class="lead">ข้อมูลติดต่อ ประวัติการส่งของ และยอดซื้อรวมของแต่ละบริษัท</p></div>
+      <button class="btn primary" id="sup-add">+ เพิ่มบริษัท</button>
+    </div>
+    ${oldServerNote()}
+    <div class="toolbar">
+      <div class="search">${ICON.search}<input type="search" id="sup-q" placeholder="ค้นหาชื่อบริษัท ผู้ติดต่อ หรือเบอร์โทร" value="${esc(params.get('q') || '')}"></div>
+      <label class="month-pick">${ICON.cal}<select id="sup-year" aria-label="ยอดซื้อของปี">${years.map((y) => `<option value="${y}">ยอดซื้อปี พ.ศ. ${Number(y) + 543}</option>`).join('')}</select></label>
+      <button class="btn" id="sup-csv">ส่งออก CSV</button>
+    </div>
+    <div class="stats sup-stats" id="sup-stats"></div>
+    <div class="sup-grid" id="sup-list"></div>`);
+  $('#sup-year').value = year;
+  const draw = () => {
+    const q = $('#sup-q').value.trim().toLowerCase();
+    history.replaceState(null, '', `#/suppliers?y=${year}${q ? '&q=' + encodeURIComponent(q) : ''}`);
+    const all = suppliersView(year);
+    const list = all.filter((s) => !q || [s.name, s.contact, s.phone, s.email].some((v) => (v || '').toLowerCase().includes(q)));
+    const yv = all.reduce((t, s) => t + s.year_value, 0);
+    const yd = all.reduce((t, s) => t + s.docs.filter((d) => d.date.startsWith(year)).length, 0);
+    $('#sup-stats').innerHTML = `
+      <div class="card stat"><span class="label">บริษัท</span><span class="value">${fmtNum(all.length)}</span><span class="sub">ราย</span></div>
+      <div class="card stat"><span class="label">ส่งของปี ${Number(year) + 543}</span><span class="value">${fmtNum(yd)}</span><span class="sub">ครั้ง (ใบส่งของ)</span></div>
+      <div class="card stat"><span class="label">ยอดซื้อปี ${Number(year) + 543}</span><span class="value money">${fmtMoney(yv)}</span><span class="sub">บาท</span></div>`;
+    $('#sup-list').innerHTML = list.map((s) => `
+      <button type="button" class="card sup-card" data-sup="${esc(s.name)}">
+        <span class="sup-ic">${ICON.truck}</span>
+        <span class="sup-body">
+          <b class="sup-name">${esc(s.name)}${s.listed ? '' : ' <span class="pill">ไม่อยู่ในรายชื่อ</span>'}</b>
+          <span class="sup-contact">${[s.contact && esc(s.contact), s.phone && esc(s.phone)].filter(Boolean).join(' · ') || '<span class="muted">ยังไม่มีข้อมูลติดต่อ</span>'}</span>
+          <span class="sup-meta"><span>ส่งของ <b>${fmtNum(s.deliveries)}</b> ครั้ง</span><span>ปี ${Number(year) + 543} <b>${fmtMoney(s.year_value)}</b> บาท</span>
+            <span>รวม <b>${fmtMoney(s.value)}</b> บาท</span>${s.last_date ? `<span>ล่าสุด ${fmtDate(s.last_date)}</span>` : ''}</span>
+        </span>
+        <span class="chev">${ICON.chev}</span>
+      </button>`).join('') || `<div class="card empty">${q ? 'ไม่พบบริษัทที่ค้นหา' : 'ยังไม่มีบริษัท · กด "+ เพิ่มบริษัท" หรือเลือกบริษัทตอนรับเข้าพัสดุ'}</div>`;
+    $$('#sup-list [data-sup]').forEach((b) => b.addEventListener('click', () => showSupplier(b.dataset.sup, year)));
+  };
+  $('#sup-q').addEventListener('input', draw);
+  $('#sup-year').addEventListener('change', (e) => { year = e.target.value; draw(); });
+  $('#sup-add').addEventListener('click', () => supplierForm(null));
+  $('#sup-csv').addEventListener('click', () => downloadCsv('suppliers-' + (Number(year) + 543),
+    ['บริษัท', 'ผู้ติดต่อ', 'เบอร์โทร', 'อีเมล', 'หมายเหตุ', 'ส่งของ (ครั้ง)', `ยอดซื้อปี ${Number(year) + 543}`, 'ยอดซื้อรวม', 'ส่งล่าสุด'],
+    suppliersView(year).map((s) => [s.name, s.contact, s.phone, s.email, s.note, s.deliveries, s.year_value, s.value, s.last_date.slice(0, 10)])));
+  draw();
+}
+
+function showSupplier(name, year = today().slice(0, 4)) {
+  const s = suppliersView(year).find((x) => x.name === name);
+  if (!s) return;
+  const body = openModal(s.name, `
+    <dl class="info">
+      <dt>ผู้ติดต่อ</dt><dd>${esc(s.contact || '-')}</dd>
+      <dt>เบอร์โทร</dt><dd>${telLink(s.phone) || '-'}</dd>
+      <dt>อีเมล</dt><dd>${s.email ? `<a href="mailto:${esc(s.email)}">${esc(s.email)}</a>` : '-'}</dd>
+      ${s.note ? `<dt>หมายเหตุ</dt><dd>${esc(s.note)}</dd>` : ''}
+    </dl>
+    <div class="stats sup-stats">
+      <div class="card stat"><span class="label">ส่งของ</span><span class="value">${fmtNum(s.deliveries)}</span><span class="sub">ครั้ง · ${fmtNum(s.qty)} หน่วย</span></div>
+      <div class="card stat"><span class="label">ยอดซื้อปี ${Number(year) + 543}</span><span class="value money">${fmtMoney(s.year_value)}</span><span class="sub">บาท</span></div>
+      <div class="card stat"><span class="label">ยอดซื้อรวม</span><span class="value money">${fmtMoney(s.value)}</span><span class="sub">บาท</span></div>
+    </div>
+    <div class="toolbar"><button class="btn" id="sup-edit">แก้ไขข้อมูลบริษัท</button></div>
+    <h4>พัสดุที่ส่ง</h4>
+    <div class="sub-card table-wrap"><table>
+      <thead><tr><th>พัสดุ</th><th class="num">จำนวนรวม</th><th class="num">ราคาล่าสุด</th><th class="num">มูลค่ารวม</th></tr></thead>
+      <tbody>${s.items.map((i) => `<tr class="clickable" data-item="${i.item_id}"><td>${esc(i.name)}<div class="muted small">${esc(i.code)} · ส่ง ${fmtNum(i.times)} ครั้ง</div></td>
+        <td class="num">${fmtNum(i.qty)} ${esc(i.unit)}</td><td class="num">${i.last_price ? fmtMoney(i.last_price) : '-'}</td><td class="num">${fmtMoney(i.value)}</td></tr>`).join('') ||
+        '<tr><td colspan="4" class="empty">ยังไม่มีการรับเข้าจากบริษัทนี้</td></tr>'}</tbody>
+    </table></div>
+    <h4>ประวัติการส่งของ <span class="muted small">(แยกตามใบส่งของ ล่าสุดอยู่บน)</span></h4>
+    <div class="sup-docs">${s.docs.map((d) => `
+      <details class="sub-card sup-doc"><summary>
+        <span><b>${d.delivery_no ? 'ใบส่งของ ' + esc(d.delivery_no) : 'ไม่ระบุเลขใบส่งของ'}</b><span class="muted small"> · ${fmtDate(d.date)} · ${fmtNum(d.lines.length)} รายการ</span></span>
+        <b class="num">${fmtMoney(d.value)} บาท</b></summary>
+        <ul class="item-lines">${d.lines.map((l) => `<li><span>${esc(l.name)}${l.expiry_date ? ` <span class="muted small">หมดอายุ ${fmtDate(l.expiry_date)}</span>` : ''}</span><b>×${fmtNum(l.qty)} ${esc(l.unit)} · ${fmtMoney(l.value)}</b></li>`).join('')}</ul>
+      </details>`).join('') || '<p class="muted">ยังไม่มีประวัติ</p>'}</div>`, { wide: true });
+  bindRowClicks(body);
+  $('#sup-edit', body).addEventListener('click', () => supplierForm(s));
+}
+
+function supplierForm(s) {
+  const body = openModal(s ? 'แก้ไขข้อมูลบริษัท' : 'เพิ่มบริษัทผู้จำหน่าย', `
+    <form id="sup-form" class="fields">
+      ${oldServerNote()}
+      <label class="field full">ชื่อบริษัท <span class="req">*</span><input name="name" required value="${esc(s?.name)}" placeholder="เช่น บริษัท เอ บี ซี จำกัด"></label>
+      <label class="field">ผู้ติดต่อ<input name="contact" value="${esc(s?.contact)}" placeholder="เช่น คุณสมศรี (ฝ่ายขาย)"></label>
+      <label class="field">เบอร์โทร<input name="phone" type="tel" inputmode="tel" value="${esc(s?.phone)}" placeholder="เช่น 081-234-5678"></label>
+      <label class="field full">อีเมล / LINE<input name="email" value="${esc(s?.email)}" placeholder="เช่น sale@abc.co.th"></label>
+      <label class="field full">หมายเหตุ<input name="note" value="${esc(s?.note)}" placeholder="เช่น ส่งของทุกวันอังคาร · เครดิต 30 วัน"></label>
+      ${s && s.name !== '' ? '<p class="muted small full">เปลี่ยนชื่อบริษัทแล้ว ประวัติการรับเข้าเดิมจะเปลี่ยนเป็นชื่อใหม่ด้วย</p>' : ''}
+      <div class="actions full"><button class="btn primary lg">บันทึก</button></div>
+    </form>`);
+  $('#sup-form', body).addEventListener('submit', safe(async (e) => {
+    e.preventDefault();
+    const data = formData(e.target);
+    if (s) data.old_name = s.name;
+    const name = await store.act('saveSupplier', data, { done: (n) => ['บันทึกข้อมูลบริษัทเรียบร้อย', n] });
+    refresh();
+    showSupplier(name);
+  }));
+}
+
 // ===================== Settings =====================
 function renderSettings(page) {
   const isDept = (table) => table === 'departments';
@@ -2248,6 +2489,7 @@ function renderSettings(page) {
     <div class="grid-2">${card('departments', 'แผนก')}${card('categories', 'หมวดหมู่พัสดุ')}</div>
     ${oldServerNote()}
     <div class="grid-2">${card('units', 'หน่วยนับ')}${card('locations', 'สถานที่เก็บ')}</div>
+    <a class="card card-pad link-card" href="#/suppliers"><span class="sup-ic">${ICON.truck}</span><span><b>หน้าบริษัทผู้จำหน่าย</b><span class="muted small">ข้อมูลติดต่อ เบอร์โทร ประวัติการส่งของ และยอดซื้อรวม</span></span><span class="chev">${ICON.chev}</span></a>
     ${card('suppliers', 'บริษัท / ผู้จำหน่าย (เลือกตอนรับเข้าพัสดุ)')}
     ${DEMO ? `<section class="card card-pad" style="display:flex;flex-direction:column;gap:12px;align-items:flex-start"><h3>โหมดทดลอง</h3>
       <p class="muted">ล้างข้อมูลที่ทดลองไว้ในเบราว์เซอร์นี้ แล้วกลับไปใช้ข้อมูลตัวอย่าง</p>
@@ -2673,7 +2915,7 @@ function alertSignal() {
 $('#btn-help').addEventListener('click', showTour);
 // เปิดเองทุกครั้งที่เข้าเว็บ (ไม่แสดงซ้อนหน้าต่างอื่น · ข้ามเมื่อเป็นการทดสอบอัตโนมัติ)
 function autoTour() {
-  if (navigator.webdriver) return;
+  if (navigator.webdriver || currentRoute() === 'board') return;
   if (modalOpen() || $('.hud')) { setTimeout(autoTour, 1500); return; }
   showTour();
   buzzWhenTouched($('dialog.tour'));

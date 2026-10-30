@@ -357,7 +357,7 @@ test('Apps Script: บริษัท tab, receive lot columns and deleting a sl
   ctx.setup();
   const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
   assert.equal(post({ action: 'addMaster', payload: { table: 'suppliers', name: 'บริษัท ก จำกัด' }, pin: '1234' }).ok, true);
-  assert.deepEqual(sheets['บริษัท'].data, [['name'], ['บริษัท ก จำกัด']]);
+  assert.deepEqual(sheets['บริษัท'].data, [['name', 'contact', 'phone', 'email', 'note'], ['บริษัท ก จำกัด', '', '', '', '']]);
   assert.equal(post({ action: 'stock', payload: { item_id: 3, type: 'receive', qty: 7, supplier: 'บริษัท ก จำกัด', expiry_date: '2027-03-31', delivery_no: 'IV-1' }, pin: '1234' }).ok, true);
   const mv = sheets['ประวัติสต็อก'];
   const h = mv.data[0];
@@ -641,6 +641,33 @@ test('core: expiry alerts within N months, lot quantity estimated first-in-first
   // ล็อตใหม่เข้าช่วง 8 เดือน
   assert.deepEqual(Core.expiryAlerts(db, '2027-05-01', 8).map((x) => [x.code, x.qty]), [['A', 10]]);
   assert.deepEqual(Core.expiryAlerts(db, '2027-04-29', 8).map((x) => x.code), []);
+});
+
+test('core: supplier contacts, rename keeps history, delivery summary by delivery note', () => {
+  const db = Core.seed(new Date('2026-01-01T08:00:00'), FIXTURE);
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const gloves = db.items.find((i) => i.code === 'MD-005');
+  Core.run(db, 'saveItem', { ...paper, price: 120 }, admin);
+  Core.run(db, 'saveSupplier', { name: 'บ.เอ', contact: 'คุณสมศรี', phone: '081-234-5678' }, admin);
+  assert.throws(() => Core.run(db, 'saveSupplier', { name: 'บ.เอ' }, admin), /มีชื่อบริษัทนี้อยู่แล้ว/);
+  assert.throws(() => Core.run(db, 'saveSupplier', { name: 'x' }, user), /PIN/);
+  const at = (d) => ({ isAdmin: true, now: new Date(d + 'T09:00:00') });
+  Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 10, supplier: 'บ.เอ', delivery_no: 'IV-1' }, at('2026-03-01'));
+  Core.run(db, 'stock', { item_id: gloves.id, type: 'receive', qty: 4, price: 80, supplier: 'บ.เอ', delivery_no: 'IV-1' }, at('2026-03-01'));
+  Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 5, price: 110, supplier: 'บ.เอ' }, at('2027-01-10'));
+  Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 1, supplier: 'บ.ไม่อยู่ในรายชื่อ' }, at('2026-05-01'));
+  // แก้ชื่อบริษัท: ประวัติรับเข้าเปลี่ยนชื่อตาม
+  Core.run(db, 'saveSupplier', { old_name: 'บ.เอ', name: 'บริษัท เอ จำกัด', contact: 'คุณสมศรี', phone: '02-111-2222' }, admin);
+  assert.equal(db.suppliers.length, 1);
+  assert.equal(db.movements.filter((m) => m.supplier === 'บริษัท เอ จำกัด').length, 3);
+  const sum = Core.supplierSummary(db, '2026');
+  const a = sum.find((s) => s.name === 'บริษัท เอ จำกัด');
+  assert.deepEqual([a.phone, a.receipts, a.deliveries, a.qty, a.value, a.year_value, a.last_date.slice(0, 10)], ['02-111-2222', 3, 2, 19, 1200 + 320 + 550, 1520, '2027-01-10']);
+  assert.deepEqual(a.docs.map((d) => [d.delivery_no, d.lines.length, d.value]), [['', 1, 550], ['IV-1', 2, 1520]]);
+  assert.deepEqual(a.items.map((i) => [i.code, i.qty, i.last_price]), [['OF-001', 15, 110], ['MD-005', 4, 80]]);
+  const b = sum.find((s) => s.name === 'บ.ไม่อยู่ในรายชื่อ');
+  assert.equal(b.listed, false);
+  assert.deepEqual(Core.sheetData(db).suppliers.header, ['name', 'contact', 'phone', 'email', 'note']);
 });
 
 test('Apps Script: an old borrow-system sheet is cleaned up and keeps its data', () => {
