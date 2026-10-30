@@ -1290,17 +1290,17 @@ function renderSheet(page) {
 
 // ===================== Success + PDF =====================
 // สร้าง PDF รอไว้ก่อน กดบันทึกแล้วถามว่าต้องการคำแนะนำไหม → (ภาพสาธิต) → บันทึก → ป๊อปอัปกลางจอเมื่อบันทึกแล้ว
-function showSuccess(id) {
+function showSuccess(id, { edited = false } = {}) {
   const r = requestView(state.db.requests.find((x) => x.id === id));
   const body = openModal('', `
     <div class="success">
       <span class="done" aria-hidden="true"><svg class="check-anim" viewBox="0 0 76 76"><circle cx="38" cy="38" r="34"/><path d="M23 39.5 33.5 50 54 28"/></svg></span>
-      <h2>เบิกพัสดุเรียบร้อย</h2>
-      <p class="doc-no"><span class="doc-label">เลขที่เอกสาร</span><b class="doc-id">${esc(r.request_no)}</b><span>${r.items.length} รายการ · ${esc(fmtDateTime(r.created_at))}</span></p>
+      <h2>${edited ? 'แก้ไขใบเบิกเรียบร้อย' : 'เบิกพัสดุเรียบร้อย'}</h2>
+      <p class="doc-no"><span class="doc-label">เลขที่เอกสาร</span><b class="doc-id">${esc(r.request_no)}</b><span>${r.items.length} รายการ · ${edited ? 'แก้ไข ' + esc(fmtDateTime(r.edited_at)) : esc(fmtDateTime(r.created_at))}</span></p>
       <div class="permission">
         <span class="file-icon">PDF</span>
         <div>
-          <p id="pdf-q">กำลังจัดทำใบเบิกพัสดุ...</p>
+          <p id="pdf-q">${edited ? 'กำลังจัดทำใบเบิกฉบับแก้ไข...' : 'กำลังจัดทำใบเบิกพัสดุ...'}</p>
           <p class="muted" id="pdf-sub"><span class="spinner" style="width:12px;height:12px"></span> กรุณารอสักครู่</p>
         </div>
       </div>
@@ -1875,6 +1875,7 @@ function showRequest(id) {
       <dt>วันเวลาที่เบิก</dt><dd>${fmtDateTime(r.created_at)}</dd>
       ${r.purpose ? `<dt>วัตถุประสงค์</dt><dd>${esc(r.purpose)}</dd>` : ''}
       ${r.note ? `<dt>หมายเหตุ</dt><dd>${esc(r.note)}</dd>` : ''}
+      ${r.edited_at ? `<dt>แก้ไขล่าสุด</dt><dd>${fmtDateTime(r.edited_at)}</dd>` : ''}
     </dl>
     <div class="sub-card table-wrap"><table class="slip-table">
       <thead><tr><th>พัสดุ</th><th class="num">จำนวน</th><th class="num">ราคา/หน่วย</th><th class="num">รวม (บาท)</th></tr></thead>
@@ -1887,12 +1888,111 @@ function showRequest(id) {
       <tfoot><tr><th colspan="3">รวมเป็นเงิน</th><td class="num"><b>${fmtMoney(r.total)}</b></td></tr></tfoot>
     </table></div>
     <div class="actions">
-      ${isAdmin() ? `<button class="btn danger-soft" id="rq-delete">${IC.trash} ลบใบเบิก</button>` : ''}
+      ${isAdmin() ? `<button class="btn danger-soft" id="rq-delete">${IC.trash} ลบใบเบิก</button><button class="btn" id="rq-edit">แก้ไขใบเบิก</button>` : ''}
       <span class="spacer"></span>
       <button class="btn primary" id="rq-pdf">${ICON.doc} ดาวน์โหลด PDF</button>
     </div>`);
   $('#rq-pdf', body).addEventListener('click', safe(() => downloadPdf(r, $('#rq-pdf', body))), { once: true });
   $('#rq-delete', body)?.addEventListener('click', () => confirmDeleteRequest(r));
+  $('#rq-edit', body)?.addEventListener('click', () => editRequestForm(r));
+}
+
+// แก้ใบเบิก (เจ้าหน้าที่): เพิ่ม/ลดจำนวน เพิ่ม/ลบรายการ แก้ชื่อ แผนก หมายเหตุ → สต็อกปรับตาม แล้วได้ PDF ฉบับแก้ไข
+function editRequestForm(r) {
+  // จำนวนในใบ: item_id → { qty, price } (รายการเดิมคงราคา ณ วันที่เบิก)
+  const orig = new Map(r.items.map((l) => [l.item_id, l.qty]));
+  const lines = new Map(r.items.map((l) => [l.item_id, { qty: l.qty, price: l.price }]));
+  const body = openModal(`แก้ไขใบเบิก ${r.request_no}`, `
+    <form id="er-form" class="fields">
+      <label class="field">ชื่อผู้เบิก <span class="req">*</span><input name="borrower_name" required value="${esc(r.borrower_name)}"></label>
+      <label class="field">แผนก <span class="req">*</span><select name="department" required>${deptOptions(r.department)}</select></label>
+      <label class="field full">หมายเหตุ<input name="note" value="${esc(r.note)}"></label>
+      <div class="full">
+        <h4 class="er-h">รายการในใบเบิก</h4>
+        <ul class="er-lines" id="er-lines"></ul>
+        <div class="er-add">
+          <div class="search">${ICON.search}<input type="search" id="er-q" placeholder="เพิ่มพัสดุ: ค้นหาชื่อหรือรหัส" autocomplete="off"></div>
+          <ul class="er-results" id="er-results" hidden></ul>
+        </div>
+      </div>
+      <div class="er-sum full" id="er-sum"></div>
+      <p class="muted small full">บันทึกแล้วสต็อกปรับตามทันที: เพิ่มจำนวน = ตัดสต็อกเพิ่ม · ลดจำนวน/ลบรายการ = คืนเข้าสต็อก (บันทึกในประวัติสต็อก) แล้วได้ PDF ฉบับแก้ไข</p>
+      <div class="actions full"><button type="button" class="btn" data-close>ยกเลิก</button><span class="spacer"></span><button class="btn primary lg" id="er-save">บันทึกการแก้ไข</button></div>
+    </form>`, { wide: true });
+  const form = $('#er-form', body);
+  const drawLines = () => {
+    $('#er-lines', body).innerHTML = [...lines].map(([id, l]) => {
+      const i = itemById(id) || { name: '(ลบแล้ว)', code: '', unit: '', price: 0 };
+      const was = orig.get(id) || 0;
+      const d = l.qty - was;
+      const tag = !was ? '<span class="pill soon">ใหม่</span>' : d ? `<span class="pill ${d > 0 ? 'soon' : 'low'}">${d > 0 ? '+' : ''}${fmtNum(d)}</span>` : '';
+      return `<li data-id="${id}">
+        <div class="er-name"><b>${esc(i.name)}</b> ${tag}<span class="muted small">${esc(i.code)}${l.price > 0 ? ` · ${fmtMoney(l.price)} บาท/${esc(i.unit)}` : ''}${was ? ` · เดิม ${fmtNum(was)}` : ''}</span></div>
+        <div class="stepper">
+          <button type="button" data-dec="${id}" class="${l.qty === 1 ? 'rm' : ''}" aria-label="${l.qty === 1 ? 'ลบรายการ' : 'ลด'}">${l.qty === 1 ? IC.trash : IC.minus}</button>
+          <input type="number" min="1" max="${MAX_QTY}" value="${l.qty}" data-qty="${id}" aria-label="จำนวน">
+          <button type="button" data-inc="${id}" aria-label="เพิ่ม">${IC.plus}</button>
+        </div>
+        <span class="er-unit">${esc(i.unit)}</span>
+      </li>`;
+    }).join('') || '<li class="empty">ยังไม่มีรายการ — ค้นหาเพื่อเพิ่มพัสดุด้านล่าง</li>';
+    const total = [...lines].reduce((s, [, l]) => s + l.qty * (l.price || 0), 0);
+    const qty = [...lines].reduce((s, [, l]) => s + l.qty, 0);
+    const removed = [...orig.keys()].filter((id) => !lines.has(id)).map((id) => itemById(id)?.name || '(ลบแล้ว)');
+    $('#er-sum', body).innerHTML = `<span>${fmtNum(lines.size)} รายการ · ${fmtNum(qty)} หน่วย</span><span>ราคารวม <b>${fmtMoney(total)}</b> บาท</span>
+      ${removed.length ? `<span class="er-removed">ลบออก: ${removed.map(esc).join(', ')}</span>` : ''}`;
+  };
+  const setQty = (id, q) => {
+    id = Number(id);
+    q = Math.max(0, Math.min(MAX_QTY, Math.floor(Number(q) || 0)));
+    if (!q) lines.delete(id); else lines.get(id).qty = q;
+    drawLines();
+  };
+  $('#er-lines', body).addEventListener('click', (e) => {
+    const inc = e.target.closest('[data-inc]'), dec = e.target.closest('[data-dec]');
+    if (inc) setQty(inc.dataset.inc, lines.get(Number(inc.dataset.inc)).qty + 1);
+    if (dec) setQty(dec.dataset.dec, lines.get(Number(dec.dataset.dec)).qty - 1);
+  });
+  $('#er-lines', body).addEventListener('change', (e) => { const i = e.target.closest('[data-qty]'); if (i) setQty(i.dataset.qty, i.value); });
+  // ค้นหาเพื่อเพิ่มพัสดุ
+  const norm = (v) => String(v).toLowerCase().replace(/[\s\-_.,()/*"]/g, '');
+  const results = $('#er-results', body);
+  $('#er-q', body).addEventListener('input', (e) => {
+    const q = norm(e.target.value.trim());
+    if (!q) { results.hidden = true; return; }
+    const found = itemsView().filter((i) => i.active && norm(i.name + ' ' + i.code).includes(q)).slice(0, 8);
+    results.hidden = false;
+    results.innerHTML = found.map((i) => `<li><button type="button" data-add="${i.id}">
+      <span><b>${esc(i.name)}</b><span class="muted small">${esc(i.code)} · เหลือ ${fmtNum(i.available_qty)} ${esc(i.unit)}${i.price > 0 ? ` · ${fmtMoney(i.price)} บาท` : ''}</span></span>
+      <span class="er-plus">${lines.has(i.id) ? '+1' : '+ เพิ่ม'}</span></button></li>`).join('') || '<li class="empty">ไม่พบพัสดุ</li>';
+  });
+  // Enter ในช่องค้นหา = เพิ่มรายการแรก (ไม่ส่งฟอร์ม)
+  $('#er-q', body).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('[data-add]', results)?.click(); } });
+  results.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-add]');
+    if (!b) return;
+    const id = Number(b.dataset.add);
+    if (lines.has(id)) lines.get(id).qty += 1;
+    else lines.set(id, { qty: 1, price: itemById(id).price || 0 });
+    $('#er-q', body).value = '';
+    results.hidden = true;
+    drawLines();
+    $(`#er-lines [data-qty="${id}"]`, body)?.focus();
+  });
+  $('[data-close]', body).addEventListener('click', closeModal);
+  form.addEventListener('submit', safe(async (e) => {
+    e.preventDefault();
+    const data = formData(form);
+    if (!data.borrower_name.trim()) { flag(form.borrower_name); throw new Error('กรุณากรอกชื่อผู้เบิก'); }
+    if (!lines.size) throw new Error('ใบเบิกต้องมีพัสดุอย่างน้อย 1 รายการ (ถ้าต้องการยกเลิกทั้งใบ ให้ลบใบเบิก)');
+    const id = await store.act('editRequest', {
+      id: r.id, borrower_name: data.borrower_name, department: data.department, note: data.note,
+      items: [...lines].map(([item_id, l]) => ({ item_id, qty: l.qty })),
+    }, { busy: ['กำลังบันทึกการแก้ไข', 'กำลังปรับสต็อกและบันทึกลง Google Sheet…'], done: false });
+    refresh();
+    showSuccess(id, { edited: true });
+  }));
+  drawLines();
 }
 
 // ป๊อปอัปยืนยันก่อนลบใบเบิก: เลือกได้ว่าจะคืนจำนวนพัสดุเข้าสต็อกหรือไม่
