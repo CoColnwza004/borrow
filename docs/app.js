@@ -578,7 +578,7 @@ const ROUTES = {
   reports: { title: 'รายงาน', render: renderReports, admin: true },
   settings: { title: 'ตั้งค่า', render: renderSettings, admin: true, group: 'settings' },
   sheet: { title: 'Google Sheet', render: renderSheet, admin: true, group: 'settings' },
-  suppliers: { title: 'บริษัทผู้จำหน่าย', render: renderSuppliers, admin: true, group: 'settings' },
+  suppliers: { title: 'บริษัทผู้จำหน่าย', render: renderSuppliers, admin: true },
   board: { title: 'Live board', render: renderBoard, admin: true },
   help: { title: 'วิธีใช้งาน', render: renderHelp },
 };
@@ -590,9 +590,9 @@ function currentRoute() {
 const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
 
 function renderNav() {
-  // เมนูเจ้าหน้าที่จัดกลุ่ม: ประวัติ (ใบเบิก + สต็อก) · ตั้งค่า (รายการตัวเลือก + บริษัท + Google Sheet) มีแท็บย่อยในหน้า
+  // เมนูเจ้าหน้าที่จัดกลุ่ม: ประวัติ (ใบเบิก + สต็อก) · ตั้งค่า (รายการตัวเลือก + Google Sheet) มีแท็บย่อยในหน้า · บริษัทเป็นเมนูหลัก
   const pub = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['help', 'วิธีใช้งาน']];
-  const staff = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['dashboard', 'ภาพรวม'], ['requests', 'ประวัติ', 'history'], ['reports', 'รายงาน'], ['settings', 'ตั้งค่า', 'settings']];
+  const staff = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['dashboard', 'ภาพรวม'], ['requests', 'ประวัติ', 'history'], ['reports', 'รายงาน'], ['suppliers', 'บริษัท'], ['settings', 'ตั้งค่า', 'settings']];
   const cur = currentRoute();
   const group = ROUTES[cur].group;
   const a = ([k, label, g]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur || (g && g === group) ? 'active' : ''}">${label}</a>`;
@@ -726,6 +726,7 @@ document.addEventListener('click', (e) => {
   if (b && isAdmin()) showMonthlyReport(b.dataset.month);
   if (e.target.closest('[data-stockreport]') && isAdmin()) showStockReport();
   if (e.target.closest('[data-flowreport]') && isAdmin()) showFlowReport();
+  if (e.target.closest('[data-ledger]') && isAdmin()) showLedgerReport();
 });
 
 // องค์ประกอบที่ค่อย ๆ ลอยขึ้นตามลำดับการอ่าน เมื่อเปลี่ยนหน้า (ไม่เล่นซ้ำตอนซิงก์ข้อมูล/พิมพ์ค้นหา)
@@ -761,7 +762,7 @@ function countUp(root) {
 // แท็บย่อยของหน้าที่รวมกัน
 const SUBTABS = {
   history: [['requests', 'ใบเบิก'], ['movements', 'ความเคลื่อนไหวสต็อก']],
-  settings: [['settings', 'รายการตัวเลือก'], ['suppliers', 'บริษัทผู้จำหน่าย'], ['sheet', 'Google Sheet']],
+  settings: [['settings', 'รายการตัวเลือก'], ['sheet', 'Google Sheet']],
 };
 function render(enter = false) {
   const key = currentRoute();
@@ -1450,6 +1451,7 @@ function renderItems(page) {
       <div class="page-head"><h1>พัสดุคงเหลือ</h1><p class="lead">ยอดคงเหลือจาก Google Sheet อัปเดตให้อัตโนมัติ</p></div>
       ${isAdmin() ? '<div class="head-actions"><button class="btn" id="btn-bulk">แก้ยอดคงเหลือ</button><button class="btn primary" id="btn-add">+ เพิ่มพัสดุ</button></div>' : ''}
     </div>
+    ${isAdmin() ? `<div id="items-value">${stockValueCard()}</div>` : ''}
     ${DEMO ? '' : `<div class="live" id="live"><span class="live-dot" aria-hidden="true"></span>
       <span id="live-text">${liveText()}</span>
       <button type="button" class="btn sm" id="live-refresh">รีเฟรช</button></div>`}
@@ -1517,7 +1519,7 @@ function renderItems(page) {
     $('#btn-bulk').addEventListener('click', () => bulkStockForm());
   }
   $('#live-refresh')?.addEventListener('click', () => syncFromSheet({ manual: true }));
-  redrawItems = draw;
+  redrawItems = () => { draw(); if ($('#items-value')) $('#items-value').innerHTML = stockValueCard(); };
   draw();
 }
 
@@ -2164,6 +2166,13 @@ function renderReports(page) {
       <div class="report-body"><h3>${title}</h3><p class="muted">${desc}</p></div>${btn}</section>`;
   page.insertAdjacentHTML('beforeend', `
     <div class="page-head"><h1>รายงาน</h1><p class="lead">สร้างรายงาน PDF พร้อมช่องลงชื่อ หรือส่งออกข้อมูลเป็น CSV (เปิดใน Excel ได้)</p></div>
+    <section class="card report-card report-main">
+      <span class="sc-ic">${ICON.doc}</span>
+      <div class="report-body"><h3>สรุปรายปี — รายงานบัญชีวัสดุประจำปี</h3>
+        <p class="muted">แบบฟอร์มรายงานผลการตรวจสอบพัสดุประจำปี (A4 แนวนอน): ยอดยกมา · รับ · จ่าย · ยอดคงเหลือ พร้อมราคาต่อหน่วยและราคารวม
+          กรอกชื่อหน่วยงาน รหัสหน่วยเบิกจ่าย และชื่อประธานกรรมการ + กรรมการ 6 คน (ช่องลงชื่อพิมพ์ท้ายทุกหน้า)</p></div>
+      <button class="btn primary" data-ledger>${ICON.doc} ขอรายงาน</button>
+    </section>
     <div class="report-grid">
       ${card(ICON.withdraw, 'สรุปการเบิก', 'รายเดือน / รายปี · ทุกแผนกหรือเฉพาะแผนก · พัสดุที่ถูกเบิก มูลค่า และรายการใบเบิกทั้งหมด', `<button class="btn primary" data-monthly>${ICON.doc} สร้าง PDF</button>`)}
       ${card(ICON.box, 'พัสดุคงเหลือ', 'รายเดือน / รายปี · จ่ายออก และยอดคงเหลือ ณ สิ้นงวด พร้อมมูลค่า ทุกรายการ', `<button class="btn primary" data-stockreport>${ICON.doc} สร้าง PDF</button>`)}
@@ -2188,6 +2197,134 @@ function renderReports(page) {
     suppliers: () => downloadCsv('suppliers', ['บริษัท', 'ผู้ติดต่อ', 'เบอร์โทร', 'อีเมล', 'หมายเหตุ'], (state.db.suppliers || []).map((s) => [s.name, s.contact, s.phone, s.email, s.note])),
   };
   $$('[data-csv]', page).forEach((b) => b.addEventListener('click', () => CSV[b.dataset.csv]()));
+}
+
+// ===================== รายงานบัญชีวัสดุประจำปี (แบบฟอร์มตรวจสอบพัสดุ) =====================
+// ปีงบประมาณ พ.ศ. X = 1 ต.ค. (X−1) – 30 ก.ย. X · ข้อมูลหัวกระดาษและรายชื่อกรรมการจำไว้ในเครื่องนี้ (ไม่ต้องกรอกใหม่ทุกปี)
+const LEDGER_KEY = 'ledger-form-v1';
+const LEDGER_POSITIONS = ['พยาบาลวิชาชีพชำนาญการ', 'พยาบาลวิชาชีพชำนาญการพิเศษ', 'พยาบาลวิชาชีพปฏิบัติการ'];
+function ledgerPeriod(be, fiscal) {
+  const y = be - 543;
+  return fiscal ? { start: `${y - 1}-10-01`, end: `${y}-09-30` } : { start: `${y}-01-01`, end: `${y}-12-31` };
+}
+function showLedgerReport() {
+  let saved = {};
+  try { saved = JSON.parse(lsGet(LEDGER_KEY) || '{}'); } catch { /* ใช้ค่าตั้งต้น */ }
+  const now = new Date();
+  const curFiscal = now.getFullYear() + 543 + (now.getMonth() >= 9 ? 1 : 0);
+  const years = [curFiscal, curFiscal - 1, curFiscal - 2, curFiscal - 3];
+  // ตำแหน่งเลือกจากรายการ (ตำแหน่งอื่นเลือก "อื่น ๆ" แล้วพิมพ์เอง)
+  const posSelect = (name, cur) => {
+    const other = cur && !LEDGER_POSITIONS.includes(cur);
+    return `<span class="lg-pos"><select name="${name}" data-pos>
+        <option value="">- เลือกตำแหน่ง -</option>
+        ${LEDGER_POSITIONS.map((x) => `<option ${x === cur ? 'selected' : ''}>${x}</option>`).join('')}
+        <option value="__other__" ${other ? 'selected' : ''}>อื่น ๆ (พิมพ์เอง)</option>
+      </select><input name="${name}_other" placeholder="พิมพ์ตำแหน่ง" value="${other ? esc(cur) : ''}" ${other ? '' : 'hidden'} autocomplete="off"></span>`;
+  };
+  const person = (k, label, i = '') => `
+    <div class="lg-person">
+      <span class="lg-role">${label}</span>
+      <input name="${k}_name${i}" placeholder="ชื่อ-นามสกุล เช่น นางสาว..." value="${esc(i === '' ? saved.chair?.name : saved.members?.[i]?.name)}" autocomplete="off">
+      ${posSelect(`${k}_pos${i}`, i === '' ? saved.chair?.pos : saved.members?.[i]?.pos)}
+    </div>`;
+  const body = openModal('รายงานบัญชีวัสดุประจำปี', `
+    <form id="lg-form" class="fields">
+      <div class="segmented full" id="lg-kind" role="group" aria-label="ประเภทปี">
+        <button type="button" data-k="fiscal" class="${saved.fiscal === false ? '' : 'active'}">ปีงบประมาณ (ต.ค.–ก.ย.)</button><button type="button" data-k="calendar" class="${saved.fiscal === false ? 'active' : ''}">ปีปฏิทิน (ม.ค.–ธ.ค.)</button></div>
+      <label class="field">ปี พ.ศ.<select name="year">${years.map((y) => `<option value="${y}">${y}</option>`).join('')}</select></label>
+      <label class="field">รหัสหน่วยเบิกจ่าย<input name="payCode" value="${esc(saved.payCode)}" placeholder="กรอกรหัสหน่วยเบิกจ่าย" autocomplete="off"></label>
+      <label class="field">ชื่อหน่วยงาน<input name="org" value="${esc(saved.org ?? 'กลุ่มงานการพยาบาล')}"></label>
+      <label class="field">ประเภทวัสดุ<input name="type" value="${esc(saved.type ?? 'วัสดุการแพทย์สิ้นเปลือง')}"></label>
+      <p class="muted small full" id="lg-period"></p>
+      <div class="full lg-people">
+        <h4>คณะกรรมการตรวจสอบพัสดุ <span class="muted small">(ชื่อจะพิมพ์ในช่องลงชื่อท้ายทุกหน้า · เว้นว่างได้ = เส้นประให้เขียนเอง)</span></h4>
+        ${person('chair', 'ประธานกรรมการ')}
+        ${[0, 1, 2, 3, 4, 5].map((i) => person('m', `กรรมการ ${i + 1}`, i)).join('')}
+      </div>
+      <div id="lg-preview" class="full"></div>
+      <div class="actions full"><button type="button" class="btn" data-close>ยกเลิก</button><span class="spacer"></span><button class="btn primary lg" id="lg-go">${ICON.doc} ขอรายงาน</button></div>
+    </form>`, { wide: true });
+  const form = $('#lg-form', body);
+  let fiscal = saved.fiscal !== false;
+  if (saved.year && years.includes(saved.year)) form.year.value = saved.year;
+  $$('[data-pos]', form).forEach((sel) => sel.addEventListener('change', () => {
+    const other = form[sel.name + '_other'];
+    other.hidden = sel.value !== '__other__';
+    if (!other.hidden) other.focus();
+  }));
+  const read = () => {
+    const d = formData(form);
+    const pos = (n) => (d[n] === '__other__' ? (d[n + '_other'] || '').trim() : d[n]);
+    return {
+      fiscal, year: Number(d.year), payCode: d.payCode.trim(), org: d.org.trim(), type: d.type.trim(),
+      chair: { name: d.chair_name.trim(), pos: pos('chair_pos') },
+      members: [0, 1, 2, 3, 4, 5].map((i) => ({ name: d['m_name' + i].trim(), pos: pos('m_pos' + i) })),
+    };
+  };
+  const preview = () => {
+    const f = read();
+    const p = ledgerPeriod(f.year, f.fiscal);
+    const L = BorrowCore.ledgerSummary(state.db, p.start, p.end);
+    $('#lg-period', body).textContent = `ช่วงข้อมูล: ${fmtDate(p.start)} – ${fmtDate(p.end)} · ยอดยกมา = ยอด ณ ${fmtDate(p.start)} · ยอดคงเหลือ = ยอด ณ ${fmtDate(p.end)}`;
+    $('#lg-preview', body).innerHTML = `<div class="stats lg-stats">
+      <div class="card stat"><span class="label">(1) ยอดยกมา</span><span class="value money">${fmtMoney(L.totals.open_value)}</span><span class="sub">บาท</span></div>
+      <div class="card stat"><span class="label">(2) รับ / จัดซื้อ</span><span class="value money">${fmtMoney(L.totals.in_value)}</span><span class="sub">บาท</span></div>
+      <div class="card stat"><span class="label">(3) จ่าย / ใช้ไป</span><span class="value money">${fmtMoney(L.totals.out_value)}</span><span class="sub">บาท</span></div>
+      <div class="card stat"><span class="label">(4) ยอดคงเหลือ</span><span class="value money">${fmtMoney(L.totals.close_value)}</span><span class="sub">บาท · ${fmtNum(L.items.length)} รายการ</span></div></div>`;
+    return { f, L };
+  };
+  $$('#lg-kind button', body).forEach((b) => b.addEventListener('click', () => {
+    fiscal = b.dataset.k === 'fiscal';
+    $$('#lg-kind button', body).forEach((x) => x.classList.toggle('active', x === b));
+    preview();
+  }));
+  form.year.addEventListener('change', preview);
+  $('[data-close]', body).addEventListener('click', closeModal);
+  // ยืนยันก่อนขอรายงาน: สรุปปี ช่วงวันที่ หัวกระดาษ และรายชื่อกรรมการ
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const { f, L } = preview();
+    lsSet(LEDGER_KEY, JSON.stringify(f));
+    const p = ledgerPeriod(f.year, f.fiscal);
+    const who = [['ประธานกรรมการ', f.chair], ...f.members.map((m, i) => [`กรรมการ ${i + 1}`, m])]
+      .map(([r, x]) => `<tr><td>${r}</td><td>${x.name ? esc(x.name) : '<span class="muted">— เว้นไว้เขียนเอง —</span>'}${x.pos ? `<div class="muted small">${esc(x.pos)}</div>` : ''}</td></tr>`).join('');
+    confirmBox({
+      title: 'ยืนยันขอรายงานบัญชีวัสดุประจำปี?',
+      tone: 'primary',
+      icon: ICON.doc,
+      cls: 'wd-confirm',
+      cancel: 'กลับไปแก้ไข',
+      ok: 'ยืนยัน ขอรายงาน',
+      html: `<p class="wd-who"><b>${f.fiscal ? 'ปีงบประมาณ' : 'ปี'} พ.ศ. ${f.year}</b> · ${fmtDate(p.start)} – ${fmtDate(p.end)}</p>
+        <div class="wd-lines"><table><tbody>
+          <tr><td>ชื่อหน่วยงาน</td><td>${esc(f.org) || '<span class="muted">— เว้นไว้ —</span>'}</td></tr>
+          <tr><td>รหัสหน่วยเบิกจ่าย</td><td>${esc(f.payCode) || '<span class="muted">— เว้นไว้เขียนเอง —</span>'}</td></tr>
+          <tr><td>ประเภทวัสดุ</td><td>${esc(f.type) || '<span class="muted">— เว้นไว้ —</span>'}</td></tr>
+          ${who}
+        </tbody></table></div>
+        <div class="wd-total"><span>${fmtNum(L.items.length)} รายการ</span><span>ยอดคงเหลือ <b>${fmtMoney(L.totals.close_value)}</b> บาท</span></div>`,
+      onOk: async () => {
+        const hud = progressHud('กำลังสร้างรายงานบัญชีวัสดุ', `${fmtNum(L.items.length)} รายการ · A4 แนวนอน`);
+        const btn = $('#lg-go', body);
+        try {
+          const blob = await PdfDoc.buildLedger(L, { ...f, year: String(f.year) });
+          const name = PdfDoc.ledgerFileName(f);
+          hud.success('สร้างรายงานเรียบร้อย', `กดปุ่ม "บันทึก ${name}" เพื่อเก็บไฟล์`);
+          btn.innerHTML = `${ICON.doc} บันทึก ${esc(name)}`;
+          btn.type = 'button';
+          btn.onclick = safe(async () => { if (await PdfDoc.save(blob, name)) { closeModal(); savedPopup(name); } });
+        } catch (err) {
+          hud.fail(err.message);
+          err.shown = true;
+          throw err;
+        }
+      },
+    });
+  });
+  // แก้ข้อมูลหลังสร้างแล้ว: ปุ่มกลับเป็น "ขอรายงาน"
+  form.addEventListener('input', () => { const b = $('#lg-go', body); if (b.type === 'button') { b.type = 'submit'; b.onclick = null; b.innerHTML = `${ICON.doc} ขอรายงาน`; } });
+  preview();
 }
 
 // ===================== สรุปมูลค่ารับเข้า / จ่ายออก (เจ้าหน้าที่) =====================
@@ -2370,6 +2507,38 @@ function nowStamp() {
 }
 
 // ===================== Dashboard (เจ้าหน้าที่) =====================
+// มูลค่าคงคลังรวมตอนนี้ (จำนวนคงเหลือ × ราคาต่อหน่วย) — คำนวณใหม่ทุกครั้งที่ข้อมูลจาก Google Sheet อัปเดต
+function stockValueView() {
+  let value = 0, qty = 0, priced = 0, noPrice = 0, count = 0;
+  const cats = {};
+  for (const i of state.db.items) {
+    if (!i.active && !i.available_qty) continue;
+    count++;
+    const q = Math.max(0, i.available_qty);
+    const v = q * (i.price || 0);
+    qty += q;
+    value += v;
+    if (i.price > 0) priced++; else if (q) noPrice++;
+    const c = i.category || 'ไม่ระบุหมวด';
+    cats[c] = (cats[c] || 0) + v;
+  }
+  return { value: round2(value), qty, count, priced, noPrice, cats: Object.entries(cats).sort((a, b) => b[1] - a[1]) };
+}
+function stockValueCard() {
+  const s = stockValueView();
+  return `<section class="card value-card" aria-live="polite">
+      <div class="vc-main">
+        <span class="vc-label"><span class="live-dot" aria-hidden="true"></span> มูลค่าพัสดุในคลังตอนนี้</span>
+        <b class="vc-value">${fmtMoney(s.value)} <small>บาท</small></b>
+        <span class="vc-sub">${fmtNum(s.count)} รายการ · ${fmtNum(s.qty)} หน่วย · ${state.syncedAt ? 'อัปเดต ' + state.syncedAt.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' น.' : 'ข้อมูลล่าสุด'}</span>
+      </div>
+      <div class="vc-side">
+        ${s.cats.slice(0, 3).map(([c, v]) => `<span><em>${esc(c)}</em><b>${fmtMoney(v)}</b></span>`).join('')}
+        ${s.noPrice ? `<a href="#/items" class="vc-warn">${fmtNum(s.noPrice)} รายการมีของแต่ยังไม่ใส่ราคา</a>` : ''}
+      </div>
+    </section>`;
+}
+
 function renderDashboard(page) {
   const items = itemsView().filter((i) => i.active);
   const reqs = requestsView();
@@ -2385,6 +2554,7 @@ function renderDashboard(page) {
       <div class="page-head"><h1>ภาพรวม</h1><p class="lead">สรุปสต็อกและการเบิกพัสดุ</p></div>
 
     </div>
+    ${stockValueCard()}
     <div class="shortcuts">
       <a class="card shortcut" href="#/board"><span class="sc-ic tv">${ICON.tv}</span><span><b>Live board</b><small>เปิดบนจอทีวีห้องพัสดุ</small></span></a>
       <a class="card shortcut" href="#/reports"><span class="sc-ic">${ICON.doc}</span><span><b>รายงาน</b><small>สรุปการเบิก · คงเหลือ · รับเข้า–จ่ายออก</small></span></a>
@@ -2530,6 +2700,7 @@ function renderBoard(page) {
         </div>
       </header>
       <section class="bd-tiles">
+        ${tile('มูลค่าคงคลัง', fmtMoney(stockValueView().value), 'บาท · ตอนนี้', 'value')}
         ${tile('ใบเบิกวันนี้', fmtNum(reqs.length), 'ใบ')}
         ${tile('จ่ายออกวันนี้', fmtNum(qty), 'หน่วย')}
         ${tile('มูลค่าวันนี้', fmtMoney(money), 'บาท')}
@@ -2733,7 +2904,7 @@ function renderSettings(page) {
     <div class="grid-2">${card('departments', 'แผนก')}${card('categories', 'หมวดหมู่พัสดุ')}</div>
     ${oldServerNote()}
     <div class="grid-2">${card('units', 'หน่วยนับ')}${card('locations', 'สถานที่เก็บ')}</div>
-    <p class="muted small">บริษัทผู้จำหน่าย (เพิ่ม แก้ไข ลบ ข้อมูลติดต่อ) อยู่ที่แท็บ <a href="#/suppliers">บริษัทผู้จำหน่าย</a></p>
+    <p class="muted small">บริษัทผู้จำหน่าย (เพิ่ม แก้ไข ลบ ข้อมูลติดต่อ) อยู่ที่เมนู <a href="#/suppliers">บริษัท</a> ด้านบน</p>
     ${DEMO ? `<section class="card card-pad" style="display:flex;flex-direction:column;gap:12px;align-items:flex-start"><h3>โหมดทดลอง</h3>
       <p class="muted">ล้างข้อมูลที่ทดลองไว้ในเบราว์เซอร์นี้ แล้วกลับไปใช้ข้อมูลตัวอย่าง</p>
       <button class="btn danger" id="reset-demo">ล้างข้อมูลทดลอง</button></section>`

@@ -118,16 +118,29 @@ const PdfDoc = (() => {
   // ---------- แบ่งหน้า A4 เอง ----------
   // เนื้อหาเรียงเป็นบล็อก (หัวกระดาษ ตาราง หัวข้อ ช่องลงชื่อ) ใส่ทีละบล็อกลงแผ่นสูง 1 หน้า
   // ตารางยาวเกินหน้า: ตัดแบ่งทีละแถว แล้ว**ใส่หัวตารางซ้ำ**ทุกหน้า (พร้อมหัวข้อ "(ต่อ)") · ช่องลงชื่อไม่ถูกตัดครึ่ง ย้ายไปหน้าถัดไปทั้งบล็อก
+  // บล็อก .pdf-pagefoot (เช่น ช่องลงชื่อกรรมการ) แสดงซ้ำท้ายทุกหน้า
   function paginate(stage, src) {
+    const foot = src.querySelector(':scope > .pdf-pagefoot');
+    foot?.remove();
     const blocks = [...src.children];
     src.remove();
     const pages = [];
     let page, bottom;
     const newPage = () => {
-      page = src.cloneNode(false);
-      page.classList.add('pdf-sheet');
-      stage.appendChild(page);
-      pages.push(page);
+      const sheet = src.cloneNode(false);
+      sheet.classList.add('pdf-sheet');
+      stage.appendChild(sheet);
+      pages.push(sheet);
+      if (foot) {
+        // เนื้อหาอยู่ในกล่องด้านบน ช่องท้ายหน้าอยู่ล่างสุด
+        sheet.classList.add('has-foot');
+        page = document.createElement('div');
+        page.className = 'pdf-body';
+        sheet.append(page, foot.cloneNode(true));
+        bottom = page.getBoundingClientRect().bottom;
+        return;
+      }
+      page = sheet;
       const r = page.getBoundingClientRect();
       bottom = r.top + page.clientHeight - parseFloat(getComputedStyle(page).paddingBottom);
     };
@@ -154,6 +167,8 @@ const PdfDoc = (() => {
       if (foot) foot.remove();
       const shell = () => {
         const c = t.cloneNode(false);
+        const cols = t.querySelector(':scope > colgroup');
+        if (cols) c.appendChild(cols.cloneNode(true)); // ความกว้างคอลัมน์เท่าหน้าแรก
         if (t.tHead) c.appendChild(t.tHead.cloneNode(true));
         c.appendChild(document.createElement('tbody'));
         return c;
@@ -200,7 +215,7 @@ const PdfDoc = (() => {
   }
 
   // แปลง HTML เป็น PDF (A4) ทีละหน้า · เลขหน้ามุมขวาล่างเมื่อมีหลายหน้า
-  async function render(html, { pageNumbers = false } = {}) {
+  async function render(html, { pageNumbers = false, landscape = false } = {}) {
     await loadLib();
     await Promise.all(['400 16px Sarabun', '600 16px Sarabun', '700 16px Sarabun'].map((f) => document.fonts.load(f).catch(() => null)));
     const stage = document.createElement('div');
@@ -215,13 +230,14 @@ const PdfDoc = (() => {
         image: { type: 'jpeg', quality: 0.96 },
         // scrollX/scrollY = 0 ป้องกันเนื้อหาเลื่อนลงในกระดาษเมื่อหน้าเว็บถูกเลื่อนอยู่
         html2canvas: { scale: 2, backgroundColor: '#ffffff', logging: false, scrollX: 0, scrollY: 0 },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: landscape ? 'landscape' : 'portrait' },
       };
+      const W = landscape ? 297 : 210, H = landscape ? 210 : 297;
       const pdf = await window.html2pdf().set(opt).from(pages[0]).toPdf().get('pdf');
       for (const page of pages.slice(1)) {
         const canvas = await window.html2pdf().set(opt).from(page).toCanvas().get('canvas');
         pdf.addPage();
-        pdf.addImage(canvas.toDataURL('image/jpeg', 0.96), 'JPEG', 0, 0, 210, (canvas.height * 210) / canvas.width);
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.96), 'JPEG', 0, 0, W, (canvas.height * W) / canvas.width);
       }
       const n = pdf.internal.getNumberOfPages();
       if (pageNumbers || n > 1) {
@@ -229,7 +245,7 @@ const PdfDoc = (() => {
           pdf.setPage(i);
           pdf.setFontSize(9);
           pdf.setTextColor(120);
-          pdf.text(`${i} / ${n}`, 196, 290, { align: 'right' });
+          pdf.text(`${i} / ${n}`, W - 14, H - 7, { align: 'right' });
         }
       }
       return pdf.output('blob');
@@ -366,6 +382,60 @@ const PdfDoc = (() => {
   const buildStockReport = (sum, org, extra) => render(stockTemplate(sum, org, extra), { pageNumbers: true });
   const stockFileName = (p) => `stock-${Number(p.slice(0, 4)) + 543}${p.length > 4 ? '-' + p.slice(5, 7) : ''}.pdf`;
 
+  // ---------- รายงานบัญชีวัสดุประจำปี (แบบฟอร์มตรวจสอบพัสดุ แนวนอน) ----------
+  // L = BorrowCore.ledgerSummary() · f = { year (พ.ศ.), fiscal, org, payCode, type, chair: {name, pos}, members: [{name, pos} × 6], generatedAt }
+  const thMonth = (ymd) => new Date(ymd + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
+  const thShort = (ymd) => new Date(ymd + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+  function ledgerTemplate(L, f) {
+    const t = L.totals;
+    const q = (v) => (v ? num(v) : '-');
+    const m = (v) => (v ? money(v) : '-');
+    const fill = (v, w = 14) => (v ? `<span class="lg-fill">${esc(v)}</span>` : `<span class="lg-dots">${'.'.repeat(w * 3)}</span>`);
+    const sign = (role, p) => `<div class="lg-sign"><div>ลงชื่อ.......................................................${role}</div>
+      <div>( ${p && p.name ? esc(p.name) : '...................................................'} )</div><div>${p && p.pos ? esc(p.pos) : '&nbsp;'}</div></div>`;
+    const members = f.members || [];
+    const group = (title, sub, k) => [`จำนวนยอด<br>${sub}`, 'ราคา<br>ต่อหน่วย<br>(บาท)', `ราคารวม<br>${title} (บาท)<br>(${k})`];
+    const heads = [
+      ...group('คงเหลือยกมา', `คงเหลือยกมา<br>${esc(thShort(L.start))}`, 1),
+      ...group('จัดซื้อ', 'จัดซื้อ', 2),
+      ...group('ใช้ไป', 'ใช้ไป', 3),
+      ...group('คงเหลือ', `คงเหลือ<br>${esc(thShort(L.end))}`, 4),
+    ];
+    return `<div class="pdf-report pdf-ledger">
+      <div class="lg-head">
+        <div class="lg-title">รายงานบัญชีวัสดุประจำปี ${esc(f.year)}</div>
+        <div>ชื่อหน่วยงาน${fill(f.org)} รหัสหน่วยเบิกจ่าย${fill(f.payCode, 10)}</div>
+        <div>ประเภทวัสดุ${fill(f.type)}</div>
+        <div class="lg-period">${f.fiscal ? 'ปีงบประมาณ' : 'ปี'} พ.ศ. ${esc(f.year)} · ตั้งแต่วันที่ ${esc(thMonth(L.start))} ถึงวันที่ ${esc(thMonth(L.end))}</div>
+      </div>
+      <table class="pdf-grid lg-table">
+        <colgroup><col style="width:3.6%"><col style="width:6.4%"><col><col span="12" style="width:5.55%"></colgroup>
+        <thead>
+          <tr><th rowspan="2">ลำดับ</th><th rowspan="2">รหัสวัสดุ</th><th rowspan="2">รายการวัสดุ</th>
+            <th colspan="3">ยอดยกมา</th><th colspan="3">รับ</th><th colspan="3">จ่าย</th><th colspan="3">ยอดคงเหลือ</th></tr>
+          <tr>${heads.map((h) => `<th>${h}</th>`).join('')}</tr>
+        </thead>
+        <tbody>${L.items.map((r, i) => `<tr><td class="c">${i + 1}</td><td>${esc(r.code)}</td><td>${esc(r.name)}</td>
+          <td class="r">${q(r.open_qty)}</td><td class="r">${m(r.price)}</td><td class="r">${m(r.open_value)}</td>
+          <td class="r">${q(r.in_qty)}</td><td class="r">${m(r.price)}</td><td class="r">${m(r.in_value)}</td>
+          <td class="r">${q(r.out_qty)}</td><td class="r">${m(r.price)}</td><td class="r">${m(r.out_value)}</td>
+          <td class="r">${q(r.close_qty)}</td><td class="r">${m(r.price)}</td><td class="r">${m(r.close_value)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr class="pdf-total"><th colspan="3">ยอดรวมสุทธิ</th>
+          <td colspan="3" class="r"><b>${money(t.open_value)} บาท</b></td><td colspan="3" class="r"><b>${money(t.in_value)} บาท</b></td>
+          <td colspan="3" class="r"><b>${money(t.out_value)} บาท</b></td><td colspan="3" class="r"><b>${money(t.close_value)} บาท</b></td></tr></tfoot>
+      </table>
+      <p class="lg-count pdf-keep">ถูกต้องครบถ้วน จำนวน ......${num(L.items.length)}...... รายการ &nbsp;&nbsp;&nbsp; เสื่อมสภาพ จำนวน ............ รายการ &nbsp;&nbsp;&nbsp; สูญหาย จำนวน ............ รายการ</p>
+      <div class="lg-notes pdf-keep"><b>หมายเหตุ</b> 1. ช่องรวมบรรทัดสุดท้ายคิดเฉพาะยอดเงินเท่านั้น<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;2. วิธีการคิดยอดรวมราคาคงเหลือ (1) ยอดยกมา + (2) ยอดจัดซื้อหรือรับจากกรม − (3) ยอดจ่ายไป = (4) ยอดคงเหลือประจำปีงบประมาณ</div>
+      <div class="pdf-pagefoot lg-signs">
+        ${sign('ประธานกรรมการ', f.chair)}${sign('กรรมการ', members[0])}${sign('กรรมการ', members[1])}${sign('กรรมการ', members[2])}
+        ${sign('กรรมการ', members[3])}${sign('กรรมการ', members[4])}${sign('กรรมการ', members[5])}
+      </div>
+    </div>`;
+  }
+  const buildLedger = (L, f) => render(ledgerTemplate(L, f), { pageNumbers: true, landscape: true });
+  const ledgerFileName = (f) => `material-ledger-${f.year}.pdf`;
+
   // ---------- สรุปมูลค่ารับเข้า / จ่ายออก ----------
   // sum = BorrowCore.flowSummary() · kind = 'both' | 'in' | 'out' · extra = { generatedAt, staff }
   const FLOW_TITLE = { both: 'สรุปมูลค่ารับเข้า–จ่ายออกพัสดุ', in: 'สรุปมูลค่ารับเข้าพัสดุ', out: 'สรุปมูลค่าจ่ายออกพัสดุ' };
@@ -468,5 +538,5 @@ const PdfDoc = (() => {
   }
 
   const preload = () => { loadLib().catch(() => {}); };
-  return { build, buildReport, buildStockReport, stockFileName, buildFlowReport, flowFileName, save, preload, isIOS, monthName, reportFileName, bahtText, fileName: (r) => `${r.request_no}.pdf` };
+  return { build, buildReport, buildStockReport, stockFileName, buildFlowReport, flowFileName, buildLedger, ledgerFileName, save, preload, isIOS, monthName, reportFileName, bahtText, fileName: (r) => `${r.request_no}.pdf` };
 })();

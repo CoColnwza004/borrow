@@ -1080,6 +1080,46 @@ var BorrowCore = (function () {
     }).sort(function (a, b) { return b.value - a.value || a.name.localeCompare(b.name); });
   }
 
+  // รายงานบัญชีวัสดุประจำปี (แบบฟอร์มตรวจสอบพัสดุ) ช่วง start..end ('YYYY-MM-DD' เช่น ปีงบประมาณ 1 ต.ค. – 30 ก.ย.)
+  // ยกมา = ยอด ณ ต้นงวด · จ่าย (ใช้ไป) = ใบเบิกในงวด · คงเหลือ = ยอด ณ สิ้นงวด · รับ = คงเหลือ + จ่าย − ยกมา (ตามสูตรในแบบฟอร์ม)
+  // ยอดยกมาเริ่มต้นตอนตั้งระบบนับเป็นยอดยกมา · มูลค่าทุกช่อง = จำนวน × ราคาต่อหน่วยปัจจุบัน
+  function ledgerSummary(db, start, end) {
+    var round = function (x) { return Math.round(x * 100) / 100; };
+    var rows = {};
+    db.items.forEach(function (i) {
+      rows[i.id] = { item_id: i.id, code: i.code, name: i.name, unit: i.unit, price: i.price || 0, active: i.active,
+        open_qty: i.available_qty, close_qty: i.available_qty, out_qty: 0, moved: false };
+    });
+    db.movements.forEach(function (m) {
+      var r = rows[m.item_id];
+      if (!r) return;
+      var d = m.created_at.slice(0, 10);
+      // ยอดตั้งต้นของระบบ และการปรับตามรายงานบัญชีวัสดุ (แก้ยอดยกมา) นับเป็นยอดยกมา ไม่ใช่ยอดรับ
+      if ((m.type === 'receive' && m.note === OPENING) || /^ปรับตามรายงานบัญชีวัสดุ/.test(m.note)) return;
+      if (d >= start) r.open_qty -= m.qty;
+      if (d > end) r.close_qty -= m.qty;
+      if (d >= start && d <= end) r.moved = true;
+    });
+    db.requests.forEach(function (rq) {
+      var d = rq.created_at.slice(0, 10);
+      if (d < start || d > end) return;
+      lines(db, rq.id).forEach(function (l) { if (rows[l.item_id]) rows[l.item_id].out_qty += l.qty; });
+    });
+    var t = { open_value: 0, in_value: 0, out_value: 0, close_value: 0 };
+    var list = Object.keys(rows).map(function (k) { return rows[k]; })
+      .filter(function (r) { return r.active || r.moved || r.open_qty || r.close_qty; })
+      .sort(function (a, b) { return a.code.localeCompare(b.code); });
+    list.forEach(function (r) {
+      r.in_qty = r.close_qty + r.out_qty - r.open_qty;
+      ['open', 'in', 'out', 'close'].forEach(function (k) {
+        r[k + '_value'] = round(r[k + '_qty'] * r.price);
+        t[k + '_value'] = round(t[k + '_value'] + r[k + '_value']);
+      });
+      delete r.moved;
+    });
+    return { start: start, end: end, items: list, totals: t };
+  }
+
   // ปรับราคา/ยอดตามรายงานบัญชีวัสดุ (เช่น REPORT_2569) และเพิ่มรายชื่อบริษัท — รันซ้ำได้ (รายการที่ตรงแล้วไม่เปลี่ยน)
   // data.items = [[รหัสในระบบ, รหัสในรายงาน, ชื่อ, ราคาต่อหน่วย, 1 = ปรับจำนวนเป็น 0]] · ชื่อในระบบต้องคล้ายชื่อในข้อมูล (กันจับผิดรายการ)
   function supplierKey(s) {
@@ -1164,7 +1204,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { ledgerSummary: ledgerSummary, applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;
