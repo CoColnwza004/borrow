@@ -849,7 +849,7 @@ button, .btn, a, input, select, .row, .item-card { -webkit-tap-highlight-color: 
 .nav.compact .nav-links::before { display: none; }
 
 /* ============ Entrance: เล่นเฉพาะตอนเปลี่ยนหน้า ============ */
-.page.enter .in { animation: enter .5s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 40ms); }
+.page.enter .in { animation: enter .34s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 24ms); }
 @keyframes enter { from { opacity: 0; transform: translateY(14px); } }
 .page.enter .item-card.in .bar > span { transform-origin: left; animation: bar-fill .6s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 40ms + 180ms); }
 @keyframes bar-fill { from { transform: scaleX(0); } }
@@ -1787,3 +1787,27 @@ body.board-mode .page { max-width: none; padding: 0; margin: 0; }
 .er-removed { flex-basis: 100%; font-size: 13px; color: var(--red); }
 @media (max-width: 600px) { .er-lines li { flex-wrap: wrap; } .er-name { flex-basis: 100%; } .er-lines .stepper { margin-left: auto; } }
 .pdf-edited { margin-top: 2px; font-size: 13px; font-weight: 700; }
+
+/* ============ แท็บย่อยของหน้าที่รวมกัน (ประวัติ / ตั้งค่า) ============ */
+.subtabs { display: flex; gap: 4px; padding: 4px; border-radius: 980px; background: var(--fill); align-self: flex-start; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.subtabs::-webkit-scrollbar { display: none; }
+.subtabs a { flex: none; padding: 8px 16px; border-radius: 980px; font-size: 15px; font-weight: 500; color: var(--text-2); text-decoration: none !important; white-space: nowrap; transition: background .2s, color .2s; }
+.subtabs a:hover { color: var(--text); }
+.subtabs a.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 0 0 .5px rgba(0,0,0,.04); }
+@media (max-width: 600px) { .subtabs { align-self: stretch; } .subtabs a { flex: 1; text-align: center; padding: 8px 10px; font-size: 14px; } }
+
+/* ============ หน้ารายงาน ============ */
+.report-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 14px; }
+.report-card { display: flex; flex-direction: column; gap: 12px; padding: 22px; }
+.report-card .sc-ic { width: 48px; height: 48px; border-radius: 14px; }
+.report-card h3 { font-size: 19px; }
+.report-card p { font-size: 14px; line-height: 1.5; margin-top: 4px; }
+.report-body { flex: 1; }
+.report-card .btn { align-self: flex-start; }
+.csv-card { display: flex; flex-direction: column; gap: 12px; }
+.csv-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+button.shortcut { border: 0; font: inherit; text-align: left; cursor: pointer; width: 100%; }
+.sc-ic.bell { background: var(--orange-soft); color: var(--orange); }
+
+/* รายการยาว: เบราว์เซอร์ข้ามการวาดส่วนที่อยู่นอกจอ (เลื่อนลื่นขึ้น) */
+.item-grid > .item-card, #req-body > li { content-visibility: auto; contain-intrinsic-size: auto 120px; }

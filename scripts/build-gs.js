@@ -9,6 +9,7 @@ const parts = [
   ['Code.gs (ตัวเชื่อม Google Sheets — แก้ ADMIN_PIN ได้ที่นี่)', 'docs/apps-script/Code.gs'],
   ['Core (กฎการเบิก/ยืมและการตัดสต็อก) — จาก docs/core.js', 'docs/core.js'],
   ['SeedData (รายการพัสดุและแผนกตั้งต้น) — จาก docs/seed-data.js', 'docs/seed-data.js'],
+  ['Report2569 (ราคาตามรายงานบัญชีวัสดุ 2569 + รายชื่อบริษัท) — จาก docs/apps-script/report-2569.js', 'docs/apps-script/report-2569.js'],
 ];
 
 function build() {

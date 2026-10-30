@@ -712,6 +712,48 @@ var BorrowCore = (function () {
     }).sort(function (a, b) { return b.value - a.value || a.name.localeCompare(b.name); });
   }
 
+  // ปรับราคา/ยอดตามรายงานบัญชีวัสดุ (เช่น REPORT_2569) และเพิ่มรายชื่อบริษัท — รันซ้ำได้ (รายการที่ตรงแล้วไม่เปลี่ยน)
+  // data.items = [[รหัสในระบบ, รหัสในรายงาน, ชื่อ, ราคาต่อหน่วย, 1 = ปรับจำนวนเป็น 0]] · ชื่อในระบบต้องคล้ายชื่อในข้อมูล (กันจับผิดรายการ)
+  function supplierKey(s) {
+    return str(s).toLowerCase().replace(/บริษัท|จำกัด|\(มหาชน\)|มหาชน|หจก\.?|co\.?,?\s*ltd\.?|ltd\.?|[\s.,()\-\/]/g, '');
+  }
+  function similar(a, b) {
+    var grams = function (s) { s = s.toLowerCase().replace(/\*\*|\([^)]*\)|[\s.,\-_/"'*]/g, ''); var g = {}; for (var i = 0; i < s.length - 1; i++) g[s.substr(i, 2)] = (g[s.substr(i, 2)] || 0) + 1; return g; };
+    var A = grams(a), B = grams(b), na = 0, nb = 0, both = 0;
+    Object.keys(A).forEach(function (k) { na += A[k]; if (B[k]) both += Math.min(A[k], B[k]); });
+    Object.keys(B).forEach(function (k) { nb += B[k]; });
+    return na + nb ? (2 * both) / (na + nb) : 1;
+  }
+  function applyReport(db, data, opts) {
+    opts = opts || {};
+    var ctx = { now: opts.now || new Date() };
+    var res = { priced: [], zeroed: [], suppliers: [], missing: [], mismatch: [], same: 0 };
+    data.items.forEach(function (x) {
+      var item = find(db.items, function (i) { return i.code === x[0]; });
+      if (!item) { res.missing.push({ code: x[0], report: x[1], name: x[2] }); return; }
+      if (similar(item.name, x[2]) < 0.5) { res.mismatch.push({ code: x[0], report: x[1], name: item.name, expected: x[2] }); return; }
+      var price = money(x[3]);
+      var changed = false;
+      if ((item.price || 0) !== price) { res.priced.push({ code: item.code, name: item.name, from: item.price || 0, to: price }); item.price = price; changed = true; }
+      if (x[4] && item.available_qty !== 0) {
+        res.zeroed.push({ code: item.code, name: item.name, from: item.available_qty });
+        moveStock(db, ctx, { item_id: item.id, type: 'adjust', delta: -item.available_qty, allowNegative: true, note: data.note });
+        changed = true;
+      }
+      if (!changed) res.same++;
+    });
+    var keys = {};
+    db.suppliers.forEach(function (s) { keys[supplierKey(s.name)] = true; });
+    (data.suppliers || []).forEach(function (n) {
+      var k = supplierKey(n);
+      if (!k || keys[k]) return;
+      keys[k] = true;
+      db.suppliers.push({ name: str(n), contact: '', phone: '', email: '', note: '' });
+      res.suppliers.push(str(n));
+    });
+    return res;
+  }
+
   // สร้างฐานข้อมูลตั้งต้นจาก SEED_DATA (ไฟล์ seed-data.js / SeedData.gs)
   function seed(now, data) {
     if (!data) data = typeof SEED_DATA !== 'undefined' ? SEED_DATA : { departments: [], categories: [], items: [] };
@@ -754,7 +796,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

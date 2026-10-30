@@ -716,6 +716,50 @@ test('core: staff can edit a withdrawal slip — quantities, add/remove items, s
   assert.deepEqual([paper.available_qty, gloves.available_qty, gauze.available_qty], [before[0] + 5, before[1] + 2, before[2]]);
 });
 
+test('report 2569: prices from column N, dashed balance → 0, suppliers added once, re-run is a no-op', () => {
+  const R = require('../docs/apps-script/report-2569.js');
+  const db = Core.seed(new Date('2026-10-21T08:00:00'), SEED);
+  const res = Core.applyReport(db, R, { now: new Date('2026-10-30T10:00:00') });
+  assert.equal(res.missing.length + res.mismatch.length, 0, JSON.stringify(res.mismatch.slice(0, 3)));
+  assert.equal(res.priced.length, 298);
+  const byCode = (c) => db.items.find((i) => i.code === c);
+  assert.equal(byCode('NSO-001').price, 7);
+  assert.equal(byCode('NSO-003').price, 950);
+  // ยอดคงเหลือในรายงานเป็น "-" แต่ในระบบยังมีของ → ปรับเป็น 0 (5 รายการจากไฟล์ 21 ต.ค.)
+  assert.deepEqual(res.zeroed.map((z) => z.code).sort(), ['NSO-020', 'NSO-021', 'NSO-022', 'NSO-024', 'NSO-025']);
+  assert.equal(byCode('NSO-021').available_qty, 0);
+  assert.equal(db.movements.at(-1).note, 'ปรับตามรายงานบัญชีวัสดุ 2569');
+  // รายการอื่นไม่แตะยอด
+  assert.equal(byCode('NSO-001').available_qty, SEED.items[0][4]);
+  // บริษัท: ชื่อซ้ำ (ไพส์ซีส, ไวด์, ชีวา ฯลฯ) เพิ่มครั้งเดียว
+  assert.equal(res.suppliers.length, R.suppliers.length);
+  assert.equal(new Set(db.suppliers.map((s) => s.name)).size, db.suppliers.length);
+  const again = Core.applyReport(db, R);
+  assert.deepEqual([again.priced.length, again.zeroed.length, again.suppliers.length, again.same], [0, 0, 0, 298]);
+  // ชื่อในระบบไม่ตรงกับข้อมูล (รหัสถูกใช้กับพัสดุอื่น) → ข้าม
+  byCode('NSO-010').name = 'กระดาษทิชชู่';
+  const x = Core.applyReport(db, { note: 'x', items: [['NSO-010', 'S0010', 'Airway 90 mm', 1, 0]], suppliers: ['บริษัท จีเอชซี เมด จำกัด', 'จีเอชซี เมด จำกัด'] });
+  assert.equal(x.mismatch.length, 1);
+  assert.equal(x.suppliers.length, 0, 'มีอยู่แล้ว (ชื่อต่างกันแค่คำว่าบริษัท)');
+});
+
+test('Apps Script: previewReport2569 changes nothing, applyReport2569 updates the sheet and writes a log tab', () => {
+  const { sheets, ctx } = mockAppsScript();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
+  ctx.setup();
+  const before = JSON.stringify(sheets['อุปกรณ์'].data);
+  ctx.previewReport2569();
+  assert.equal(JSON.stringify(sheets['อุปกรณ์'].data), before);
+  assert.match(sheets['ปรับตามรายงาน 2569'].data[0][1], /ตัวอย่าง/);
+  ctx.applyReport2569();
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  const st = post({ action: 'load', pin: '1234' }).state;
+  assert.equal(st.items.find((i) => i.code === 'NSO-003').price, 950);
+  assert.equal(st.items.find((i) => i.code === 'NSO-021').available_qty, 0);
+  assert.ok(st.suppliers.length >= 80);
+  assert.match(sheets['ปรับตามรายงาน 2569'].data[0][1], /ปรับแล้ว/);
+});
+
 test('Apps Script: an old borrow-system sheet is cleaned up and keeps its data', () => {
   const { sheets, ctx, triggers } = mockAppsScript();
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
