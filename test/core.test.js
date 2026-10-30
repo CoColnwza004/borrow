@@ -691,6 +691,31 @@ test('core: stock can be set freely (bulk, from item form, negative, lost beyond
   assert.equal(gloves.available_qty, -1);
 });
 
+test('core: staff can edit a withdrawal slip — quantities, add/remove items, stock follows', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const [paper, gloves, gauze] = ['OF-001', 'MD-005', 'MD-006'].map((c) => db.items.find((i) => i.code === c));
+  Core.run(db, 'saveItem', { ...paper, price: 100 }, admin);
+  const id = Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 5 }, { item_id: gloves.id, qty: 2 }] }, user);
+  Core.run(db, 'saveItem', { ...paper, price: 150 }, admin); // ราคาเปลี่ยนหลังเบิก
+  Core.run(db, 'saveItem', { ...gauze, price: 30 }, admin);
+  const before = [paper.available_qty, gloves.available_qty, gauze.available_qty];
+  assert.throws(() => Core.run(db, 'editRequest', { id, borrower_name: 'x', department: 'ICU', items: [{ item_id: paper.id, qty: 1 }] }, user), /PIN/);
+  assert.throws(() => Core.run(db, 'editRequest', { id, borrower_name: 'x', department: 'ICU', items: [] }, admin), /อย่างน้อย 1 รายการ/);
+  // กระดาษ 5 → 8 (เพิ่ม 3), ถุงมือลบออก (คืน 2), ผ้าก๊อซเพิ่มใหม่ 1
+  Core.run(db, 'editRequest', { id, borrower_name: 'สมชาย ใจดี (แก้)', department: 'ICU', note: 'เพิ่มของ', items: [{ item_id: paper.id, qty: 8 }, { item_id: gauze.id, qty: 1 }] }, { isAdmin: true, now: new Date('2026-10-30T10:00:00') });
+  assert.deepEqual([paper.available_qty, gloves.available_qty, gauze.available_qty], [before[0] - 3, before[1] + 2, before[2] - 1]);
+  const ls = db.request_items.filter((l) => l.request_id === id).map((l) => [l.item_id, l.qty, l.price]);
+  assert.deepEqual(ls, [[paper.id, 8, 100], [gauze.id, 1, 30]]);
+  const r = db.requests.find((x) => x.id === id);
+  assert.deepEqual([r.borrower_name, r.department, r.note, r.edited_at], ['สมชาย ใจดี (แก้)', 'ICU', 'เพิ่มของ', '2026-10-30 10:00:00']);
+  assert.equal(Core.requestValue(db, id), 830);
+  const mv = db.movements.filter((m) => m.note === 'แก้ไขใบเบิก ' + r.request_no).map((m) => [m.type, m.qty]);
+  assert.deepEqual(mv.sort(), [['cancel', 2], ['withdraw', -1], ['withdraw', -3]]);
+  // ลบใบเบิกหลังแก้: คืนตามจำนวนล่าสุด
+  Core.run(db, 'deleteRequest', { id, restock: true }, admin);
+  assert.deepEqual([paper.available_qty, gloves.available_qty, gauze.available_qty], [before[0] + 5, before[1] + 2, before[2]]);
+});
+
 test('Apps Script: an old borrow-system sheet is cleaned up and keeps its data', () => {
   const { sheets, ctx, triggers } = mockAppsScript();
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);

@@ -1764,3 +1764,26 @@ body.board-mode .page { max-width: none; padding: 0; margin: 0; }
 .bulk-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .bulk-foot input { flex: 1; min-width: 180px; }
 @media (max-width: 600px) { .bulk-table input.bk-in { width: 76px; } .bulk-foot .btn { width: 100%; } }
+
+/* แก้ไขใบเบิก */
+.er-h { margin: 4px 0 8px; }
+.er-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border-radius: var(--r-md); background: var(--bg); }
+.er-lines li { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--separator); }
+.er-lines li:first-child { border-top: 0; }
+.er-lines li.empty { justify-content: center; color: var(--text-3); }
+.er-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.er-name b { font-weight: 600; }
+.er-name .pill { align-self: flex-start; font-size: 11px; padding: 1px 8px; }
+.er-unit { width: 40px; font-size: 13px; color: var(--text-2); }
+.er-add { position: relative; margin-top: 10px; }
+.er-results { list-style: none; margin: 6px 0 0; padding: 4px; border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow), 0 0 0 1px var(--separator); max-height: 300px; overflow: auto; }
+.er-results li.empty { padding: 10px; color: var(--text-3); }
+.er-results button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; border: 0; border-radius: 10px; background: none; font: inherit; color: var(--text); text-align: left; cursor: pointer; }
+.er-results button:hover, .er-results button:focus-visible { background: var(--fill); }
+.er-results button > span:first-child { display: flex; flex-direction: column; min-width: 0; }
+.er-plus { flex: none; font-weight: 600; color: var(--accent); }
+.er-sum { display: flex; justify-content: space-between; align-items: baseline; gap: 6px 14px; flex-wrap: wrap; padding: 12px 14px; border-radius: var(--r-md); background: var(--accent-soft); }
+.er-sum b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.er-removed { flex-basis: 100%; font-size: 13px; color: var(--red); }
+@media (max-width: 600px) { .er-lines li { flex-wrap: wrap; } .er-name { flex-basis: 100%; } .er-lines .stepper { margin-left: auto; } }
+.pdf-edited { margin-top: 2px; font-size: 13px; font-weight: 700; }

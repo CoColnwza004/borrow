@@ -330,13 +330,14 @@ function saveDb_(db) {
 var BorrowCore = (function () {
   // ระบบเบิกอย่างเดียว (ของออกจากคลังถาวร ไม่ต้องคืน) ใบเบิกทุกใบมีสถานะ "เบิกแล้ว"
   var STATUS = { issued: 'เบิกแล้ว' };
-  var MOVE = { receive: 'รับเข้า', withdraw: 'เบิกจ่าย', adjust: 'ปรับปรุงยอด', lost: 'ชำรุด/สูญหาย', cancel: 'คืนจากใบเบิกที่ลบ' };
+  var MOVE = { receive: 'รับเข้า', withdraw: 'เบิกจ่าย', adjust: 'ปรับปรุงยอด', lost: 'ชำรุด/สูญหาย', cancel: 'คืนจากใบเบิก (ลบ/แก้ไข)' };
 
   // คอลัมน์ที่ระบบอ่าน/เขียน · ชีตเวอร์ชันก่อนที่มีคอลัมน์ของระบบยืม (total_qty, kind, due_date ฯลฯ) อ่านได้ ระบบข้ามคอลัมน์นั้นไป
   var TABLES = {
     // price = ราคาต่อ 1 หน่วยนับ (บาท)
     items: ['id', 'code', 'name', 'category', 'unit', 'available_qty', 'min_qty', 'location', 'active', 'price'],
-    requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'status', 'created_at', 'note'],
+    // edited_at = แก้ไขใบเบิกล่าสุดเมื่อ (ว่าง = ไม่เคยแก้)
+    requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'status', 'created_at', 'note', 'edited_at'],
     // price = ราคาต่อหน่วย ณ วันที่เบิก (ราคาพัสดุเปลี่ยนภายหลัง ใบเบิกเดิมไม่เปลี่ยน)
     request_items: ['request_id', 'item_id', 'qty', 'price'],
     // รับเข้า: บริษัทผู้จำหน่าย วันหมดอายุ (YYYY-MM-DD) และเลขใบส่งของ ของล็อตนั้น
@@ -515,7 +516,7 @@ var BorrowCore = (function () {
   }
 
   var MASTERS = { departments: 1, categories: 1, suppliers: 1, units: 1, locations: 1 };
-  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock'];
+  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest'];
 
   // ข้อมูลล็อตที่รับเข้า (ไม่บังคับ): บริษัท วันหมดอายุ เลขใบส่งของ
   function lot(p) {
@@ -559,7 +560,7 @@ var BorrowCore = (function () {
       });
       var r = {
         id: nextId(db.requests), request_no: prefix + (seq + 1 < 1000 ? ('00' + (seq + 1)).slice(-3) : String(seq + 1)), borrower_name: name, phone: str(p.phone),
-        department: dept, purpose: str(p.purpose), status: 'issued', created_at: stamp(ctx.now), note: str(p.note),
+        department: dept, purpose: str(p.purpose), status: 'issued', created_at: stamp(ctx.now), note: str(p.note), edited_at: '',
       };
       db.requests.push(r);
       Object.keys(merged).forEach(function (id) {
@@ -625,6 +626,47 @@ var BorrowCore = (function () {
     },
 
     // ลบใบเบิก (เจ้าหน้าที่): restock = คืนจำนวนพัสดุในใบนั้นเข้าสต็อก (บันทึกในประวัติสต็อกว่า "คืนจากใบเบิกที่ลบ")
+    // แก้ใบเบิก (เจ้าหน้าที่): ชื่อ แผนก หมายเหตุ และรายการ items = [{ item_id, qty }] (ไม่อยู่ในรายการ = ลบออก)
+    // เพิ่มจำนวน = ตัดสต็อกเพิ่ม · ลดจำนวน/ลบรายการ = คืนเข้าสต็อก · รายการเดิมคงราคา ณ วันที่เบิก รายการใหม่ใช้ราคาปัจจุบัน
+    editRequest: function (db, p, ctx) {
+      var r = byId(db.requests, p.id) || fail('ไม่พบใบเบิกนี้ (อาจถูกลบไปแล้ว)');
+      var name = req(p.borrower_name, 'ชื่อผู้เบิก');
+      var dept = req(p.department, 'แผนก');
+      if (dept !== r.department && !find(db.departments, function (d) { return d.name === dept; })) fail('กรุณาเลือกแผนกจากรายการ');
+      if (!p.items || !p.items.length) fail('ใบเบิกต้องมีพัสดุอย่างน้อย 1 รายการ (ถ้าต้องการยกเลิกทั้งใบ ให้ลบใบเบิก)');
+      var want = {};
+      p.items.forEach(function (l) {
+        var id = int(l.item_id, 'รหัสพัสดุ', 1);
+        want[id] = (want[id] || 0) + int(l.qty, 'จำนวน', 1);
+      });
+      var old = {};
+      lines(db, r.id).forEach(function (l) { old[l.item_id] = l; });
+      Object.keys(want).forEach(function (id) {
+        if (!old[id] && !byId(db.items, id)) fail('มีพัสดุที่ไม่พบในระบบ');
+      });
+      var tag = 'แก้ไขใบเบิก ' + r.request_no;
+      // คืนสต็อกของที่ลด/ลบออก และตัดสต็อกของที่เพิ่ม
+      var ids = Object.keys(old).concat(Object.keys(want).filter(function (id) { return !old[id]; }));
+      ids.forEach(function (id) {
+        var before = old[id] ? old[id].qty : 0;
+        var after = want[id] || 0;
+        var d = after - before;
+        if (!d || !byId(db.items, id)) return;
+        if (d > 0) moveStock(db, ctx, { item_id: id, type: 'withdraw', delta: -d, request_no: r.request_no, allowNegative: true, note: tag });
+        else moveStock(db, ctx, { item_id: id, type: 'cancel', delta: -d, request_no: r.request_no, note: tag });
+      });
+      db.request_items = db.request_items.filter(function (l) { return l.request_id !== r.id || want[l.item_id]; });
+      Object.keys(want).forEach(function (id) {
+        if (old[id]) old[id].qty = want[id];
+        else db.request_items.push({ request_id: r.id, item_id: Number(id), qty: want[id], price: byId(db.items, id).price || 0 });
+      });
+      r.borrower_name = name;
+      r.department = dept;
+      r.note = str(p.note);
+      r.edited_at = stamp(ctx.now);
+      return r.id;
+    },
+
     deleteRequest: function (db, p, ctx) {
       var r = byId(db.requests, p.id) || fail('ไม่พบใบเบิกนี้ (อาจถูกลบไปแล้ว)');
       if (p.restock) {

@@ -83,7 +83,8 @@ const PdfDoc = (() => {
       <div class="pdf-head">
         <div><div class="pdf-org">${esc(org || 'ระบบเบิกพัสดุ')}</div>
           <div class="pdf-title">ใบเบิกพัสดุ</div></div>
-        <div class="pdf-meta"><div>เลขที่ <b>${esc(r.request_no)}</b></div><div>วันที่ ${thaiDate(r.created_at)}</div><div>เวลา ${esc(thaiTime(r.created_at))} น.</div></div>
+        <div class="pdf-meta"><div>เลขที่ <b>${esc(r.request_no)}</b></div><div>วันที่ ${thaiDate(r.created_at)}</div><div>เวลา ${esc(thaiTime(r.created_at))} น.</div>
+          ${r.edited_at ? `<div class="pdf-edited">ฉบับแก้ไข ${esc(thaiDateTime(r.edited_at))} น.</div>` : ''}</div>
       </div>
       <table class="pdf-info">
         <tr><th>ชื่อผู้เบิก</th><td>${esc(r.borrower_name)}</td><th>แผนก</th><td>${dept}</td></tr>
@@ -98,7 +99,7 @@ const PdfDoc = (() => {
         <tfoot><tr class="pdf-total"><td colspan="5" class="c">( ${bahtText(total)} )</td><th>รวมเป็นเงิน</th><td class="r"><b>${money(total)}</b></td></tr></tfoot>
       </table>
       <div class="pdf-sign">${sign('ผู้เบิก', r.borrower_name)}${sign('เจ้าหน้าที่พัสดุ', staff)}</div>
-      <div class="pdf-foot">ออกโดยระบบเบิกพัสดุ · บันทึกเมื่อ ${esc(thaiDateTime(r.created_at))}</div>
+      <div class="pdf-foot">ออกโดยระบบเบิกพัสดุ · บันทึกเมื่อ ${esc(thaiDateTime(r.created_at))}${r.edited_at ? ` · แก้ไขล่าสุด ${esc(thaiDateTime(r.edited_at))}` : ''}</div>
     </div>`;
   }
 
