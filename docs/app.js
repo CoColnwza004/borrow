@@ -1431,7 +1431,7 @@ function renderItems(page) {
   page.insertAdjacentHTML('beforeend', `
     <div class="page-head-row">
       <div class="page-head"><h1>พัสดุคงเหลือ</h1><p class="lead">ยอดคงเหลือจาก Google Sheet อัปเดตให้อัตโนมัติ</p></div>
-      ${isAdmin() ? '<button class="btn primary" id="btn-add">+ เพิ่มพัสดุ</button>' : ''}
+      ${isAdmin() ? '<div class="head-actions"><button class="btn" id="btn-bulk">แก้ยอดคงเหลือ</button><button class="btn primary" id="btn-add">+ เพิ่มพัสดุ</button></div>' : ''}
     </div>
     ${DEMO ? '' : `<div class="live" id="live"><span class="live-dot" aria-hidden="true"></span>
       <span id="live-text">${liveText()}</span>
@@ -1495,7 +1495,10 @@ function renderItems(page) {
   $('#btn-export')?.addEventListener('click', () => downloadCsv('stock',
     ['รหัส', 'ชื่อ', 'หมวดหมู่', 'หน่วย', 'คงเหลือ', 'จุดสั่งซื้อขั้นต่ำ', 'สถานที่เก็บ', 'ราคาต่อหน่วย (บาท)'],
     filtered().map((i) => [i.code, i.name, i.category, i.unit, i.available_qty, i.min_qty, i.location, i.price || 0])));
-  if (isAdmin()) $('#btn-add').addEventListener('click', () => itemForm(null));
+  if (isAdmin()) {
+    $('#btn-add').addEventListener('click', () => itemForm(null));
+    $('#btn-bulk').addEventListener('click', () => bulkStockForm());
+  }
   $('#live-refresh')?.addEventListener('click', () => syncFromSheet({ manual: true }));
   redrawItems = draw;
   draw();
@@ -1518,7 +1521,7 @@ function showItem(id) {
     <div class="toolbar">
       ${i.active ? `<a class="btn primary" href="#/request?item=${i.id}" data-close>เบิกรายการนี้</a>` : ''}
       ${isAdmin() ? `<span class="spacer"></span><button class="btn ok" data-stock="receive">รับเข้า</button>
-        <button class="btn" data-stock="adjust">ตรวจนับ</button>
+        <button class="btn" data-stock="adjust">แก้ยอด / ตรวจนับ</button>
         <button class="btn" data-stock="lost">ตัดชำรุด</button>
         <button class="btn" id="i-edit">แก้ไข</button>` : ''}
     </div>
@@ -1655,6 +1658,7 @@ function itemForm(item) {
       ${masterField('units', 'unit', { label: 'หน่วยนับ', selected: unit, cls: '' })}
       <label class="field">ราคาต่อหน่วย (บาท) <span class="hint" id="price-unit">ต่อ 1 ${esc(unit)}</span>
         <input name="price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${item?.price > 0 ? item.price : ''}"></label>
+      ${item ? `<label class="field">จำนวนคงเหลือ <span class="hint">(แก้ได้เลย ติดลบได้)</span><input name="available_qty" type="number" step="1" value="${item.available_qty}"></label>` : ''}
       <label class="field">จุดสั่งซื้อขั้นต่ำ <span class="hint">(เตือนเมื่อคงเหลือ ≤)</span><input name="min_qty" type="number" min="0" value="${item?.min_qty ?? 0}"></label>
       ${item ? '' : '<label class="field">จำนวนเริ่มต้น<input name="initial_qty" type="number" min="0" value="0"></label>'}
       ${masterField('locations', 'location', { label: 'สถานที่เก็บ', selected: item?.location, blank: '- ไม่ระบุ -', cls: item ? '' : 'full' })}
@@ -1672,7 +1676,12 @@ function itemForm(item) {
     const data = formValues(form);
     if (!data.unit) { form.unit.focus(); throw new Error('กรุณาเลือกหน่วยนับ'); }
     if (state.oldServer && Number(data.price) > 0) throw new Error(OLD_SERVER_MSG); // เวอร์ชันเก่าไม่เก็บราคา
-    if (item) { data.id = item.id; data.active = form.active.checked; }
+    if (item) {
+      data.id = item.id;
+      data.active = form.active.checked;
+      // ส่งยอดคงเหลือเฉพาะเมื่อแก้ (ไม่ทับยอดที่เพิ่งเปลี่ยนจากการเบิกของคนอื่น)
+      if (String(data.available_qty).trim() === String(item.available_qty)) delete data.available_qty;
+    }
     else {
       Object.assign(data, lotData(form));
       // Apps Script เวอร์ชันเก่ายังต้องการรหัส: ส่งรหัสที่คำนวณไว้ให้ (เวอร์ชันใหม่ตั้งให้เองที่เซิร์ฟเวอร์ ไม่ชนกันแม้เพิ่มพร้อมกัน)
@@ -1686,12 +1695,86 @@ function itemForm(item) {
   }));
 }
 
+// แก้ยอดคงเหลือหลายรายการพร้อมกัน (เหมือนกรอกในตาราง): พิมพ์ยอดใหม่ เว้นว่าง = ไม่เปลี่ยน · Enter ไปช่องถัดไป
+function bulkStockForm() {
+  const edits = new Map(); // item_id → ยอดใหม่
+  const items = itemsView();
+  const cats = [...new Set(items.map((i) => i.category).filter(Boolean))];
+  const locs = [...new Set(items.map((i) => i.location).filter(Boolean))];
+  const body = openModal('แก้ยอดคงเหลือ', `
+    <p class="muted small">พิมพ์ยอดคงเหลือใหม่ของรายการที่ต้องการ (ติดลบได้) ช่องที่เว้นว่างไว้จะไม่เปลี่ยน · กด Enter เพื่อไปรายการถัดไป ·
+      ทุกการแก้บันทึกในประวัติสต็อกว่า "ปรับปรุงยอด"</p>
+    <div class="toolbar bulk-tools">
+      <div class="search">${ICON.search}<input type="search" id="bk-q" placeholder="ค้นหาชื่อหรือรหัส"></div>
+      <select id="bk-cat" style="width:auto"><option value="">ทุกหมวดหมู่</option>${cats.map((c) => `<option>${esc(c)}</option>`).join('')}</select>
+      <select id="bk-loc" style="width:auto"><option value="">ทุกสถานที่เก็บ</option>${locs.map((c) => `<option>${esc(c)}</option>`).join('')}</select>
+      <label class="check"><input type="checkbox" id="bk-only"> เฉพาะที่แก้</label>
+    </div>
+    <div class="sub-card table-wrap bulk-wrap"><table class="bulk-table">
+      <thead><tr><th>พัสดุ</th><th class="num">ในระบบ</th><th class="num">ยอดใหม่</th><th class="num">ต่าง</th></tr></thead>
+      <tbody id="bk-body"></tbody>
+    </table></div>
+    <div class="bulk-foot">
+      <input id="bk-note" placeholder="หมายเหตุ เช่น ตรวจนับสิ้นเดือน ต.ค." aria-label="หมายเหตุ">
+      <span class="muted small" id="bk-count">ยังไม่ได้แก้</span>
+      <button class="btn primary lg" id="bk-save" disabled>บันทึก</button>
+    </div>`, { wide: true });
+  const diffCell = (i, v) => {
+    if (v === undefined || v === '') return '';
+    const d = Number(v) - i.available_qty;
+    return d ? `<span class="${d > 0 ? 'pos' : 'neg'}">${d > 0 ? '+' : ''}${fmtNum(d)}</span>` : '<span class="muted">0</span>';
+  };
+  const count = () => {
+    const n = [...edits].filter(([id, v]) => v !== '' && Number(v) !== itemById(id).available_qty).length;
+    $('#bk-count', body).textContent = n ? `แก้ ${fmtNum(n)} รายการ` : 'ยังไม่ได้แก้';
+    $('#bk-save', body).disabled = !n;
+  };
+  const draw = () => {
+    const q = $('#bk-q', body).value.trim().toLowerCase();
+    const cat = $('#bk-cat', body).value, loc = $('#bk-loc', body).value, only = $('#bk-only', body).checked;
+    const rows = items.filter((i) => (!q || (i.name + ' ' + i.code).toLowerCase().includes(q)) && (!cat || i.category === cat) &&
+      (!loc || i.location === loc) && (!only || (edits.has(i.id) && edits.get(i.id) !== '' && Number(edits.get(i.id)) !== i.available_qty)));
+    $('#bk-body', body).innerHTML = rows.map((i) => {
+      const v = edits.get(i.id);
+      return `<tr class="${v !== undefined && v !== '' && Number(v) !== i.available_qty ? 'changed' : ''}">
+        <td>${esc(i.name)}<div class="muted small">${esc(i.code)}${i.location ? ' · ' + esc(i.location) : ''}</div></td>
+        <td class="num">${fmtNum(i.available_qty)} <span class="muted small">${esc(i.unit)}</span></td>
+        <td class="num"><input type="number" step="1" class="bk-in" data-id="${i.id}" value="${v ?? ''}" placeholder="${i.available_qty}" aria-label="ยอดใหม่ของ ${esc(i.name)}"></td>
+        <td class="num bk-diff">${diffCell(i, v)}</td></tr>`;
+    }).join('') || '<tr><td colspan="4" class="empty">ไม่พบรายการ</td></tr>';
+  };
+  $('#bk-body', body).addEventListener('input', (e) => {
+    const inp = e.target.closest('.bk-in');
+    if (!inp) return;
+    const i = itemById(inp.dataset.id);
+    edits.set(i.id, inp.value.trim());
+    inp.closest('tr').classList.toggle('changed', inp.value !== '' && Number(inp.value) !== i.available_qty);
+    $('.bk-diff', inp.closest('tr')).innerHTML = diffCell(i, inp.value.trim());
+    count();
+  });
+  $('#bk-body', body).addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !e.target.matches('.bk-in')) return;
+    e.preventDefault();
+    const all = $$('.bk-in', body);
+    all[all.indexOf(e.target) + 1]?.focus();
+  });
+  ['#bk-q', '#bk-cat', '#bk-loc', '#bk-only'].forEach((s) => $(s, body).addEventListener(s === '#bk-q' ? 'input' : 'change', draw));
+  $('#bk-save', body).addEventListener('click', safe(async () => {
+    const list = [...edits].filter(([id, v]) => v !== '' && Number(v) !== itemById(id).available_qty).map(([item_id, qty]) => ({ item_id, qty: Number(qty) }));
+    if (list.some((x) => !Number.isInteger(x.qty))) throw new Error('ยอดคงเหลือต้องเป็นจำนวนเต็ม');
+    await store.act('setStock', { items: list, note: $('#bk-note', body).value.trim() }, { done: (n) => ['แก้ยอดคงเหลือเรียบร้อย', `${fmtNum(n)} รายการ · บันทึกในประวัติสต็อกแล้ว`] });
+    closeModal();
+    refresh();
+  }));
+  draw();
+}
+
 function stockForm(item, type) {
   const titles = { receive: 'รับเข้าสต็อก', adjust: 'ตรวจนับ / ปรับยอดคงเหลือ', lost: 'ตัดชำรุด / สูญหาย' };
   const field = type === 'adjust'
-    ? `<label class="field full">ยอดคงเหลือในคลังที่นับได้จริง (${esc(item.unit)})<input name="counted_qty" type="number" min="0" required value="${item.available_qty}"></label>
+    ? `<label class="field full">ยอดคงเหลือใหม่ / ที่นับได้จริง (${esc(item.unit)}) <span class="hint">(ใส่ได้ทุกจำนวน ติดลบได้)</span><input name="counted_qty" type="number" step="1" required value="${item.available_qty}"></label>
        <p class="muted small full">ยอดในระบบ ${fmtNum(item.available_qty)} ${esc(item.unit)}</p>`
-    : `<label class="field full">จำนวน (${esc(item.unit)})<input name="qty" type="number" min="1" ${type === 'lost' ? `max="${item.available_qty}"` : ''} required></label>`;
+    : `<label class="field full">จำนวน (${esc(item.unit)})<input name="qty" type="number" min="1" required></label>`;
   const body = openModal(`${titles[type]} · ${item.name}`, `
     <form id="stock-form" class="fields">
       ${field}

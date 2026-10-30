@@ -1752,3 +1752,15 @@ body.board-mode .page { max-width: none; padding: 0; margin: 0; }
 @media (prefers-reduced-motion: reduce) { .bd-req.arrive, .bd-live i { animation: none; } }
 /* เนื้อหาในหน้าต่างยาวเกินจอ: ห้ามบีบตาราง/บล็อกให้เตี้ยลง (ให้เลื่อนดูแทน) */
 .sheet-body > * { flex-shrink: 0; }
+
+/* แก้ยอดคงเหลือหลายรายการ */
+.bulk-tools { margin: 0; }
+.sheet-body .bulk-wrap { max-height: min(56vh, 560px); overflow: auto; }
+.bulk-table thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); box-shadow: 0 1px 0 var(--separator); }
+.bulk-table input.bk-in { width: 96px; text-align: right; padding: 7px 10px; font-variant-numeric: tabular-nums; }
+.bulk-table tr.changed td { background: var(--accent-soft); }
+.bulk-table .pos { color: var(--green); font-weight: 600; }
+.bulk-table .neg { color: var(--red); font-weight: 600; }
+.bulk-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bulk-foot input { flex: 1; min-width: 180px; }
+@media (max-width: 600px) { .bulk-table input.bk-in { width: 76px; } .bulk-foot .btn { width: 100%; } }

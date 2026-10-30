@@ -191,7 +191,7 @@ var BorrowCore = (function () {
   }
 
   var MASTERS = { departments: 1, categories: 1, suppliers: 1, units: 1, locations: 1 };
-  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier'];
+  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock'];
 
   // ข้อมูลล็อตที่รับเข้า (ไม่บังคับ): บริษัท วันหมดอายุ เลขใบส่งของ
   function lot(p) {
@@ -263,6 +263,11 @@ var BorrowCore = (function () {
       if (p.id) {
         item = byId(db.items, p.id) || fail('ไม่พบรายการพัสดุ');
         Object.keys(fields).forEach(function (k) { item[k] = fields[k]; });
+        // แก้ยอดคงเหลือได้จากฟอร์มแก้ไขพัสดุ (บันทึกเป็น "ปรับปรุงยอด" ในประวัติสต็อก)
+        if (str(p.available_qty) !== '') {
+          var diff = int(p.available_qty, 'จำนวนคงเหลือ', -1e9) - item.available_qty;
+          if (diff) moveStock(db, ctx, { item_id: item.id, type: 'adjust', delta: diff, allowNegative: true, note: str(p.adjust_note) || 'แก้ไขยอดคงเหลือ' });
+        }
       } else {
         item = fields;
         item.id = nextId(db.items);
@@ -284,10 +289,11 @@ var BorrowCore = (function () {
         moveStock(db, ctx, withLot({ item_id: item.id, type: 'receive', delta: q, note: p.note, price: p.price }, p));
       } else if (p.type === 'lost') {
         q = int(p.qty, 'จำนวน', 1);
-        moveStock(db, ctx, { item_id: item.id, type: 'lost', delta: -q, note: p.note });
+        // ตัดชำรุดได้เกินยอดในระบบ (ยอดติดลบ = ต้องตรวจนับ/รับเข้าเพิ่ม)
+        moveStock(db, ctx, { item_id: item.id, type: 'lost', delta: -q, note: p.note, allowNegative: true });
       } else if (p.type === 'adjust') {
-        var diff = int(p.counted_qty, 'ยอดที่นับได้') - item.available_qty;
-        if (diff) moveStock(db, ctx, { item_id: item.id, type: 'adjust', delta: diff, note: p.note || 'ปรับยอดตามการตรวจนับ' });
+        var diff = int(p.counted_qty, 'ยอดที่นับได้', -1e9) - item.available_qty;
+        if (diff) moveStock(db, ctx, { item_id: item.id, type: 'adjust', delta: diff, allowNegative: true, note: p.note || 'ปรับยอดตามการตรวจนับ' });
       } else {
         fail('ประเภทการปรับสต็อกไม่ถูกต้อง');
       }
@@ -314,6 +320,21 @@ var BorrowCore = (function () {
       if (find(db[key], function (r) { return r.name === name; })) fail('มีชื่อนี้อยู่แล้ว');
       db[key].push(key === 'departments' ? { name: name, full_name: str(p.full_name) } : { name: name });
       return name;
+    },
+
+    // แก้ยอดคงเหลือหลายรายการพร้อมกัน: items = [{ item_id, qty }] (qty = ยอดใหม่ ติดลบได้) บันทึกเป็น "ปรับปรุงยอด"
+    setStock: function (db, p, ctx) {
+      if (!p.items || !p.items.length) fail('ยังไม่ได้แก้ยอดรายการใด');
+      var note = str(p.note) || 'แก้ไขยอดคงเหลือ';
+      var changed = 0;
+      p.items.forEach(function (x) {
+        var item = byId(db.items, x.item_id) || fail('ไม่พบรายการพัสดุ');
+        var diff = int(x.qty, 'จำนวนคงเหลือของ "' + item.name + '"', -1e9) - item.available_qty;
+        if (!diff) return;
+        moveStock(db, ctx, { item_id: item.id, type: 'adjust', delta: diff, allowNegative: true, note: note });
+        changed++;
+      });
+      return changed;
     },
 
     // เพิ่ม/แก้ข้อมูลบริษัท · old_name = ชื่อเดิม (แก้ชื่อแล้วประวัติรับเข้าเดิมเปลี่ยนตามด้วย)
