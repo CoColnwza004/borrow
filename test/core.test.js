@@ -148,8 +148,9 @@ test('core: withdrawing more than stock goes negative; receiving new stock offse
   // รับเข้า 20 หักล้างยอดค้าง เหลือ 12
   Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 20 }, admin);
   assert.equal(paper.available_qty, 12);
-  // ตัดชำรุดเกินของที่มียังไม่ได้
-  assert.throws(() => Core.run(db, 'stock', { item_id: paper.id, type: 'lost', qty: 13 }, admin), /คงเหลือไม่พอ/);
+  // ตัดชำรุดเกินยอดในระบบได้ (ยอดติดลบ)
+  Core.run(db, 'stock', { item_id: paper.id, type: 'lost', qty: 13 }, admin);
+  assert.equal(paper.available_qty, -1);
 });
 
 test('core: rows from the old borrow system still load as withdrawals', () => {
@@ -668,6 +669,26 @@ test('core: supplier contacts, rename keeps history, delivery summary by deliver
   const b = sum.find((s) => s.name === 'บ.ไม่อยู่ในรายชื่อ');
   assert.equal(b.listed, false);
   assert.deepEqual(Core.sheetData(db).suppliers.header, ['name', 'contact', 'phone', 'email', 'note']);
+});
+
+test('core: stock can be set freely (bulk, from item form, negative, lost beyond balance)', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const [paper, gloves, gauze] = ['OF-001', 'MD-005', 'MD-006'].map((c) => db.items.find((i) => i.code === c));
+  const n = Core.run(db, 'setStock', { items: [{ item_id: paper.id, qty: 50 }, { item_id: gloves.id, qty: '6' }, { item_id: gauze.id, qty: -2 }], note: 'นับสต็อกสิ้นเดือน' }, admin);
+  assert.equal(n, 2, 'ยอดเท่าเดิมไม่บันทึก');
+  assert.deepEqual([paper.available_qty, gloves.available_qty, gauze.available_qty], [50, 6, -2]);
+  assert.deepEqual(db.movements.slice(-2).map((m) => [m.type, m.qty, m.note]), [['adjust', -70, 'นับสต็อกสิ้นเดือน'], ['adjust', -5, 'นับสต็อกสิ้นเดือน']]);
+  assert.throws(() => Core.run(db, 'setStock', { items: [{ item_id: paper.id, qty: 1.5 }] }, admin), /จำนวนเต็ม/);
+  assert.throws(() => Core.run(db, 'setStock', { items: [{ item_id: paper.id, qty: 1 }] }, user), /PIN/);
+  Core.run(db, 'saveItem', { ...paper, available_qty: '75' }, admin);
+  assert.equal(paper.available_qty, 75);
+  assert.equal(db.movements.at(-1).note, 'แก้ไขยอดคงเหลือ');
+  Core.run(db, 'saveItem', { ...paper, name: 'กระดาษ A4 80g' }, admin); // ไม่ส่งยอด = ไม่เปลี่ยน
+  assert.equal(paper.available_qty, 75);
+  Core.run(db, 'stock', { item_id: gloves.id, type: 'lost', qty: 10 }, admin);
+  assert.equal(gloves.available_qty, -4);
+  Core.run(db, 'stock', { item_id: gloves.id, type: 'adjust', counted_qty: -1 }, admin);
+  assert.equal(gloves.available_qty, -1);
 });
 
 test('Apps Script: an old borrow-system sheet is cleaned up and keeps its data', () => {
