@@ -1811,3 +1811,60 @@ button.shortcut { border: 0; font: inherit; text-align: left; cursor: pointer; w
 
 /* รายการยาว: เบราว์เซอร์ข้ามการวาดส่วนที่อยู่นอกจอ (เลื่อนลื่นขึ้น) */
 .item-grid > .item-card, #req-body > li { content-visibility: auto; contain-intrinsic-size: auto 120px; }
+
+/* ============ PDF รายงานบัญชีวัสดุประจำปี (A4 แนวนอน) ============ */
+.pdf-sheet.has-foot { display: flex; flex-direction: column; }
+.pdf-sheet.has-foot > .pdf-body { flex: 1; min-height: 0; overflow: hidden; }
+.pdf-ledger { width: 297mm; font-size: 11px; line-height: 1.35; }
+.pdf-ledger.pdf-sheet { height: 209mm; padding: 9mm 11mm 11mm; }
+.pdf-ledger .lg-head { text-align: center; font-size: 13.5px; line-height: 1.55; margin-bottom: 6px; }
+.pdf-ledger .lg-title { font-size: 17px; font-weight: 700; }
+.pdf-ledger .lg-fill { display: inline-block; min-width: 120px; padding: 0 10px; border-bottom: 1px dotted #000; font-weight: 600; }
+.pdf-ledger .lg-dots { letter-spacing: 0; color: #000; }
+.pdf-ledger .lg-period { font-size: 12px; color: #333; }
+.pdf-ledger .lg-table { table-layout: fixed; }
+.pdf-ledger .lg-table th { font-size: 10px; line-height: 1.25; padding: 3px 2px; vertical-align: middle; }
+.pdf-ledger .lg-table td { padding: 2px 4px; font-size: 10.5px; }
+.pdf-ledger .lg-table td.r { font-variant-numeric: tabular-nums; }
+.pdf-ledger .lg-count { margin: 8px 0 2px; font-size: 12px; text-align: center; }
+.pdf-ledger .lg-notes { font-size: 11px; margin-top: 4px; }
+.pdf-ledger .pdf-cont { font-size: 11px; }
+.pdf-ledger .lg-signs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 10px; padding-top: 8px; font-size: 11px; text-align: center; line-height: 1.5; }
+.pdf-ledger .lg-sign { white-space: nowrap; }
+
+/* ฟอร์มรายงานบัญชีวัสดุประจำปี */
+.report-main { flex-direction: row; align-items: center; gap: 16px; }
+.report-main .btn { align-self: center; flex: none; }
+@media (max-width: 700px) { .report-main { flex-direction: column; align-items: flex-start; } .report-main .btn { align-self: flex-start; } }
+.lg-people { display: flex; flex-direction: column; gap: 8px; }
+.lg-people h4 { margin-bottom: 2px; }
+.lg-person { display: grid; grid-template-columns: 120px 1fr 1fr; gap: 8px; align-items: center; }
+.lg-role { font-size: 14px; font-weight: 600; color: var(--text-2); }
+@media (max-width: 640px) { .lg-person { grid-template-columns: 1fr; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--separator); } }
+.lg-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.lg-stats .stat { background: var(--bg); box-shadow: none; padding: 12px 14px; }
+.lg-stats .stat .value.money { font-size: 19px; }
+@media (max-width: 700px) { .lg-stats { grid-template-columns: 1fr 1fr; } }
+.wd-confirm .wd-lines td:first-child { color: var(--text-2); white-space: nowrap; padding-right: 12px; }
+
+/* ============ การ์ดมูลค่าคงคลังแบบเรียลไทม์ ============ */
+.value-card { display: flex; align-items: center; justify-content: space-between; gap: 18px 28px; flex-wrap: wrap; padding: 22px 26px;
+  background: linear-gradient(135deg, rgba(10,132,255,.10), rgba(48,209,88,.08)), var(--surface); }
+.vc-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vc-label { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--text-2); }
+.value-card .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green, #34c759); box-shadow: 0 0 0 0 rgba(52,199,89,.55); animation: bd-pulse 2s infinite; }
+.vc-value { font-size: clamp(30px, 5vw, 44px); font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.vc-value small { font-size: .45em; font-weight: 600; color: var(--text-2); }
+.vc-sub { font-size: 13px; color: var(--text-2); }
+.vc-side { display: flex; flex-direction: column; gap: 4px; min-width: min(100%, 260px); font-size: 14px; }
+.vc-side span { display: flex; justify-content: space-between; gap: 14px; }
+.vc-side em { font-style: normal; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vc-side b { font-variant-numeric: tabular-nums; }
+.vc-warn { font-size: 13px; color: var(--orange) !important; }
+#items-value .value-card { margin-bottom: 4px; }
+.bd-tile.value .bd-value { color: #30d158; font-size: 2.1em; }
+.bd-tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .bd-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .bd-tiles { grid-template-columns: 1fr 1fr; } }
+.lg-pos { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.lg-pos select, .lg-pos input { width: 100%; }

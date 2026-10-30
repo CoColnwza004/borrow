@@ -760,6 +760,29 @@ test('Apps Script: previewReport2569 changes nothing, applyReport2569 updates th
   assert.match(sheets['ปรับตามรายงาน 2569'].data[0][1], /ปรับแล้ว/);
 });
 
+test('core: annual material ledger (fiscal year) — opening, received = closing + issued − opening, issued, closing', () => {
+  const db = Core.seed(new Date('2025-09-01T08:00:00'), FIXTURE); // ยอดตั้งต้น กระดาษ 120 ถุงมือ 6 ผ้าก๊อซ 3
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  Core.run(db, 'saveItem', { ...paper, price: 100 }, admin);
+  const at = (d) => ({ isAdmin: true, now: new Date(d + 'T09:00:00') });
+  Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 20 }] }, at('2025-09-15')); // ก่อนปีงบ 2569
+  Core.run(db, 'stock', { item_id: paper.id, type: 'receive', qty: 50 }, at('2025-11-01'));
+  Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 30 }] }, at('2026-03-01'));
+  Core.run(db, 'stock', { item_id: paper.id, type: 'lost', qty: 5 }, at('2026-05-01'));
+  Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 7 }] }, at('2026-10-02')); // ปีงบ 2570
+  const L = Core.ledgerSummary(db, '2025-10-01', '2026-09-30');
+  const r = L.items.find((x) => x.code === 'OF-001');
+  assert.deepEqual([r.open_qty, r.in_qty, r.out_qty, r.close_qty], [100, 45, 30, 115]);
+  assert.equal(r.open_qty + r.in_qty - r.out_qty, r.close_qty);
+  assert.deepEqual([r.open_value, r.in_value, r.out_value, r.close_value], [10000, 4500, 3000, 11500]);
+  assert.equal(L.totals.close_value, 11500);
+  assert.equal(L.items.length, 3);
+  // ยอดตั้งต้นของระบบเป็นยอดยกมา ไม่ใช่ยอดรับ
+  const L0 = Core.ledgerSummary(db, '2024-10-01', '2025-09-30');
+  const g = L0.items.find((x) => x.code === 'MD-005');
+  assert.deepEqual([g.open_qty, g.in_qty, g.close_qty], [6, 0, 6]);
+});
+
 test('Apps Script: an old borrow-system sheet is cleaned up and keeps its data', () => {
   const { sheets, ctx, triggers } = mockAppsScript();
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8'), ctx);
