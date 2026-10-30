@@ -75,6 +75,45 @@ function updateSheet() {
   }
 }
 
+/**
+ * ปรับตามรายงานบัญชีวัสดุ 2569 (ข้อมูลใน REPORT_2569 ท้ายไฟล์นี้) — ทำ 2 ขั้น:
+ * 1) previewReport2569: ดูก่อนว่าจะเปลี่ยนอะไร (ยังไม่แก้ข้อมูล) ผลอยู่ในแท็บ "ปรับตามรายงาน 2569"
+ * 2) applyReport2569: ปรับจริง — ราคาต่อหน่วยตามคอลัมน์ N, รายการที่ยอดคงเหลือในรายงานเป็น "-" ปรับจำนวนเป็น 0,
+ *    เพิ่มรายชื่อบริษัทที่ยังไม่มี · ไม่แตะยอดคงเหลือรายการอื่น · รันซ้ำได้ · ย้อนกลับได้ที่ ไฟล์ → ประวัติเวอร์ชัน
+ */
+function previewReport2569() { reportRun_(false); }
+function applyReport2569() { reportRun_(true); }
+function reportRun_(apply) {
+  if (typeof REPORT_2569 === 'undefined') throw new Error('ไม่พบข้อมูล REPORT_2569 กรุณาวางไฟล์ AllInOne.gs ให้ครบทั้งไฟล์');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var db = loadDb_();
+    var res = BorrowCore.applyReport(db, REPORT_2569);
+    if (apply) saveDb_(db);
+    var rows = [['สถานะ', apply ? 'ปรับแล้ว ' + Utilities.formatDate(new Date(), SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone(), 'yyyy-MM-dd HH:mm') : 'ตัวอย่าง (ยังไม่ได้ปรับ) — รัน applyReport2569 เพื่อปรับจริง', '', '', '']];
+    rows.push(['สรุป', 'ปรับราคา ' + res.priced.length + ' รายการ', 'ปรับจำนวนเป็น 0: ' + res.zeroed.length + ' รายการ', 'เพิ่มบริษัท ' + res.suppliers.length + ' ราย', 'ตรงอยู่แล้ว ' + res.same + ' รายการ']);
+    rows.push(['', '', '', '', '']);
+    rows.push(['ประเภท', 'รหัส', 'ชื่อพัสดุ / บริษัท', 'เดิม', 'ใหม่']);
+    res.priced.forEach(function (x) { rows.push(['ราคาต่อหน่วย', x.code, x.name, x.from, x.to]); });
+    res.zeroed.forEach(function (x) { rows.push(['จำนวนคงเหลือ → 0', x.code, x.name, x.from, 0]); });
+    res.suppliers.forEach(function (n) { rows.push(['เพิ่มบริษัท', '', n, '', '']); });
+    res.mismatch.forEach(function (x) { rows.push(['ข้าม: ชื่อไม่ตรง', x.code, x.name, 'ในรายงาน: ' + x.expected, '']); });
+    res.missing.forEach(function (x) { rows.push(['ข้าม: ไม่พบรหัสนี้ในระบบ', x.code, x.name, x.report, '']); });
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var name = 'ปรับตามรายงาน 2569';
+    var sh = ss.getSheetByName(name) || ss.insertSheet(name);
+    sh.clear();
+    sh.getRange(1, 1, rows.length, 5).setNumberFormat('@').setValues(rows.map(function (r) { return r.map(String); }));
+    sh.getRange(4, 1, 1, 5).setFontWeight('bold').setBackground('#e8f0fe');
+    sh.setFrozenRows(4);
+    sh.autoResizeColumns(1, 5);
+    Logger.log((apply ? 'ปรับแล้ว: ' : 'ตัวอย่าง: ') + rows[1].slice(1).join(' · ') + ' · ดูรายละเอียดในแท็บ "' + name + '"');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 // ระบบยืมเดิมตั้งเวลา "คืนอัตโนมัติ" ไว้ทุกวัน ตอนนี้เลิกใช้แล้ว: ลบตัวตั้งเวลานั้นออก
 function removeAutoReturnTrigger_() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
@@ -161,14 +200,19 @@ function handle_(body) {
     var hit = c && c.get(PUBLIC_CACHE_KEY);
     if (hit) return ContentService.createTextOutput('{"ok":true,"result":null,"state":' + hit + '}').setMimeType(ContentService.MimeType.JSON);
   }
-  var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  // อ่านอย่างเดียว (โหลดข้อมูล / ตรวจรหัส) ไม่ต้องรอคิว — หลายเครื่องเปิดพร้อมกัน (รวม Live board) ไม่ต้องรอกัน
+  // ส่วนการบันทึกยังเข้าคิวทีละคำขอ (อ่านชีตล่าสุดภายในคิว) ข้อมูลไม่ทับกัน
+  var readOnly = body.action === 'load' || body.action === 'checkPin';
+  var lock = readOnly ? null : LockService.getScriptLock();
+  if (lock) lock.waitLock(20000);
   try {
     var db = loadDb_();
     var result = null;
-    if (body.action !== 'load') {
+    if (!readOnly) {
       result = BorrowCore.run(db, body.action, body.payload, { isAdmin: isAdmin });
       saveDb_(db);
+    } else if (body.action === 'checkPin') {
+      result = BorrowCore.run(db, 'checkPin', null, { isAdmin: isAdmin });
     } else {
       cachePublic_(db);
     }
@@ -184,7 +228,7 @@ function handle_(body) {
   } catch (err) {
     return json_({ ok: false, error: err.message });
   } finally {
-    lock.releaseLock();
+    if (lock) lock.releaseLock();
   }
 }
 

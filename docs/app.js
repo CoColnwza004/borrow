@@ -572,12 +572,13 @@ const ROUTES = {
   home: { title: 'หน้าแรก', render: renderHome },
   request: { title: 'เบิกพัสดุ', render: renderRequestForm },
   items: { title: 'พัสดุคงเหลือ', render: renderItems },
-  requests: { title: 'ประวัติเบิก', render: renderRequests, admin: true },
+  requests: { title: 'ประวัติเบิก', render: renderRequests, admin: true, group: 'history' },
   dashboard: { title: 'ภาพรวม', render: renderDashboard, admin: true },
-  movements: { title: 'ประวัติสต็อก', render: renderMovements, admin: true },
-  settings: { title: 'ตั้งค่า', render: renderSettings, admin: true },
-  sheet: { title: 'Google Sheet', render: renderSheet, admin: true },
-  suppliers: { title: 'บริษัทผู้จำหน่าย', render: renderSuppliers, admin: true },
+  movements: { title: 'ประวัติสต็อก', render: renderMovements, admin: true, group: 'history' },
+  reports: { title: 'รายงาน', render: renderReports, admin: true },
+  settings: { title: 'ตั้งค่า', render: renderSettings, admin: true, group: 'settings' },
+  sheet: { title: 'Google Sheet', render: renderSheet, admin: true, group: 'settings' },
+  suppliers: { title: 'บริษัทผู้จำหน่าย', render: renderSuppliers, admin: true, group: 'settings' },
   board: { title: 'Live board', render: renderBoard, admin: true },
   help: { title: 'วิธีใช้งาน', render: renderHelp },
 };
@@ -589,10 +590,13 @@ function currentRoute() {
 const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
 
 function renderNav() {
-  const links = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['help', 'วิธีใช้งาน'], ['requests', 'ประวัติเบิก'], ['dashboard', 'ภาพรวม'], ['movements', 'ประวัติสต็อก'], ['sheet', 'Google Sheet'], ['settings', 'ตั้งค่า']];
+  // เมนูเจ้าหน้าที่จัดกลุ่ม: ประวัติ (ใบเบิก + สต็อก) · ตั้งค่า (รายการตัวเลือก + บริษัท + Google Sheet) มีแท็บย่อยในหน้า
+  const pub = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['help', 'วิธีใช้งาน']];
+  const staff = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['dashboard', 'ภาพรวม'], ['requests', 'ประวัติ', 'history'], ['reports', 'รายงาน'], ['settings', 'ตั้งค่า', 'settings']];
   const cur = currentRoute();
-  const a = ([k, label, n]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur ? 'active' : ''}">${label}${n ? `<span class="badge">${n}</span>` : ''}</a>`;
-  $('#nav-links').innerHTML = (isAdmin() ? links.filter(([k]) => k !== 'help') : links.slice(0, 4)).map(a).join('');
+  const group = ROUTES[cur].group;
+  const a = ([k, label, g]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur || (g && g === group) ? 'active' : ''}">${label}</a>`;
+  $('#nav-links').innerHTML = (isAdmin() ? staff : pub).map(a).join('');
   updateBell();
   fitNav();
 }
@@ -729,7 +733,7 @@ const ENTER = '.page > .banner, .hero > *, .choice, .stat-strip, .page > .page-h
 let enterTimer;
 function choreograph(page) {
   if (!motionOK()) return;
-  $$(ENTER, page).filter((el) => !(el.matches('section.card') && el.querySelector('.rows'))).slice(0, 14)
+  $$(ENTER, page).filter((el) => !(el.matches('section.card') && el.querySelector('.rows'))).slice(0, 10)
     .forEach((el, i) => { el.classList.add('in'); el.style.setProperty('--i', i); });
   page.classList.add('enter');
   clearTimeout(enterTimer);
@@ -754,6 +758,11 @@ function countUp(root) {
   requestAnimationFrame(tick);
 }
 
+// แท็บย่อยของหน้าที่รวมกัน
+const SUBTABS = {
+  history: [['requests', 'ใบเบิก'], ['movements', 'ความเคลื่อนไหวสต็อก']],
+  settings: [['settings', 'รายการตัวเลือก'], ['suppliers', 'บริษัทผู้จำหน่าย'], ['sheet', 'Google Sheet']],
+};
 function render(enter = false) {
   const key = currentRoute();
   if (key !== 'board') leaveBoard();
@@ -770,6 +779,8 @@ function render(enter = false) {
   }
   document.body.classList.toggle('home-bg', key === 'home');
   page.classList.toggle('wide', key === 'request'); // หน้าเบิกกว้างกว่าปกติ (2 คอลัมน์บนคอม/iPad แนวนอน)
+  const tabs = SUBTABS[ROUTES[key].group];
+  if (tabs) page.insertAdjacentHTML('beforeend', `<nav class="subtabs" aria-label="เมนูย่อย">${tabs.map(([k, label]) => `<a href="#/${k}" class="${k === key ? 'active' : ''}"${k === key ? ' aria-current="page"' : ''}>${label}</a>`).join('')}</nav>`);
   ROUTES[key].render(page);
   if (enter) { choreograph(page); if (key === 'home') countUp(page); }
 }
@@ -782,13 +793,15 @@ async function route() {
   setMenu(false);
   const key = currentRoute(), from = lastRoute, changed = key !== from;
   lastRoute = key;
-  const useVT = changed && !!document.startViewTransition && motionOK() && !modalOpen();
+  // สลับแท็บย่อยในหน้าเดียวกัน (ประวัติ / ตั้งค่า) เปลี่ยนทันที ไม่ต้องมีอนิเมชันเปลี่ยนหน้า
+  const sameGroup = from && ROUTES[from]?.group && ROUTES[from].group === ROUTES[key].group;
+  const useVT = changed && !sameGroup && !!document.startViewTransition && motionOK() && !modalOpen();
   // หัวการ์ด "เบิกพัสดุ" ในหน้าแรกลอยไปเป็นหัวเรื่องของฟอร์ม (และลอยกลับ)
   let morph = null;
   const mark = (el) => { if (el) { el.style.viewTransitionName = 'page-title'; morph = el; } };
   const update = () => {
     if (changed) window.scrollTo(0, 0);
-    render(changed);
+    render(changed && !sameGroup);
     if (useVT && from === 'request' && key === 'home') {
       const h = $('.choice.withdraw h2');
       mark(h);
@@ -809,8 +822,12 @@ async function route() {
       await vt.updateCallbackDone.catch(() => {});
     }
   } else update();
-  await syncFromSheet();
+  // เปลี่ยนเมนูไม่ต้องรอ/ดึงข้อมูลทุกครั้ง: ดึงใหม่เมื่อข้อมูลเก่ากว่า 30 วินาที (ระบบดึงอัตโนมัติอยู่แล้ว)
+  if (!state.syncedAt || Date.now() - state.syncedAt > 30e3) idle(() => syncFromSheet());
+  if (isAdmin()) idle(() => PdfDoc.preload()); // เตรียมตัวสร้าง PDF ไว้ ใบเบิก/รายงานจะออกเร็วขึ้น
 }
+// ทำงานตอนเบราว์เซอร์ว่าง (ไม่แย่งเวลาวาดหน้า)
+const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 1500 }) : setTimeout(fn, 200));
 
 // โหมด Google Sheets: ดึงข้อมูลล่าสุดเบื้องหลัง แล้ววาดใหม่ถ้ามีการแก้ไข (จากเครื่องอื่นหรือแก้ในชีตโดยตรง)
 // หน้าฟอร์มเบิก วาดเฉพาะรายการพัสดุใหม่ ข้อมูลที่กรอกไว้ไม่หาย
@@ -1441,7 +1458,7 @@ function renderItems(page) {
       <select id="f-cat" style="width:auto">${options(state.db.categories, params.get('cat'), 'ทุกหมวดหมู่')}</select>
       <label class="check"><input type="checkbox" id="f-low" ${params.get('low') === '1' ? 'checked' : ''}> ใกล้หมด</label>
       <span class="spacer"></span>
-      ${isAdmin() ? `<button class="btn" id="btn-export">ส่งออก CSV</button><button class="btn primary" data-stockreport>${ICON.doc} รายงานคงเหลือ (PDF)</button><button class="btn" data-flowreport>${ICON.doc} สรุปรับเข้า–จ่ายออก</button>` : ''}
+      ${isAdmin() ? `<button class="btn" id="btn-export">ส่งออก CSV</button><a class="btn" href="#/reports">${ICON.doc} รายงาน</a>` : ''}
     </div>
     <div class="item-grid" id="items-grid"></div>`);
 
@@ -2141,6 +2158,38 @@ function showMonthlyReport(pick) {
   $('#mr-dept', body).addEventListener('change', preview);
   preview();
 }
+// ===================== รายงาน (เจ้าหน้าที่): รวมรายงานทั้งหมดไว้ที่เดียว =====================
+function renderReports(page) {
+  const card = (icon, title, desc, btn) => `<section class="card report-card"><span class="sc-ic">${icon}</span>
+      <div class="report-body"><h3>${title}</h3><p class="muted">${desc}</p></div>${btn}</section>`;
+  page.insertAdjacentHTML('beforeend', `
+    <div class="page-head"><h1>รายงาน</h1><p class="lead">สร้างรายงาน PDF พร้อมช่องลงชื่อ หรือส่งออกข้อมูลเป็น CSV (เปิดใน Excel ได้)</p></div>
+    <div class="report-grid">
+      ${card(ICON.withdraw, 'สรุปการเบิก', 'รายเดือน / รายปี · ทุกแผนกหรือเฉพาะแผนก · พัสดุที่ถูกเบิก มูลค่า และรายการใบเบิกทั้งหมด', `<button class="btn primary" data-monthly>${ICON.doc} สร้าง PDF</button>`)}
+      ${card(ICON.box, 'พัสดุคงเหลือ', 'รายเดือน / รายปี · จ่ายออก และยอดคงเหลือ ณ สิ้นงวด พร้อมมูลค่า ทุกรายการ', `<button class="btn primary" data-stockreport>${ICON.doc} สร้าง PDF</button>`)}
+      ${card(ICON.truck, 'มูลค่ารับเข้า–จ่ายออก', 'รายเดือน / รายปี · เลือกรับเข้า จ่ายออก หรือทั้งสองอย่าง · รายการรับเข้าพร้อมบริษัทและเลขใบส่งของ', `<button class="btn primary" data-flowreport>${ICON.doc} สร้าง PDF</button>`)}
+    </div>
+    <section class="card card-pad csv-card">
+      <h3>ส่งออกข้อมูล (CSV)</h3>
+      <div class="csv-actions">
+        <button class="btn" data-csv="stock">พัสดุคงเหลือ</button>
+        <button class="btn" data-csv="requests">ใบเบิกทั้งหมด</button>
+        <button class="btn" data-csv="movements">ประวัติสต็อก</button>
+        <button class="btn" data-csv="suppliers">บริษัทผู้จำหน่าย</button>
+      </div>
+    </section>`);
+  const CSV = {
+    stock: () => downloadCsv('stock', ['รหัส', 'ชื่อ', 'หมวดหมู่', 'หน่วย', 'คงเหลือ', 'จุดสั่งซื้อขั้นต่ำ', 'สถานที่เก็บ', 'ราคาต่อหน่วย (บาท)', 'มูลค่าคงเหลือ (บาท)'],
+      itemsView().map((i) => [i.code, i.name, i.category, i.unit, i.available_qty, i.min_qty, i.location, i.price || 0, round2(Math.max(0, i.available_qty) * (i.price || 0))])),
+    requests: () => downloadCsv('requests', ['เลขที่', 'วันเวลาที่เบิก', 'ผู้เบิก', 'แผนก', 'หมายเหตุ', 'รหัสพัสดุ', 'พัสดุ', 'จำนวน', 'หน่วย', 'ราคาต่อหน่วย', 'รวมเงิน (บาท)'],
+      requestsView().flatMap((r) => r.items.map((l) => [r.request_no, r.created_at, r.borrower_name, r.department, r.note, l.code, l.name, l.qty, l.unit, l.price, l.value]))),
+    movements: () => downloadCsv('stock-movements', ['วันเวลา', 'รหัส', 'พัสดุ', 'ประเภท', 'จำนวน', 'คงเหลือหลังทำรายการ', 'เลขที่เอกสาร', 'หมายเหตุ', 'บริษัท', 'วันหมดอายุ', 'เลขใบส่งของ', 'ราคาต่อหน่วย'],
+      state.db.movements.slice().sort((a, b) => b.id - a.id).map((m) => [m.created_at, itemById(m.item_id)?.code, itemById(m.item_id)?.name, MOVE[m.type] || m.type, m.qty, m.available_after, m.request_no, m.note, m.supplier, m.expiry_date, m.delivery_no, m.price || ''])),
+    suppliers: () => downloadCsv('suppliers', ['บริษัท', 'ผู้ติดต่อ', 'เบอร์โทร', 'อีเมล', 'หมายเหตุ'], (state.db.suppliers || []).map((s) => [s.name, s.contact, s.phone, s.email, s.note])),
+  };
+  $$('[data-csv]', page).forEach((b) => b.addEventListener('click', () => CSV[b.dataset.csv]()));
+}
+
 // ===================== สรุปมูลค่ารับเข้า / จ่ายออก (เจ้าหน้าที่) =====================
 function showFlowReport() {
   const thisMonth = today().slice(0, 7);
@@ -2334,13 +2383,12 @@ function renderDashboard(page) {
   page.insertAdjacentHTML('beforeend', `
     <div class="page-head-row">
       <div class="page-head"><h1>ภาพรวม</h1><p class="lead">สรุปสต็อกและการเบิกพัสดุ</p></div>
-      <div class="head-actions"><button class="btn primary" data-monthly>${ICON.doc} สรุปรายงาน (PDF)</button>
-      <button class="btn" data-stockreport>${ICON.doc} รายงานคงเหลือ (PDF)</button>
-      <button class="btn" data-flowreport>${ICON.doc} สรุปรับเข้า–จ่ายออก (PDF)</button></div>
+
     </div>
     <div class="shortcuts">
       <a class="card shortcut" href="#/board"><span class="sc-ic tv">${ICON.tv}</span><span><b>Live board</b><small>เปิดบนจอทีวีห้องพัสดุ</small></span></a>
-      <a class="card shortcut" href="#/suppliers"><span class="sc-ic">${ICON.truck}</span><span><b>บริษัทผู้จำหน่าย</b><small>ข้อมูลติดต่อ · ยอดซื้อ</small></span></a>
+      <a class="card shortcut" href="#/reports"><span class="sc-ic">${ICON.doc}</span><span><b>รายงาน</b><small>สรุปการเบิก · คงเหลือ · รับเข้า–จ่ายออก</small></span></a>
+      <button type="button" class="card shortcut" id="dash-alerts"><span class="sc-ic bell">${ICON.bell}</span><span><b>การแจ้งเตือน</b><small id="dash-alerts-sub"></small></span></button>
     </div>
     <div class="stats">
       <a class="card stat" href="#/items"><span class="label">พัสดุในระบบ</span><span class="value">${fmtNum(items.length)}</span><span class="sub">รายการ</span></a>
@@ -2378,6 +2426,9 @@ function renderDashboard(page) {
           '<tr><td colspan="6" class="empty">ยังไม่มีข้อมูล</td></tr>'}</tbody>
       </table></div>
     </section>`);
+  const al = alertsView();
+  $('#dash-alerts-sub').textContent = `ใกล้หมดอายุ ${fmtNum(al.exp.length)} · ใกล้หมดสต็อก ${fmtNum(al.low.length)}`;
+  $('#dash-alerts').addEventListener('click', () => showAlerts());
   bindRowClicks(page);
 }
 
@@ -2581,8 +2632,8 @@ function renderSuppliers(page) {
         <span class="sup-body">
           <b class="sup-name">${esc(s.name)}${s.listed ? '' : ' <span class="pill">ไม่อยู่ในรายชื่อ</span>'}</b>
           <span class="sup-contact">${[s.contact && esc(s.contact), s.phone && esc(s.phone)].filter(Boolean).join(' · ') || '<span class="muted">ยังไม่มีข้อมูลติดต่อ</span>'}</span>
-          <span class="sup-meta"><span>ส่งของ <b>${fmtNum(s.deliveries)}</b> ครั้ง</span><span>ปี ${Number(year) + 543} <b>${fmtMoney(s.year_value)}</b> บาท</span>
-            <span>รวม <b>${fmtMoney(s.value)}</b> บาท</span>${s.last_date ? `<span>ล่าสุด ${fmtDate(s.last_date)}</span>` : ''}</span>
+          <span class="sup-meta">${s.deliveries ? `<span>ส่งของ <b>${fmtNum(s.deliveries)}</b> ครั้ง</span><span>ปี ${Number(year) + 543} <b>${fmtMoney(s.year_value)}</b> บาท</span>
+            <span>รวม <b>${fmtMoney(s.value)}</b> บาท</span>${s.last_date ? `<span>ล่าสุด ${fmtDate(s.last_date)}</span>` : ''}` : '<span>ยังไม่มีการส่งของ</span>'}</span>
         </span>
         <span class="chev">${ICON.chev}</span>
       </button>`).join('') || `<div class="card empty">${q ? 'ไม่พบบริษัทที่ค้นหา' : 'ยังไม่มีบริษัท · กด "+ เพิ่มบริษัท" หรือเลือกบริษัทตอนรับเข้าพัสดุ'}</div>`;
@@ -2612,7 +2663,7 @@ function showSupplier(name, year = today().slice(0, 4)) {
       <div class="card stat"><span class="label">ยอดซื้อปี ${Number(year) + 543}</span><span class="value money">${fmtMoney(s.year_value)}</span><span class="sub">บาท</span></div>
       <div class="card stat"><span class="label">ยอดซื้อรวม</span><span class="value money">${fmtMoney(s.value)}</span><span class="sub">บาท</span></div>
     </div>
-    <div class="toolbar"><button class="btn" id="sup-edit">แก้ไขข้อมูลบริษัท</button></div>
+    <div class="toolbar"><button class="btn" id="sup-edit">แก้ไขข้อมูลบริษัท</button>${s.listed ? `<span class="spacer"></span><button class="btn danger-soft" id="sup-del">${IC.trash} ลบออกจากรายชื่อ</button>` : ''}</div>
     <h4>พัสดุที่ส่ง</h4>
     <div class="sub-card table-wrap"><table>
       <thead><tr><th>พัสดุ</th><th class="num">จำนวนรวม</th><th class="num">ราคาล่าสุด</th><th class="num">มูลค่ารวม</th></tr></thead>
@@ -2629,6 +2680,16 @@ function showSupplier(name, year = today().slice(0, 4)) {
       </details>`).join('') || '<p class="muted">ยังไม่มีประวัติ</p>'}</div>`, { wide: true });
   bindRowClicks(body);
   $('#sup-edit', body).addEventListener('click', () => supplierForm(s));
+  $('#sup-del', body)?.addEventListener('click', () => confirmBox({
+    title: `ลบ "${s.name}" ออกจากรายชื่อ?`,
+    html: '<p class="muted small">ประวัติการรับเข้าที่เคยบันทึกชื่อบริษัทนี้ยังอยู่ครบ</p>',
+    ok: 'ลบ',
+    onOk: async () => {
+      await store.act('removeMaster', { table: 'suppliers', name: s.name }, { done: () => ['ลบบริษัทเรียบร้อย', s.name] });
+      closeModal();
+      refresh();
+    },
+  }));
 }
 
 function supplierForm(s) {
@@ -2672,8 +2733,7 @@ function renderSettings(page) {
     <div class="grid-2">${card('departments', 'แผนก')}${card('categories', 'หมวดหมู่พัสดุ')}</div>
     ${oldServerNote()}
     <div class="grid-2">${card('units', 'หน่วยนับ')}${card('locations', 'สถานที่เก็บ')}</div>
-    <a class="card card-pad link-card" href="#/suppliers"><span class="sup-ic">${ICON.truck}</span><span><b>หน้าบริษัทผู้จำหน่าย</b><span class="muted small">ข้อมูลติดต่อ เบอร์โทร ประวัติการส่งของ และยอดซื้อรวม</span></span><span class="chev">${ICON.chev}</span></a>
-    ${card('suppliers', 'บริษัท / ผู้จำหน่าย (เลือกตอนรับเข้าพัสดุ)')}
+    <p class="muted small">บริษัทผู้จำหน่าย (เพิ่ม แก้ไข ลบ ข้อมูลติดต่อ) อยู่ที่แท็บ <a href="#/suppliers">บริษัทผู้จำหน่าย</a></p>
     ${DEMO ? `<section class="card card-pad" style="display:flex;flex-direction:column;gap:12px;align-items:flex-start"><h3>โหมดทดลอง</h3>
       <p class="muted">ล้างข้อมูลที่ทดลองไว้ในเบราว์เซอร์นี้ แล้วกลับไปใช้ข้อมูลตัวอย่าง</p>
       <button class="btn danger" id="reset-demo">ล้างข้อมูลทดลอง</button></section>`
