@@ -251,7 +251,7 @@ test('Apps Script: only changed tabs are rewritten, shrinking tabs leave no stal
   const after = writes();
   for (const t of ['อุปกรณ์', 'ประวัติการเบิก', 'รายการในคำขอ', 'ประวัติสต็อก', 'รายการเบิก']) assert.equal(after[t], before[t] + 1, t);
   for (const t of ['หน่วยงาน', 'หมวดหมู่']) assert.equal(after[t], before[t], t + ' ไม่ต้องเขียนใหม่');
-  assert.deepEqual(Object.keys(sheets).sort(), ['บริษัท', 'หน่วยนับ', 'สถานที่เก็บ', 'ประวัติการเบิก', 'ประวัติสต็อก', 'รายการในคำขอ', 'รายการเบิก', 'หน่วยงาน', 'หมวดหมู่', 'อุปกรณ์'].sort());
+  assert.deepEqual(Object.keys(sheets).sort(), ['บริษัท', 'หน่วยนับ', 'สถานที่เก็บ', 'งบประมาณแผนก', 'ประวัติการเบิก', 'ประวัติสต็อก', 'รายการในคำขอ', 'รายการเบิก', 'หน่วยงาน', 'หมวดหมู่', 'อุปกรณ์'].sort());
   // ลบแผนก: แท็บสั้นลง ต้องไม่มีแถวเก่าค้าง
   assert.equal(post({ action: 'removeMaster', payload: { table: 'departments', name: 'ICU' }, pin: '1234' }).ok, true);
   assert.equal(sheets['หน่วยงาน'].data.length, 22);
@@ -846,7 +846,7 @@ test('core: sheet tables add readable Thai columns (withdraw only, time to the s
   Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 3 }] }, user);
   Core.run(db, 'createRequest', { ...person, items: [{ item_id: gloves.id, qty: 2 }] }, user);
   const d = Core.sheetData(db);
-  assert.deepEqual(Object.keys(d).sort(), ['categories', 'departments', 'items', 'locations', 'log', 'movements', 'request_items', 'requests', 'suppliers', 'units']);
+  assert.deepEqual(Object.keys(d).sort(), ['budgets', 'categories', 'departments', 'items', 'locations', 'log', 'movements', 'request_items', 'requests', 'suppliers', 'units']);
   const col = (t, name) => d[t].header.indexOf(name);
   // แท็บประวัติการเบิก: คอลัมน์อ่านง่ายอยู่หน้า ครบทุกช่องของระบบ (หัวไทยแปลงกลับได้) ล่าสุดอยู่บน
   assert.deepEqual(d.requests.header.slice(0, 8), ['เลขที่', 'วันที่เวลาที่เบิก', 'ผู้เบิก', 'แผนก', 'รายการพัสดุ', 'จำนวนรวม', 'รวมเงิน (บาท)', 'หมายเหตุ']);
@@ -1024,4 +1024,52 @@ test('Apps Script: loadNewStock replaces every item with the new stock file and 
   const w = post({ action: 'createRequest', payload: { borrower_name: 'ข', department: 'ICU', items: [{ item_id: 1, qty: 3 }] } });
   assert.equal(w.ok, true);
   assert.equal(post({ action: 'load' }).state.items[0].available_qty, Q(1) - 3);
+});
+
+test('core: department budgets per fiscal year — every withdrawal cuts its department budget, history shows each round', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  db.items.forEach((i) => { i.price = 10; });
+  const at = (d) => ({ ...admin, now: new Date(d) });
+  // ตั้งงบช้ากว่าใบเบิกแรกได้ (งบทั้งปี)
+  Core.run(db, 'createRequest', { ...person, department: 'ICU', items: [{ item_id: 1, qty: 3 }, { item_id: 2, qty: 1 }] }, { now: new Date('2026-10-05T09:00:00') });
+  assert.equal(Core.run(db, 'setBudgets', { fiscal_year: 2570, items: [{ department: 'ICU', amount: '1,000' }, { department: 'งานธุรการ', amount: 0 }] }, at('2026-10-06T08:00:00')), 1);
+  Core.run(db, 'createRequest', { ...person, department: 'ICU', items: [{ item_id: 3, qty: 2 }] }, { now: new Date('2026-11-01T09:00:00') });
+  Core.run(db, 'addBudget', { department: 'ICU', fiscal_year: '2570', amount: -100, note: 'โอนให้แผนกอื่น' }, at('2026-11-02T09:00:00'));
+  // ใบเบิกปีงบก่อน (ก.ย. 2569) ไม่ตัดงบปี 2570
+  Core.run(db, 'createRequest', { ...person, department: 'ICU', items: [{ item_id: 1, qty: 1 }] }, { now: new Date('2026-09-30T09:00:00') });
+  const s = Core.budgetSummary(db, 2570);
+  const icu = s.departments.find((d) => d.name === 'ICU');
+  assert.deepEqual([icu.budget, icu.used, icu.remaining, icu.docs, icu.percent], [900, 60, 840, 2, 6.7]);
+  assert.deepEqual(icu.history.map((h) => [h.kind, h.amount, h.kind === 'cut' ? h.balance : h.total]),
+    [['cut', -40, 860], ['budget', 1000, 1000], ['cut', -20, 840], ['budget', -100, 900]]);
+  assert.deepEqual(icu.history[0].categories, [{ name: 'ทั่วไป', value: 40 }]);
+  assert.equal(icu.history[0].request_no, 'WD69-001');
+  assert.deepEqual(s.totals, { budget: 900, used: 60, remaining: 840, departments: 1, over: 0 });
+  assert.equal(Core.budgetSummary(db, 2569).departments.find((d) => d.name === 'ICU').used, 10);
+  assert.deepEqual([Core.fiscalYear('2026-10-01'), Core.fiscalYear('2026-09-30')], ['2570', '2569']);
+  // ลบรายการงบ · ตั้งงบซ้ำค่าเดิมไม่บันทึก · สิทธิ์เจ้าหน้าที่ · ข้อมูลไม่ถูกต้อง
+  Core.run(db, 'removeBudget', { id: db.budgets.at(-1).id }, admin);
+  assert.equal(Core.budgetSummary(db, 2570).departments.find((d) => d.name === 'ICU').budget, 1000);
+  assert.equal(Core.run(db, 'setBudgets', { fiscal_year: 2570, items: [{ department: 'ICU', amount: 1000 }] }, admin), 0);
+  assert.throws(() => Core.run(db, 'addBudget', { department: 'ICU', fiscal_year: 2570, amount: 5 }, user), /PIN/);
+  assert.throws(() => Core.run(db, 'addBudget', { department: 'ไม่มี', fiscal_year: 2570, amount: 5 }, admin), /ไม่พบแผนก/);
+  assert.throws(() => Core.run(db, 'addBudget', { department: 'ICU', fiscal_year: 70, amount: 5 }, admin), /ปีงบประมาณ/);
+  assert.throws(() => Core.run(db, 'setBudgets', { fiscal_year: 2570, items: [{ department: 'ICU', amount: -1 }] }, admin), /ตั้งแต่ 0/);
+  // งบไม่ส่งให้ผู้ใช้ทั่วไป · อ่านกลับจากชีต (ข้อความ) ได้ค่าติดลบถูกต้อง
+  assert.equal(Core.publicView(db, 0).budgets, undefined);
+  const back = Core.normalize(JSON.parse(JSON.stringify({ ...db, budgets: [{ id: '1', department: 'ICU', fiscal_year: '2570', amount: '-1,250.50', note: '', created_at: '2026-10-06 08:00:00' }] })));
+  assert.equal(back.budgets[0].amount, -1250.5);
+});
+
+test('Apps Script: budgets saved in the งบประมาณแผนก tab and read back', () => {
+  const { sheets, ctx } = mockAppsScript();
+  for (const f of ['core.js', 'apps-script/Code.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
+  ctx.setup();
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  assert.equal(post({ action: 'setBudgets', payload: { fiscal_year: 2570, items: [{ department: 'ICU', amount: 5000 }] } }).ok, false); // ต้องใช้ PIN
+  assert.equal(post({ action: 'setBudgets', payload: { fiscal_year: 2570, items: [{ department: 'ICU', amount: 5000 }] }, pin: '1234' }).ok, true);
+  assert.deepEqual(sheets['งบประมาณแผนก'].data[0], ['id', 'department', 'fiscal_year', 'amount', 'note', 'created_at']);
+  const st = post({ action: 'load', pin: '1234' }).state;
+  assert.deepEqual([st.budgets.length, st.budgets[0].department, st.budgets[0].fiscal_year, st.budgets[0].amount], [1, 'ICU', '2570', 5000]);
+  assert.equal(post({ action: 'load' }).state.budgets, undefined);
 });

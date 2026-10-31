@@ -25,6 +25,9 @@ var BorrowCore = (function () {
     suppliers: ['name', 'contact', 'phone', 'email', 'note'],
     units: ['name'],
     locations: ['name'],
+    // งบประมาณแผนก (ปีงบประมาณ พ.ศ. ต.ค.–ก.ย.): 1 แถว = ตั้ง/เพิ่ม/ลดงบ 1 ครั้ง (amount ติดลบ = ลดงบ) · งบของแผนก = ผลรวมทุกแถวของปีนั้น
+    // ทุกใบเบิกของแผนกในปีงบนั้นตัดจากงบอัตโนมัติ (มูลค่าตามราคา ณ วันที่เบิก)
+    budgets: ['id', 'department', 'fiscal_year', 'amount', 'note', 'created_at'],
   };
   // หน่วยนับตั้งต้น (แท็บหน่วยนับยังว่าง) + หน่วยที่พัสดุใช้อยู่แล้ว
   var DEFAULT_UNITS = ['ชิ้น', 'กล่อง', 'ขวด', 'ม้วน', 'โหล'];
@@ -39,6 +42,14 @@ var BorrowCore = (function () {
   }
   var NUMERIC = ['id', 'available_qty', 'min_qty', 'active', 'request_id', 'item_id', 'qty', 'available_after'];
   // ราคา (บาท) ทศนิยม 2 ตำแหน่ง · รับค่าที่พิมพ์ในชีตแบบ 1,250.50 หรือ ฿25 ได้
+  // จำนวนเงินที่ติดลบได้ (ลดงบ)
+  function signedMoney(v, label) {
+    var s = str(v).replace(/[,\s฿]/g, '').replace(/บาท$/, '');
+    if (s === '') return 0;
+    var n = Number(s);
+    if (!isFinite(n)) { if (label) fail(label + ' ต้องเป็นตัวเลข'); return 0; }
+    return Math.round(n * 100) / 100;
+  }
   function money(v, label) {
     var s = str(v).replace(/[,\s฿]/g, '').replace(/บาท$/, '');
     if (s === '') return 0;
@@ -117,7 +128,7 @@ var BorrowCore = (function () {
           TABLES[t].forEach(function (c) {
             // แถวที่เพิ่มในชีตเองแล้วเว้นช่อง active ไว้ = เปิดใช้งาน
             if (c === 'active' && str(r[c]) === '') { o[c] = 1; return; }
-            o[c] = c === 'price' ? money(r[c]) : NUMERIC.indexOf(c) >= 0 ? Number(r[c] || 0) : str(r[c]);
+            o[c] = c === 'price' ? money(r[c]) : c === 'amount' ? signedMoney(r[c]) : NUMERIC.indexOf(c) >= 0 ? Number(r[c] || 0) : str(r[c]);
           });
           return o;
         });
@@ -192,7 +203,7 @@ var BorrowCore = (function () {
   }
 
   var MASTERS = { departments: 1, categories: 1, suppliers: 1, units: 1, locations: 1 };
-  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest'];
+  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest', 'addBudget', 'setBudgets', 'removeBudget'];
 
   // ข้อมูลล็อตที่รับเข้า (ไม่บังคับ): บริษัท วันหมดอายุ เลขใบส่งของ
   function lot(p) {
@@ -396,12 +407,131 @@ var BorrowCore = (function () {
       return name;
     },
 
+    // ตั้ง/เพิ่ม/ลดงบประมาณของแผนก 1 ครั้ง: amount บวก = เพิ่มงบ, ติดลบ = ลดงบ
+    addBudget: function (db, p, ctx) {
+      var dept = budgetDept(db, p.department);
+      var fy = fiscalYearOf(p.fiscal_year);
+      var amount = signedMoney(p.amount, 'จำนวนเงิน');
+      if (!amount) fail('กรุณาระบุจำนวนเงิน (ติดลบ = ลดงบ)');
+      var row = { id: nextId(db.budgets), department: dept, fiscal_year: fy, amount: amount, note: str(p.note), created_at: stamp(ctx.now) };
+      db.budgets.push(row);
+      return row.id;
+    },
+
+    // ตั้งงบหลายแผนกพร้อมกัน: items = [{ department, amount }] (amount = งบทั้งปีที่ต้องการ) บันทึกเฉพาะส่วนต่างจากงบเดิม
+    setBudgets: function (db, p, ctx) {
+      var fy = fiscalYearOf(p.fiscal_year);
+      if (!p.items || !p.items.length) fail('ยังไม่ได้ระบุงบประมาณ');
+      var changed = 0;
+      p.items.forEach(function (x) {
+        var dept = budgetDept(db, x.department);
+        var want = money(x.amount, 'งบประมาณของ ' + dept);
+        var diff = Math.round((want - budgetOf(db, dept, fy)) * 100) / 100;
+        if (!diff) return;
+        db.budgets.push({ id: nextId(db.budgets), department: dept, fiscal_year: fy, amount: diff,
+          note: str(p.note) || (budgetOf(db, dept, fy) ? 'ปรับงบประมาณ' : 'ตั้งงบประมาณ'), created_at: stamp(ctx.now) });
+        changed++;
+      });
+      return changed;
+    },
+
+    removeBudget: function (db, p) {
+      var row = byId(db.budgets, p.id) || fail('ไม่พบรายการงบนี้ (อาจถูกลบไปแล้ว)');
+      db.budgets = db.budgets.filter(function (b) { return b.id !== row.id; });
+      return row.id;
+    },
+
     removeMaster: function (db, p) {
       var key = masterTable(p.table);
       db[key] = db[key].filter(function (r) { return r.name !== p.name; });
       return p.name;
     },
   };
+
+  // ---------- งบประมาณแผนก ----------
+  // ปีงบประมาณ พ.ศ. X = 1 ต.ค. (X−1) – 30 ก.ย. X (ค.ศ. = พ.ศ. − 543)
+  function fiscalYearOf(v) {
+    var fy = Number(str(v));
+    if (!(fy >= 2500 && fy <= 2800) || fy % 1) fail('ปีงบประมาณไม่ถูกต้อง (ใช้ปี พ.ศ. เช่น 2570)');
+    return String(fy);
+  }
+  function fiscalRange(fy) { var y = Number(fy) - 543; return { start: (y - 1) + '-10-01', end: y + '-09-30' }; }
+  // ปีงบประมาณของวันที่ 'YYYY-MM-DD' (ต.ค.–ธ.ค. นับเป็นปีงบถัดไป)
+  function fiscalYear(ymdStr) { var y = Number(ymdStr.slice(0, 4)) + 543; return String(Number(ymdStr.slice(5, 7)) >= 10 ? y + 1 : y); }
+  function budgetDept(db, v) {
+    var d = req(v, 'แผนก');
+    if (!find(db.departments, function (x) { return x.name === d; })) fail('ไม่พบแผนก "' + d + '" ในรายการแผนก');
+    return d;
+  }
+  function budgetOf(db, dept, fy) {
+    var t = 0;
+    db.budgets.forEach(function (b) { if (b.department === dept && b.fiscal_year === fy) t += b.amount; });
+    return Math.round(t * 100) / 100;
+  }
+  // สรุปงบประมาณแผนกของปีงบ fy: งบ ใช้ไป คงเหลือ และประวัติทีละรอบ (ตั้งงบ + ทุกใบเบิกที่ตัดงบ) พร้อมยอดคงเหลือหลังแต่ละรอบ
+  // แต่ละใบเบิกบอกว่าตัดจากงบแผนกไหน และแยกมูลค่าตามหมวดหมู่พัสดุ
+  function budgetSummary(db, fy) {
+    fy = String(fy);
+    var range = fiscalRange(fy);
+    var round = function (x) { return Math.round(x * 100) / 100; };
+    var map = {};
+    var get = function (name) {
+      if (!map[name]) {
+        var d = find(db.departments, function (x) { return x.name === name; });
+        map[name] = { name: name, full_name: d ? d.full_name : '', budget: 0, used: 0, remaining: 0, docs: 0, categories: {}, history: [] };
+      }
+      return map[name];
+    };
+    db.departments.forEach(function (d) { get(d.name); });
+    db.budgets.forEach(function (b) {
+      if (b.fiscal_year !== fy) return;
+      var d = get(b.department);
+      d.budget = round(d.budget + b.amount);
+      d.history.push({ kind: 'budget', id: b.id, date: b.created_at, amount: b.amount, note: b.note });
+    });
+    db.requests.forEach(function (r) {
+      var day = r.created_at.slice(0, 10);
+      if (day < range.start || day > range.end) return;
+      var d = get(r.department);
+      var cats = {}, value = 0, qty = 0;
+      lines(db, r.id).forEach(function (l) {
+        var it = byId(db.items, l.item_id);
+        var c = (it && it.category) || 'ไม่ระบุหมวดหมู่';
+        var v = lineValue(db, l);
+        cats[c] = round((cats[c] || 0) + v);
+        d.categories[c] = round((d.categories[c] || 0) + v);
+        value += v; qty += l.qty;
+      });
+      value = round(value);
+      d.used = round(d.used + value);
+      d.docs++;
+      d.history.push({ kind: 'cut', request_id: r.id, request_no: r.request_no, date: r.created_at, edited_at: r.edited_at, borrower_name: r.borrower_name,
+        amount: -value, qty: qty, lines: lines(db, r.id).length,
+        categories: Object.keys(cats).map(function (k) { return { name: k, value: cats[k] }; }).sort(function (a, b) { return b.value - a.value; }) });
+    });
+    var t = { budget: 0, used: 0, remaining: 0, departments: 0, over: 0 };
+    var list = Object.keys(map).map(function (k) {
+      var d = map[k];
+      // เรียงตามเวลา · งบเป็นงบทั้งปี (ตั้งงบช้ากว่าใบเบิกแรกได้) ใบเบิกแต่ละใบจึงบอก คงเหลือ = งบทั้งปี − ยอดตัดสะสมถึงใบนั้น
+      // แถวตั้ง/ปรับงบบอก total = งบทั้งปีรวมหลังรายการนั้น
+      d.history.sort(function (a, b) { return a.date.localeCompare(b.date) || (a.kind === b.kind ? 0 : a.kind === 'budget' ? -1 : 1); });
+      var used = 0, total = 0;
+      d.history.forEach(function (h) {
+        if (h.kind === 'cut') { used = round(used - h.amount); h.balance = round(d.budget - used); }
+        else { total = round(total + h.amount); h.total = total; }
+      });
+      d.remaining = round(d.budget - d.used);
+      d.percent = d.budget > 0 ? Math.round((d.used / d.budget) * 1000) / 10 : null;
+      d.categories = Object.keys(d.categories).map(function (c) { return { name: c, value: d.categories[c] }; }).sort(function (a, b) { return b.value - a.value; });
+      t.budget = round(t.budget + d.budget);
+      t.used = round(t.used + d.used);
+      if (d.budget) t.departments++;
+      if (d.budget && d.remaining < 0) t.over++;
+      return d;
+    }).sort(function (a, b) { return (b.budget ? 1 : 0) - (a.budget ? 1 : 0) || b.used - a.used || a.name.localeCompare(b.name); });
+    t.remaining = round(t.budget - t.used);
+    return { fiscal_year: fy, start: range.start, end: range.end, departments: list, totals: t };
+  }
 
   // จุดเรียกใช้งานเดียว: ตรวจสิทธิ์แล้วรัน action บน db (แก้ไข db โดยตรง)
   function run(db, action, payload, ctx) {
@@ -836,7 +966,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { ledgerSummary: ledgerSummary, applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { budgetSummary: budgetSummary, fiscalYear: fiscalYear, fiscalRange: fiscalRange, ledgerSummary: ledgerSummary, applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

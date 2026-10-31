@@ -4,3 +4,4 @@ data/*.db-*
 .env
 .wrangler/
 docs/_headers
+borrow-site.zip
