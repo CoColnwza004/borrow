@@ -8,6 +8,7 @@
 //   เว้นว่าง = เว็บทดสอบใช้โหมดทดลอง (ข้อมูลอยู่ในเบราว์เซอร์ ไม่แตะชีตจริง)
 // - SHEET_URL (ไม่บังคับ) = ลิงก์ Google Sheet สำหรับหน้า "Google Sheet" ของเจ้าหน้าที่
 //   ปกติไม่ต้องใส่ Apps Script เวอร์ชันล่าสุดส่งลิงก์มาให้เอง (เฉพาะคนที่ใส่ PIN)
+// - CONTACT_PHONE / CONTACT_LINE = เบอร์โทรและลิงก์ LINE ของเจ้าหน้าที่พัสดุ (ปุ่มติดต่อเมื่อจะเบิกของที่หมด/เหลือ 0)
 window.APP_CONFIG = {
   API_URL: 'https://script.google.com/macros/s/AKfycbympkHAvksAQhtFxKcp7J68PXGVbd7bvTZTNFkPDpKEh82g-WEwEuhDXY36lWyc39hb1w/exec',
   HOSPITAL_NAME: 'โรงพยาบาลปากเกร็ด',
@@ -16,4 +17,6 @@ window.APP_CONFIG = {
   // กระดิ่งแจ้งเตือนของเจ้าหน้าที่พัสดุ: เตือนพัสดุที่จะหมดอายุภายในกี่เดือน
   EXPIRY_ALERT_MONTHS: 8,
   TEST_API_URL: '',
+  CONTACT_PHONE: '081-734-5983',
+  CONTACT_LINE: 'https://line.me/ti/p/XYP1hvxdqs',
 };

@@ -94,6 +94,7 @@ const ICON = {
   ext: '<svg viewBox="0 0 24 24"><path d="M14 3h7v7h-2V6.4l-9.3 9.3-1.4-1.4L17.6 5H14V3ZM5 5h6v2H5v12h12v-6h2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/></svg>',
   cal: '<svg viewBox="0 0 24 24"><path d="M7 2h2v2h6V2h2v2h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V2ZM5 9v10h14V9H5Zm2 2h4v4H7v-4Z"/></svg>',
   lock: '<svg viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z"/></svg>',
+  chat: '<svg viewBox="0 0 24 24"><path d="M12 3C6.5 3 2 6.6 2 11c0 3.9 3.5 7.2 8.3 7.9.3.1.8.2.9.5.1.3.1.7 0 1l-.1.9c0 .3-.2 1 .9.5s6-3.5 8.2-6.1C21.6 14.1 22 12.6 22 11c0-4.4-4.5-8-10-8Z"/></svg>',
   bell: '<svg viewBox="0 0 24 24"><path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>',
 };
 
@@ -129,7 +130,7 @@ async function remote(action, payload) {
   }
   if (data.sheet) state.sheet = data.sheet; // ลิงก์ Google Sheet ส่งมาเฉพาะคำขอที่มี PIN เจ้าหน้าที่
   // Apps Script เวอร์ชันเก่า (ก่อนมีแท็บหน่วยนับ / สถานที่เก็บ / ราคา) ส่งข้อมูลเจ้าหน้าที่มาโดยไม่มี units
-  if (state.pin && data.state) state.oldServer = !('units' in data.state);
+  if (state.pin && data.state) { state.oldServer = !('units' in data.state); state.noBudget = !('budgets' in data.state); }
   return data;
 }
 
@@ -206,6 +207,9 @@ const store = {
 // ข้อความป๊อปอัป: [กำลังทำ, รายละเอียด, สำเร็จ, รายละเอียด]
 const ACT_TEXT = {
   createRequest: ['กำลังบันทึกใบเบิก', 'กำลังตัดสต็อกและบันทึกลง Google Sheet…', 'บันทึกใบเบิกเรียบร้อย', ''],
+  addBudget: ['กำลังบันทึกงบประมาณ', 'กำลังบันทึกลง Google Sheet…', 'บันทึกงบประมาณเรียบร้อย', ''],
+  setBudgets: ['กำลังบันทึกงบประมาณ', 'กำลังบันทึกลง Google Sheet…', 'บันทึกงบประมาณเรียบร้อย', ''],
+  removeBudget: ['กำลังลบรายการงบ', 'กำลังบันทึกลง Google Sheet…', 'ลบรายการงบเรียบร้อย', ''],
   saveItem: ['กำลังบันทึกข้อมูลพัสดุ', 'กำลังบันทึกลง Google Sheet…', 'บันทึกข้อมูลพัสดุเรียบร้อย', ''],
   stock: ['กำลังบันทึกสต็อก', 'กำลังปรับยอดและบันทึกลง Google Sheet…', 'บันทึกสต็อกเรียบร้อย', 'ยอดคงเหลืออัปเดตแล้ว'],
   addMaster: ['กำลังเพิ่มรายการ', 'กำลังบันทึกลง Google Sheet…', 'เพิ่มเรียบร้อย', ''],
@@ -575,7 +579,8 @@ const ROUTES = {
   requests: { title: 'ประวัติเบิก', render: renderRequests, admin: true, group: 'history' },
   dashboard: { title: 'ภาพรวม', render: renderDashboard, admin: true },
   movements: { title: 'ประวัติสต็อก', render: renderMovements, admin: true, group: 'history' },
-  reports: { title: 'รายงาน', render: renderReports, admin: true },
+  reports: { title: 'รายงาน', render: renderReports, admin: true, group: 'reports' },
+  budget: { title: 'งบประมาณแผนก', render: renderBudget, admin: true, group: 'reports' },
   settings: { title: 'ตั้งค่า', render: renderSettings, admin: true, group: 'settings' },
   sheet: { title: 'Google Sheet', render: renderSheet, admin: true, group: 'settings' },
   suppliers: { title: 'บริษัทผู้จำหน่าย', render: renderSuppliers, admin: true },
@@ -592,7 +597,7 @@ const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
 function renderNav() {
   // เมนูเจ้าหน้าที่จัดกลุ่ม: ประวัติ (ใบเบิก + สต็อก) · ตั้งค่า (รายการตัวเลือก + Google Sheet) มีแท็บย่อยในหน้า · บริษัทเป็นเมนูหลัก
   const pub = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['help', 'วิธีใช้งาน']];
-  const staff = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['dashboard', 'ภาพรวม'], ['requests', 'ประวัติ', 'history'], ['reports', 'รายงาน'], ['suppliers', 'บริษัท'], ['settings', 'ตั้งค่า', 'settings']];
+  const staff = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['dashboard', 'ภาพรวม'], ['requests', 'ประวัติ', 'history'], ['reports', 'รายงาน', 'reports'], ['suppliers', 'บริษัท'], ['settings', 'ตั้งค่า', 'settings']];
   const cur = currentRoute();
   const group = ROUTES[cur].group;
   const a = ([k, label, g]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur || (g && g === group) ? 'active' : ''}">${label}</a>`;
@@ -763,6 +768,7 @@ function countUp(root) {
 const SUBTABS = {
   history: [['requests', 'ใบเบิก'], ['movements', 'ความเคลื่อนไหวสต็อก']],
   settings: [['settings', 'รายการตัวเลือก'], ['sheet', 'Google Sheet']],
+  reports: [['reports', 'รายงาน'], ['budget', 'งบประมาณแผนก']],
 };
 function render(enter = false) {
   const key = currentRoute();
@@ -923,6 +929,41 @@ let redrawPickList = null;
 const MAX_QTY = 9999;
 let rfObservers = [];
 
+// ===================== ติดต่อเจ้าหน้าที่พัสดุ (ของหมด / เหลือ 0 ต้องสอบถามก่อนเบิก) =====================
+const CONTACT_PHONE = CONFIG.CONTACT_PHONE || '';
+const CONTACT_LINE = CONFIG.CONTACT_LINE || '';
+function contactButtons() {
+  const tel = CONTACT_PHONE.replace(/[^\d+]/g, '');
+  return `<div class="contact-btns">
+    ${tel ? `<a class="btn contact-call" href="tel:${esc(tel)}">${ICON.phone}<span>โทร ${esc(CONTACT_PHONE)}</span></a>` : ''}
+    ${CONTACT_LINE ? `<a class="btn contact-line" href="${esc(CONTACT_LINE)}" target="_blank" rel="noopener">${ICON.chat}<span>สอบถามทาง LINE</span></a>` : ''}
+  </div>`;
+}
+function stockOutNotice() {
+  if (!CONTACT_PHONE && !CONTACT_LINE) return '';
+  return `<div class="out-notice" role="note">
+    <div class="out-notice-txt"><b>ของหมด หรือคงเหลือ 0</b><span>หากต้องการเบิก ต้องติดต่อสอบถามเจ้าหน้าที่พัสดุก่อนทุกครั้ง</span></div>
+    ${contactButtons()}
+  </div>`;
+}
+// แตะ "+ เลือก" ที่พัสดุที่หมด: ป๊อปอัปให้ติดต่อสอบถามก่อน (ถามครั้งเดียวต่อรายการ)
+const outAsked = new Set();
+function askOutOfStock(item, onContinue) {
+  if (outAsked.has(item.id) || (!CONTACT_PHONE && !CONTACT_LINE)) { onContinue(); return; }
+  confirmBox({
+    title: 'พัสดุนี้หมดแล้ว',
+    tone: 'warn',
+    icon: ICON.phone,
+    cls: 'out-ask',
+    cancel: 'ยกเลิก',
+    ok: 'สอบถามแล้ว เลือกเบิก',
+    html: `<p class="out-ask-item"><b>${esc(item.name)}</b><br><span class="muted">${esc(item.code)} · คงเหลือ ${fmtNum(item.available_qty)} ${esc(item.unit)}</span></p>
+      <p>หากต้องการเบิกของที่หมดหรือคงเหลือ 0 <b>ต้องติดต่อสอบถามเจ้าหน้าที่พัสดุก่อน</b></p>
+      ${contactButtons()}`,
+    onOk: () => { outAsked.add(item.id); onContinue(); },
+  });
+}
+
 function renderRequestForm(page) {
   rfObservers.forEach((o) => o.disconnect());
   rfObservers = [];
@@ -962,6 +1003,7 @@ function renderRequestForm(page) {
       </aside>
       <section class="group pick-col">
         <div class="group-head"><h2>เลือกพัสดุ</h2></div>
+        ${stockOutNotice()}
         <div class="pick-tools">
           <div class="search">${ICON.search}<input type="search" id="rf-q" autocomplete="off" placeholder="ค้นหา เช่น airway, ถุงมือ, NSO-010"></div>
           <div class="pick-filter">
@@ -1153,7 +1195,12 @@ function renderRequestForm(page) {
     if (e.target.closest('[data-clear-q]')) { $('#rf-q').value = ''; drawList(); $('#rf-q').focus(); return; }
     const inc = e.target.closest('[data-inc]');
     const dec = e.target.closest('[data-dec]');
-    if (inc) setQty(inc.dataset.inc, (state.picks[inc.dataset.inc] || 0) + 1, inc.classList.contains('add-btn') ? inc.getBoundingClientRect() : null);
+    if (inc) {
+      const it = itemById(inc.dataset.inc);
+      const rect = inc.classList.contains('add-btn') ? inc.getBoundingClientRect() : null;
+      const add = () => setQty(inc.dataset.inc, (state.picks[inc.dataset.inc] || 0) + 1, rect);
+      if (it && it.available_qty <= 0 && !state.picks[it.id]) askOutOfStock(it, add); else add();
+    }
     if (dec) setQty(dec.dataset.dec, (state.picks[dec.dataset.dec] || 0) - 1);
   });
   $('#rf-list').addEventListener('change', (e) => {
@@ -1255,7 +1302,8 @@ function confirmWithdraw(data, items, onOk) {
           <td class="num">${fmtNum(l.qty)} ${esc(l.unit)}</td><td class="num">${l.price ? fmtMoney(l.value) : '-'}</td></tr>`).join('')}</tbody>
       </table></div>
       <div class="wd-total"><span>${fmtNum(lines.length)} รายการ · ${fmtNum(qty)} หน่วย</span><span>ราคารวม <b>${fmtMoney(total)}</b> บาท</span></div>
-      ${data.note ? `<p class="muted small">หมายเหตุ: ${esc(data.note)}</p>` : ''}`,
+      ${data.note ? `<p class="muted small">หมายเหตุ: ${esc(data.note)}</p>` : ''}
+      ${lines.some((l) => l.neg) && (CONTACT_PHONE || CONTACT_LINE) ? `<div class="out-notice compact"><div class="out-notice-txt"><b>มีรายการที่ของไม่พอ / หมด</b><span>กรุณาติดต่อสอบถามเจ้าหน้าที่พัสดุก่อนเบิก</span></div>${contactButtons()}</div>` : ''}`,
     onOk,
   });
 }
@@ -1451,7 +1499,7 @@ function renderItems(page) {
       <div class="page-head"><h1>พัสดุคงเหลือ</h1><p class="lead">ยอดคงเหลือจาก Google Sheet อัปเดตให้อัตโนมัติ</p></div>
       ${isAdmin() ? '<div class="head-actions"><button class="btn" id="btn-bulk">แก้ยอดคงเหลือ</button><button class="btn primary" id="btn-add">+ เพิ่มพัสดุ</button></div>' : ''}
     </div>
-    ${isAdmin() ? `<div id="items-value">${stockValueCard()}</div>` : ''}
+    ${isAdmin() ? `<div id="items-value">${stockValueCard()}</div>` : stockOutNotice()}
     ${DEMO ? '' : `<div class="live" id="live"><span class="live-dot" aria-hidden="true"></span>
       <span id="live-text">${liveText()}</span>
       <button type="button" class="btn sm" id="live-refresh">รีเฟรช</button></div>`}
@@ -1895,6 +1943,7 @@ function showRequest(id) {
       ${r.purpose ? `<dt>วัตถุประสงค์</dt><dd>${esc(r.purpose)}</dd>` : ''}
       ${r.note ? `<dt>หมายเหตุ</dt><dd>${esc(r.note)}</dd>` : ''}
       ${r.edited_at ? `<dt>แก้ไขล่าสุด</dt><dd>${fmtDateTime(r.edited_at)}</dd>` : ''}
+      ${isAdmin() ? requestBudgetLine(raw) : ''}
     </dl>
     <div class="sub-card table-wrap"><table class="slip-table">
       <thead><tr><th>พัสดุ</th><th class="num">จำนวน</th><th class="num">ราคา/หน่วย</th><th class="num">รวม (บาท)</th></tr></thead>
@@ -2885,6 +2934,236 @@ function supplierForm(s) {
   }));
 }
 
+// ===================== งบประมาณแผนก (เจ้าหน้าที่): ปีงบประมาณ ต.ค.–ก.ย. · ใบเบิกตัดงบของแผนกอัตโนมัติ =====================
+const NO_BUDGET_MSG = 'Apps Script ยังเป็นเวอร์ชันเก่า: วาง AllInOne.gs ล่าสุด แล้ว Deploy → Manage deployments → New version ก่อน จึงจะบันทึกงบประมาณได้';
+const thisFiscal = () => BorrowCore.fiscalYear(today());
+// คำนวณครั้งเดียวต่อข้อมูลชุดนั้น (เปิดหลายหน้าต่างไม่คำนวณซ้ำ)
+const budgetCache = new WeakMap();
+function budgetView(fy) {
+  let c = budgetCache.get(state.db);
+  if (!c) budgetCache.set(state.db, (c = {}));
+  return c[fy] || (c[fy] = BorrowCore.budgetSummary(state.db, fy));
+}
+function budgetYears() {
+  const ys = new Set([thisFiscal(), String(Number(thisFiscal()) + 1)]);
+  (state.db.budgets || []).forEach((b) => ys.add(b.fiscal_year));
+  state.db.requests.forEach((r) => ys.add(BorrowCore.fiscalYear(r.created_at.slice(0, 10))));
+  return [...ys].sort().reverse();
+}
+const budgetTone = (d) => (!d.budget ? 'none' : d.remaining < 0 ? 'over' : d.percent >= 80 ? 'warn' : 'ok');
+const signMoney = (v) => `${v < 0 ? '−' : '+'}${fmtMoney(Math.abs(v))}`;
+// บรรทัดในใบเบิก: ตัดจากงบแผนกไหน และคงเหลือหลังใบนี้
+function requestBudgetLine(raw) {
+  const fy = BorrowCore.fiscalYear(raw.created_at.slice(0, 10));
+  const d = budgetView(fy).departments.find((x) => x.name === raw.department);
+  if (!d || !d.budget) return '';
+  const h = d.history.find((x) => x.kind === 'cut' && x.request_id === raw.id);
+  return `<dt>ตัดงบประมาณ</dt><dd>งบแผนก ${esc(raw.department)} ปีงบ ${fy}${h ? ` · คงเหลือหลังใบนี้ <b class="${h.balance < 0 ? 'neg' : ''}">${fmtMoney(h.balance)}</b> บาท` : ''}</dd>`;
+}
+
+function renderBudget(page) {
+  const years = budgetYears();
+  const params = hashParams();
+  let fy = years.includes(params.get('fy')) ? params.get('fy') : thisFiscal();
+  let dept = params.get('d') || '';
+  page.insertAdjacentHTML('beforeend', `
+    <div class="page-head-row">
+      <div class="page-head"><h1>งบประมาณแผนก</h1><p class="lead">ตั้งงบให้แต่ละแผนกต่อปีงบประมาณ (1 ต.ค. – 30 ก.ย.) ทุกใบเบิกตัดจากงบของแผนกนั้นอัตโนมัติ ตามมูลค่า ณ วันที่เบิก</p></div>
+      <button class="btn primary" id="bg-set">ตั้งงบประมาณ</button>
+    </div>
+    ${state.noBudget ? `<p class="banner full">${NO_BUDGET_MSG}</p>` : ''}
+    <div class="toolbar">
+      <label class="month-pick">${ICON.cal}<select id="bg-year" aria-label="ปีงบประมาณ">${years.map((y) => `<option value="${y}">ปีงบประมาณ ${y}</option>`).join('')}</select></label>
+      <span class="muted small" id="bg-range"></span>
+      <span class="spacer"></span>
+      <button class="btn" id="bg-csv">ส่งออก CSV</button>
+    </div>
+    <div class="stats bg-stats" id="bg-stats"></div>
+    <div class="bg-grid" id="bg-list"></div>
+    <section class="card bg-log">
+      <div class="card-head"><h3>ประวัติการตัดงบ <span class="muted small">(ทุกรอบ ล่าสุดอยู่บน)</span></h3>
+        <select id="bg-dept" aria-label="เลือกแผนก"></select></div>
+      <ul class="rows" id="bg-hist"></ul>
+    </section>`);
+  $('#bg-year').value = fy;
+  const draw = () => {
+    history.replaceState(null, '', `#/budget?fy=${fy}${dept ? '&d=' + encodeURIComponent(dept) : ''}`);
+    const B = budgetView(fy);
+    const t = B.totals;
+    $('#bg-range').textContent = `${fmtDate(B.start)} – ${fmtDate(B.end)}`;
+    $('#bg-stats').innerHTML = `
+      <div class="card stat"><span class="label">งบรวมทุกแผนก</span><span class="value money">${fmtMoney(t.budget)}</span><span class="sub">บาท · ${fmtNum(t.departments)} แผนกที่ตั้งงบ</span></div>
+      <div class="card stat"><span class="label">ตัดงบไปแล้ว</span><span class="value money">${fmtMoney(t.used)}</span><span class="sub">บาท${t.budget ? ` · ${fmtNum(Math.round((t.used / t.budget) * 1000) / 10)}%` : ''}</span></div>
+      <div class="card stat"><span class="label">งบคงเหลือ</span><span class="value money ${t.remaining < 0 ? 'neg' : ''}">${fmtMoney(t.remaining)}</span><span class="sub">บาท</span></div>
+      <div class="card stat ${t.over ? 'warn' : ''}"><span class="label">แผนกที่เกินงบ</span><span class="value">${fmtNum(t.over)}</span><span class="sub">แผนก</span></div>`;
+    const shown = B.departments.filter((d) => d.budget || d.used);
+    $('#bg-list').innerHTML = shown.map((d) => {
+      const tone = budgetTone(d);
+      const pct = d.budget ? Math.min(100, (d.used / d.budget) * 100) : 0;
+      return `<button type="button" class="card bg-card ${tone}" data-dept="${esc(d.name)}">
+        <span class="bg-top"><b>${esc(d.name)}</b>${d.full_name ? `<span class="muted small">${esc(d.full_name)}</span>` : ''}
+          <span class="pill ${tone === 'over' ? 'out' : tone === 'warn' ? 'low' : tone === 'none' ? '' : 'ok'}">${tone === 'none' ? 'ยังไม่ตั้งงบ' : tone === 'over' ? 'เกินงบ' : `ใช้ ${fmtNum(d.percent)}%`}</span></span>
+        ${d.budget ? `<span class="bg-bar"><span style="width:${pct}%"></span></span>` : ''}
+        <span class="bg-nums">
+          <span><small>งบ</small><b>${d.budget ? fmtMoney(d.budget) : '-'}</b></span>
+          <span><small>ตัดไป</small><b>${fmtMoney(d.used)}</b></span>
+          <span><small>คงเหลือ</small><b class="${d.remaining < 0 ? 'neg' : ''}">${d.budget ? fmtMoney(d.remaining) : '-'}</b></span>
+        </span>
+        <span class="muted small">${fmtNum(d.docs)} ใบเบิก${d.categories[0] ? ` · ตัดมากสุด: ${esc(d.categories[0].name)}` : ''}</span>
+      </button>`;
+    }).join('') || `<div class="card empty">ยังไม่ได้ตั้งงบประมาณปีงบ ${fy} · กด "ตั้งงบประมาณ" เพื่อกำหนดงบให้แต่ละแผนก</div>`;
+    const names = B.departments.filter((d) => d.history.length).map((d) => d.name);
+    if (dept && !names.includes(dept)) dept = '';
+    $('#bg-dept').innerHTML = `<option value="">ทุกแผนก</option>${names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}`;
+    $('#bg-dept').value = dept;
+    const rows = B.departments.filter((d) => !dept || d.name === dept)
+      .flatMap((d) => d.history.map((h) => ({ ...h, dept: d.name, hasBudget: !!d.budget })))
+      .sort((a, b) => b.date.localeCompare(a.date));
+    $('#bg-hist').innerHTML = rows.slice(0, 300).map((h) => budgetRow(h, !dept)).join('') ||
+      '<li class="empty">ยังไม่มีการตั้งงบหรือใบเบิกในปีงบนี้</li>';
+    if (rows.length > 300) $('#bg-hist').insertAdjacentHTML('beforeend', `<li class="empty">แสดง 300 รายการล่าสุด จากทั้งหมด ${fmtNum(rows.length)} · ส่งออก CSV เพื่อดูทั้งหมด</li>`);
+    bindRowClicks($('#bg-hist'));
+  };
+  draw();
+  $('#bg-year').addEventListener('change', (e) => { fy = e.target.value; draw(); });
+  $('#bg-dept').addEventListener('change', (e) => { dept = e.target.value; draw(); });
+  $('#bg-list').addEventListener('click', (e) => { const c = e.target.closest('[data-dept]'); if (c) showBudget(c.dataset.dept, fy); });
+  $('#bg-set').addEventListener('click', () => budgetForm(fy));
+  bindBudgetDelete($('#bg-hist'), null);
+  $('#bg-csv').addEventListener('click', () => {
+    const B = budgetView(fy);
+    downloadCsv(`budget-${fy}`, ['ปีงบประมาณ', 'แผนก', 'วันเวลา', 'รายการ', 'เลขที่ใบเบิก', 'ผู้เบิก', 'ตัดจากหมวดหมู่', 'จำนวนเงิน (บาท)', 'งบคงเหลือหลังรายการ (บาท)', 'หมายเหตุ'],
+      B.departments.flatMap((d) => d.history.map((h) => [fy, d.name, h.date, h.kind === 'cut' ? 'ตัดงบ (ใบเบิก)' : h.amount < 0 ? 'ลดงบ' : 'ตั้ง/เพิ่มงบ', h.request_no || '', h.borrower_name || '',
+        (h.categories || []).map((c) => `${c.name} ${fmtMoney(c.value)}`).join(' / '), h.amount, h.balance, h.note || ''])));
+  });
+}
+
+// 1 แถวในประวัติ: ใบเบิก (ตัดงบ) หรือการตั้ง/ปรับงบ พร้อมยอดคงเหลือหลังรอบนั้น
+function budgetRow(h, showDept) {
+  if (h.kind === 'cut') {
+    return `<li class="row clickable bg-row" data-request="${h.request_id}">
+      <span class="bg-ic cut" aria-hidden="true">${ICON.withdraw}</span>
+      <div class="row-body"><div class="row-title">ใบเบิก ${esc(h.request_no)}${showDept ? ` · ตัดจากงบแผนก <b>${esc(h.dept)}</b>` : ''}${h.edited_at ? ' <span class="pill">แก้ไขแล้ว</span>' : ''}</div>
+        <div class="row-sub">${fmtDateTime(h.date)} · ${esc(h.borrower_name)} · ${fmtNum(h.lines)} รายการ</div>
+        ${h.categories.length ? `<div class="bg-cats">${h.categories.map((c) => `<span>${esc(c.name)} <b>${fmtMoney(c.value)}</b></span>`).join('')}</div>` : ''}</div>
+      <div class="row-end bg-amt"><b class="neg">${signMoney(h.amount)}</b>${h.hasBudget ? `<small>คงเหลือ <span class="${h.balance < 0 ? 'neg' : ''}">${fmtMoney(h.balance)}</span></small>` : '<small>ยังไม่ตั้งงบ</small>'}</div>
+    </li>`;
+  }
+  return `<li class="row bg-row">
+    <span class="bg-ic ${h.amount < 0 ? 'down' : 'up'}" aria-hidden="true">${h.amount < 0 ? IC.minus : IC.plus}</span>
+    <div class="row-body"><div class="row-title">${h.amount < 0 ? 'ลดงบประมาณ' : 'ตั้ง/เพิ่มงบประมาณ'}${showDept ? ` · แผนก <b>${esc(h.dept)}</b>` : ''}</div>
+      <div class="row-sub">${fmtDateTime(h.date)}${h.note ? ` · ${esc(h.note)}` : ''}</div></div>
+    <div class="row-end bg-amt"><b class="${h.amount < 0 ? 'neg' : 'pos'}">${signMoney(h.amount)}</b><small>งบทั้งปีรวม ${fmtMoney(h.total)}</small>
+      ${h.id ? `<button type="button" class="link small" data-bg-del="${h.id}">ลบ</button>` : ''}</div>
+  </li>`;
+}
+
+function showBudget(name, fy) {
+  const d = budgetView(fy).departments.find((x) => x.name === name);
+  if (!d) return;
+  const tone = budgetTone(d);
+  const top = d.categories.length ? d.categories[0].value : 0;
+  const body = openModal(`งบประมาณ ${d.name} · ปีงบ ${fy}`, `
+    ${d.full_name ? `<p class="muted">${esc(d.full_name)}</p>` : ''}
+    <div class="stats bg-stats">
+      <div class="card stat"><span class="label">งบประมาณ</span><span class="value money">${d.budget ? fmtMoney(d.budget) : '-'}</span><span class="sub">บาท</span></div>
+      <div class="card stat"><span class="label">ตัดไปแล้ว</span><span class="value money">${fmtMoney(d.used)}</span><span class="sub">บาท · ${fmtNum(d.docs)} ใบเบิก</span></div>
+      <div class="card stat ${tone === 'over' ? 'warn' : ''}"><span class="label">คงเหลือ</span><span class="value money ${d.remaining < 0 ? 'neg' : ''}">${d.budget ? fmtMoney(d.remaining) : '-'}</span><span class="sub">${d.budget ? `ใช้ไป ${fmtNum(d.percent)}%` : 'ยังไม่ตั้งงบ'}</span></div>
+    </div>
+    ${d.budget ? `<div class="bg-bar lg ${tone}"><span style="width:${Math.min(100, (d.used / d.budget) * 100)}%"></span></div>` : ''}
+    <div class="toolbar"><button class="btn primary" id="bg-add">+ เพิ่ม / ลดงบ</button></div>
+    ${d.categories.length ? `<h4>ตัดงบจากหมวดหมู่ไหนบ้าง</h4>
+    <ul class="bg-catbars">${d.categories.map((c) => `<li><span class="bg-cat-name">${esc(c.name)}</span>
+      <span class="bg-cat-bar"><span style="width:${top ? (c.value / top) * 100 : 0}%"></span></span><b>${fmtMoney(c.value)}</b></li>`).join('')}</ul>` : ''}
+    <h4>ประวัติการตัดงบ <span class="muted small">(ทุกรอบ ล่าสุดอยู่บน)</span></h4>
+    <ul class="rows sub-card">${d.history.slice().reverse().map((h) => budgetRow({ ...h, dept: d.name, hasBudget: !!d.budget }, false)).join('') || '<li class="empty">ยังไม่มีรายการ</li>'}</ul>`, { wide: true });
+  bindRowClicks(body);
+  $('#bg-add', body).addEventListener('click', () => budgetAdjustForm(d.name, fy));
+  bindBudgetDelete(body, () => showBudget(name, fy));
+}
+
+function bindBudgetDelete(root, after) {
+  root.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-bg-del]');
+    if (!b) return;
+    e.stopPropagation();
+    const row = (state.db.budgets || []).find((x) => x.id === Number(b.dataset.bgDel));
+    if (!row) return;
+    confirmBox({
+      title: 'ลบรายการงบนี้?',
+      html: `<p class="muted">${esc(row.department)} · ${signMoney(row.amount)} บาท${row.note ? ` · ${esc(row.note)}` : ''}<br>งบของแผนกจะคำนวณใหม่ (ใบเบิกไม่เปลี่ยน)</p>`,
+      ok: 'ลบ',
+      onOk: async () => {
+        if (state.noBudget) throw new Error(NO_BUDGET_MSG);
+        await store.act('removeBudget', { id: row.id }, { done: () => ['ลบรายการงบเรียบร้อย', row.department] });
+        refresh();
+        after?.();
+      },
+    });
+  });
+}
+
+// ตั้งงบทั้งปีหลายแผนกในตารางเดียว (บันทึกเฉพาะแผนกที่ตัวเลขเปลี่ยน เป็นส่วนต่างจากงบเดิม)
+function budgetForm(fy) {
+  const B = budgetView(fy);
+  const body = openModal(`ตั้งงบประมาณ ปีงบ ${fy}`, `
+    <form id="bg-form" class="fields">
+      <p class="muted small full">ใส่งบทั้งปีของแต่ละแผนก (บาท) เว้นว่าง = ไม่ตั้งงบ · ระบบบันทึกส่วนต่างจากงบเดิมไว้ในประวัติ · ใบเบิกตั้งแต่ ${fmtDate(B.start)} ถึง ${fmtDate(B.end)} ตัดจากงบนี้</p>
+      <div class="full table-wrap sub-card"><table class="bg-set">
+        <thead><tr><th>แผนก</th><th class="num">ตัดไปแล้ว</th><th class="num">งบทั้งปี (บาท)</th></tr></thead>
+        <tbody>${B.departments.filter((d) => state.db.departments.some((x) => x.name === d.name)).map((d) => `<tr>
+          <td><b>${esc(d.name)}</b>${d.full_name ? `<div class="muted small">${esc(d.full_name)}</div>` : ''}</td>
+          <td class="num">${fmtMoney(d.used)}</td>
+          <td class="num"><input name="amt" data-dept="${esc(d.name)}" inputmode="decimal" placeholder="0.00" value="${d.budget ? d.budget : ''}" data-was="${d.budget}"></td></tr>`).join('')}</tbody>
+      </table></div>
+      <label class="field full">หมายเหตุ <span class="hint">(ไม่บังคับ)</span><input name="note" placeholder="เช่น งบตามแผนปี ${fy} / ได้รับจัดสรรเพิ่ม"></label>
+      <div class="actions full"><button class="btn primary lg">บันทึกงบประมาณ</button></div>
+    </form>`, { wide: true });
+  const inputs = $$('input[name="amt"]', body);
+  inputs.forEach((inp, i) => inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); (inputs[i + 1] || inp).focus(); } }));
+  $('#bg-form', body).addEventListener('submit', safe(async (e) => {
+    e.preventDefault();
+    const items = inputs.map((inp) => ({ department: inp.dataset.dept, amount: inp.value.replace(/[,\s]/g, '') || '0', was: Number(inp.dataset.was) }))
+      .filter((x) => round2(Number(x.amount)) !== round2(x.was));
+    if (!items.length) throw new Error('ยังไม่ได้เปลี่ยนงบของแผนกใด');
+    if (items.some((x) => !(Number(x.amount) >= 0))) throw new Error('งบประมาณต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป');
+    if (state.noBudget) throw new Error(NO_BUDGET_MSG);
+    const n = await store.act('setBudgets', { fiscal_year: fy, note: e.target.note.value, items: items.map(({ department, amount }) => ({ department, amount })) },
+      { done: (c) => ['บันทึกงบประมาณเรียบร้อย', `ปรับงบ ${c} แผนก · ปีงบ ${fy}`] });
+    closeModal();
+    refresh();
+    return n;
+  }));
+}
+
+// เพิ่ม / ลดงบของแผนกเดียว (เช่น ได้รับจัดสรรเพิ่มกลางปี)
+function budgetAdjustForm(name, fy) {
+  const body = openModal(`เพิ่ม / ลดงบ ${name} · ปีงบ ${fy}`, `
+    <form id="bga-form" class="fields">
+      <div class="segmented full" id="bga-kind"><button type="button" data-k="1" class="active">เพิ่มงบ</button><button type="button" data-k="-1">ลดงบ</button></div>
+      <label class="field full">จำนวนเงิน (บาท) <span class="req">*</span><input name="amount" inputmode="decimal" required placeholder="เช่น 5,000"></label>
+      <label class="field full">หมายเหตุ<input name="note" placeholder="เช่น ได้รับจัดสรรเพิ่ม / โอนงบให้แผนกอื่น"></label>
+      <div class="actions full"><button class="btn primary lg">บันทึก</button></div>
+    </form>`);
+  let sign = 1;
+  $('#bga-kind', body).addEventListener('click', (e) => {
+    const b = e.target.closest('[data-k]');
+    if (!b) return;
+    sign = Number(b.dataset.k);
+    $$('#bga-kind button', body).forEach((x) => x.classList.toggle('active', x === b));
+  });
+  $('#bga-form', body).addEventListener('submit', safe(async (e) => {
+    e.preventDefault();
+    const v = Number(e.target.amount.value.replace(/[,\s฿]/g, ''));
+    if (!(v > 0)) throw new Error('กรุณาใส่จำนวนเงินมากกว่า 0');
+    if (state.noBudget) throw new Error(NO_BUDGET_MSG);
+    await store.act('addBudget', { department: name, fiscal_year: fy, amount: sign * v, note: e.target.note.value },
+      { done: () => [sign > 0 ? 'เพิ่มงบเรียบร้อย' : 'ลดงบเรียบร้อย', `${name} ${signMoney(sign * v)} บาท`] });
+    refresh();
+    showBudget(name, fy);
+  }));
+}
+
 // ===================== Settings =====================
 function renderSettings(page) {
   const isDept = (table) => table === 'departments';
@@ -2955,24 +3234,10 @@ function helpNotice(slim = false) {
 }
 
 const DEVICE = PdfDoc.isIOS ? 'ios' : /Android/i.test(navigator.userAgent) ? 'android' : 'pc';
-// ขั้นตอนบันทึก/พิมพ์ PDF แยกตามอุปกรณ์ (ตรงกับการทำงานของปุ่มใน pdf.js)
+// ชื่ออุปกรณ์และเคล็ดลับในหน้าวิธีใช้งาน (ขั้นตอนเป็นภาพใน SAVE_DEMO)
 const SAVE_GUIDE = {
   ios: {
     label: 'iPhone / iPad', short: 'iPhone',
-    save: [
-      'หลังกด <b>ยืนยันการเบิก</b> รอจนปุ่ม <span class="kbd primary">บันทึก PDF</span> เป็นสีฟ้า (ระบบกำลังทำใบเบิก 1–3 วินาที)',
-      `แตะ <span class="kbd primary">บันทึก PDF</span> หน้าต่าง <b>แชร์</b> ของ iPhone จะเลื่อนขึ้นมาจากด้านล่าง`,
-      'เลื่อนรายการด้านล่างลงมา แล้วแตะ <span class="kbd">บันทึกไปยังไฟล์</span> (Save to Files)',
-      'เลือกที่เก็บ เช่น <b>บน iPhone ของฉัน</b> → โฟลเดอร์ <b>Downloads</b> (หรือ iCloud Drive) แล้วแตะ <span class="kbd">บันทึก</span> มุมขวาบน',
-      'เปิดดูไฟล์ได้ทุกเมื่อที่แอป <b>ไฟล์</b> (Files) ไอคอนโฟลเดอร์สีฟ้า → ชื่อไฟล์คือเลขที่ใบเบิก เช่น WD69-001.pdf',
-    ],
-    print: [
-      `แตะ <span class="kbd primary">บันทึก PDF</span> แล้วในหน้าต่างแชร์ เลื่อนลงมาแตะ <span class="kbd">พิมพ์</span> (Print)`,
-      'แตะ <span class="kbd">เครื่องพิมพ์</span> แล้วเลือกเครื่องพิมพ์ของหน่วยงาน (ต้องเป็นเครื่องที่รองรับ AirPrint และ iPhone ต่อ Wi-Fi เดียวกับเครื่องพิมพ์)',
-      'ตั้ง <b>จำนวนสำเนา</b> (แนะนำ 2 ชุด: ผู้เบิก 1 ชุด เจ้าหน้าที่พัสดุ 1 ชุด)',
-      'แตะ <span class="kbd primary">พิมพ์</span> มุมขวาบน',
-      `ถ้าบันทึกไฟล์ไว้แล้ว: เปิดแอป <b>ไฟล์</b> → แตะไฟล์ใบเบิก → แตะไอคอนแชร์ <span class="kbd icon">${ICON.share}</span> มุมซ้ายล่าง → <span class="kbd">พิมพ์</span>`,
-    ],
     tips: [
       'ถ้าเปิดเว็บจากลิงก์ใน <b>LINE</b> ให้แตะ <span class="kbd icon">' + ICON.dots + '</span> หรือ <span class="kbd">⋯</span> มุมบน → <b>เปิดใน Safari</b> ก่อน ปุ่มบันทึกจะทำงานได้ถูกต้อง',
       'ส่งไฟล์ให้หัวหน้าหรือเจ้าหน้าที่พัสดุทาง LINE ได้: ในหน้าต่างแชร์แตะไอคอน <b>LINE</b> แล้วเลือกห้องแชต',
@@ -2980,20 +3245,6 @@ const SAVE_GUIDE = {
   },
   android: {
     label: 'Android', short: 'Android',
-    save: [
-      'หลังกด <b>ยืนยันการเบิก</b> รอจนปุ่ม <span class="kbd primary">ดาวน์โหลด PDF</span> เป็นสีฟ้า (ระบบกำลังทำใบเบิก 1–3 วินาที)',
-      'แตะ <span class="kbd primary">ดาวน์โหลด PDF</span> Chrome จะดาวน์โหลดไฟล์ทันที และขึ้นแถบแจ้งด้านล่างจอว่าดาวน์โหลดเสร็จแล้ว',
-      'แตะ <span class="kbd">เปิด</span> ในแถบนั้นเพื่อดูใบเบิกได้ทันที (ถ้าแถบหายไปแล้ว ดูขั้นถัดไป)',
-      `ไฟล์อยู่ในโฟลเดอร์ <b>ดาวน์โหลด</b> (Download): เปิดแอป <b>Files</b> / <b>ไฟล์ของฉัน</b> → ดาวน์โหลด หรือใน Chrome แตะ <span class="kbd icon">${ICON.dots}</span> มุมขวาบน → <b>ดาวน์โหลด</b>`,
-      'ชื่อไฟล์คือเลขที่ใบเบิก เช่น WD69-001.pdf',
-    ],
-    print: [
-      'เปิดไฟล์ใบเบิก (แตะ <span class="kbd">เปิด</span> หลังดาวน์โหลด หรือแตะไฟล์ในโฟลเดอร์ดาวน์โหลด) ไฟล์จะเปิดในแอปดู PDF เช่น Google Drive',
-      `แตะ <span class="kbd icon">${ICON.dots}</span> มุมขวาบน → <span class="kbd">พิมพ์</span> (บางรุ่นอยู่ในเมนู <b>แชร์</b> → <b>พิมพ์</b>)`,
-      'แตะแถบชื่อเครื่องพิมพ์ด้านบน → เลือกเครื่องพิมพ์ของหน่วยงาน (มือถือต้องต่อ Wi-Fi เดียวกับเครื่องพิมพ์)',
-      'ตั้ง <b>จำนวนสำเนา</b> (แนะนำ 2 ชุด) แล้วแตะปุ่ม <span class="kbd primary">พิมพ์</span> (ไอคอนเครื่องพิมพ์สีน้ำเงิน)',
-      'ถ้าไม่เห็นเครื่องพิมพ์: เข้า <b>การตั้งค่า</b> → ค้นหา “การพิมพ์” → เปิด <b>บริการพิมพ์เริ่มต้น</b> หรือติดตั้งแอปเสริมของยี่ห้อเครื่องพิมพ์',
-    ],
     tips: [
       'ถ้าเปิดเว็บจากลิงก์ใน <b>LINE</b> ให้แตะ <span class="kbd icon">' + ICON.dots + '</span> มุมบน → <b>เปิดในเบราว์เซอร์อื่น / Chrome</b> ก่อน จะดาวน์โหลดไฟล์ได้',
       'ส่งไฟล์ให้หัวหน้าหรือเจ้าหน้าที่พัสดุ: เปิดไฟล์ → แชร์ → LINE',
@@ -3001,83 +3252,77 @@ const SAVE_GUIDE = {
   },
   pc: {
     label: 'คอมพิวเตอร์', short: 'คอม',
-    save: [
-      'หลังกด <b>ยืนยันการเบิก</b> รอจนปุ่ม <span class="kbd primary">ดาวน์โหลด PDF</span> เป็นสีฟ้า',
-      'คลิก <span class="kbd primary">ดาวน์โหลด PDF</span> จะมีหน้าต่างให้เลือกที่เก็บไฟล์ (Chrome/Edge) เลือกโฟลเดอร์แล้วกด <span class="kbd">บันทึก</span> · เบราว์เซอร์อื่นจะบันทึกลงโฟลเดอร์ ดาวน์โหลด อัตโนมัติ',
-    ],
-    print: [
-      'ดับเบิลคลิกเปิดไฟล์ใบเบิก แล้วกด <span class="kbd">Ctrl</span> + <span class="kbd">P</span> (Mac: <span class="kbd">⌘</span> + <span class="kbd">P</span>)',
-      'เลือกเครื่องพิมพ์ ขนาดกระดาษ A4 จำนวน 2 ชุด แล้วกด <span class="kbd primary">พิมพ์</span>',
-    ],
     tips: [],
   },
 };
 
+// ขั้นตอนการเบิก (ภาพหน้าจอมือถือจริง กรอบสีส้ม = ปุ่ม/ช่องที่ต้องกด) · ภาพอยู่ใน docs/tour/
+const HELP_STEPS = [
+  { img: '2-start', t: 'กด "เบิกพัสดุ"', d: ['ที่หน้าแรกกดการ์ด <b>เบิกพัสดุ</b>', 'หรือกดเมนู <b>เบิกพัสดุ</b> ด้านบน'] },
+  { img: '3-form', t: 'กรอกชื่อ และเลือกแผนก', d: ['ใส่ <b>ชื่อ-นามสกุล</b> ของผู้เบิก', 'เลือก <b>แผนก</b> จากรายการ', 'ครั้งต่อไประบบจำชื่อและแผนกไว้ให้'] },
+  { img: '4-pick', t: 'ค้นหาพัสดุ แล้วกด "+ เลือก"', d: ['พิมพ์ค้นหา เช่น <b>airway</b>, <b>ถุงมือ</b> หรือรหัส <b>NSO-010</b>', 'กด <b>+ เลือก</b> แล้วปรับจำนวนด้วยปุ่ม <b>−</b> <b>+</b>', 'ปุ่มถังขยะ = เอารายการออก'] },
+  { img: '4b-multi', t: 'เลือกได้หลายรายการในใบเดียว', d: ['กด <b>+ เลือก</b> ทุกรายการที่ต้องการก่อนยืนยัน', 'กดแถบ <b>ที่เลือก</b> เพื่อตรวจรายการทั้งหมด', 'ยืนยันครั้งเดียว ได้ <b>ใบเบิก 1 ใบ</b> ครบทุกรายการ'] },
+  { img: '4c-out', t: 'ของหมด / เหลือ 0 ต้องติดต่อก่อน', d: ['ถ้ากดเลือกพัสดุที่ <b>หมด</b> จะมีป๊อปอัปเตือน', '<b>โทร</b> หรือ <b>ทักทาง LINE</b> สอบถามเจ้าหน้าที่พัสดุก่อน', 'สอบถามแล้วจึงกด <b>สอบถามแล้ว เลือกเบิก</b>'], contact: true, warn: true },
+  { img: '5-confirm', t: 'ตรวจยอดรวม แล้วกด "ยืนยันการเบิก"', d: ['แถบด้านล่างบอก <b>จำนวนรายการ</b> และ <b>ราคารวม</b>', 'กดปุ่มสีฟ้า <b>ยืนยันการเบิก</b>'] },
+  { img: '5b-check', t: 'ตรวจใบสรุป แล้วกด "ยืนยันเบิก"', d: ['ป๊อปอัปสรุปรายการ จำนวน และราคารวม', 'ถูกต้องกด <b>ยืนยันเบิก</b> · ต้องแก้กด <b>กลับไปแก้ไข</b>'] },
+  { img: '6-pdf', t: 'ได้เลขที่ใบเบิก แล้วบันทึก PDF', d: ['ได้ <b>เลขที่เอกสาร</b> เช่น WD69-001', 'กดปุ่ม <b>บันทึก PDF</b> / <b>ดาวน์โหลด PDF</b> เก็บไว้พิมพ์และลงลายมือชื่อ', 'ดูวิธีบันทึกแต่ละเครื่องในหัวข้อถัดไป'], link: true },
+];
+
 function renderHelp(page) {
   const want = hashParams().get('s');
   let dev = DEVICE;
-  const step = (n, t, d, img, note) => `
-    <li class="help-step">
-      <img src="tour/${img}.jpg" alt="${esc(t)}" width="393" height="460" loading="lazy">
-      <div><span class="help-n">${n}</span><h3>${t}</h3><p>${d}</p>${note ? `<p class="tour-note">${note}</p>` : ''}</div>
-    </li>`;
+  const shot = (img, alt, eager) => `<figure class="guide-shot"><img src="tour/${img}.jpg" alt="${esc(alt)}" width="393" height="460" ${eager ? '' : 'loading="lazy" '}decoding="async"></figure>`;
   page.insertAdjacentHTML('beforeend', `
     <div class="page-head"><h1>วิธีใช้งาน</h1>
-      <p class="lead">เบิกพัสดุผ่านเว็บใน 4 ขั้นตอน และวิธีบันทึก/พิมพ์ใบเบิกบน iPhone และ Android</p></div>
-    <nav class="help-toc" aria-label="หัวข้อ">
-      <button type="button" data-go="h-steps">ขั้นตอนการเบิก</button>
-      <button type="button" data-go="h-multi">เบิกหลายรายการ</button>
-      <button type="button" data-go="h-save">บันทึกและพิมพ์ PDF</button>
-      <button type="button" data-tour>ดูแบบสไลด์</button>
+      <p class="lead">ดูภาพทีละขั้น — <span class="guide-mark">กรอบสีส้ม</span> คือปุ่มหรือช่องที่ต้องกด</p></div>
+    <nav class="guide-toc" aria-label="หัวข้อ">
+      <button type="button" data-go="h-steps"><span class="guide-toc-ic">${ICON.withdraw}</span><b>ขั้นตอนการเบิก</b><small>${HELP_STEPS.length} ขั้น พร้อมภาพ</small></button>
+      <button type="button" data-go="h-out" class="warn"><span class="guide-toc-ic">${ICON.phone}</span><b>ของหมด / เหลือ 0</b><small>ต้องติดต่อก่อนเบิก</small></button>
+      <button type="button" data-go="h-save"><span class="guide-toc-ic">${ICON.doc}</span><b>บันทึก & พิมพ์ PDF</b><small>iPhone · Android · คอม</small></button>
+      <button type="button" data-tour><span class="guide-toc-ic">${ICON.book}</span><b>ดูแบบสไลด์</b><small>เลื่อนดูทีละภาพ</small></button>
     </nav>
     <section class="card help-sec" id="h-steps">
       <h2>ขั้นตอนการเบิกพัสดุ</h2>
-      <ol class="help-steps">
-        ${step(1, 'กด "เบิกพัสดุ"', 'ที่หน้าแรกกดการ์ด <b>เบิกพัสดุ</b> หรือเมนู <b>เบิกพัสดุ</b> ด้านบน', '2-start')}
-        ${step(2, 'กรอกชื่อและเลือกแผนก', 'ใส่ <b>ชื่อ-นามสกุล</b> และเลือก <b>แผนก</b> ของคุณ (หมายเหตุไม่บังคับ) ครั้งต่อไประบบจำชื่อและแผนกไว้ให้', '3-form')}
-        ${step(3, 'เลือกพัสดุและจำนวน', 'พิมพ์ค้นหา (เช่น airway, ถุงมือ หรือรหัส NSO-010) หรือแตะตัวอักษร A–Z เพื่อข้ามไปหมวดนั้น กด <b>+ เลือก</b> แล้วปรับจำนวนด้วยปุ่ม <b>−</b> <b>+</b> (ปุ่มถังขยะ = เอาออก)', '4-pick', '(พัสดุที่ขึ้นว่า "หมด" ก็กดเลือกเบิกได้ ระบบจะบันทึกยอดในคลังเป็นติดลบไว้ก่อน)')}
-        ${step(4, 'กด "ยืนยันการเบิก"', 'ตรวจจำนวนรายการและจำนวนชิ้นที่แถบด้านล่าง แล้วกดปุ่มสีฟ้า <b>ยืนยันการเบิก</b>', '5-confirm')}
-        ${step(5, 'รับใบเบิก PDF', 'จะได้ <b>เลขที่เอกสาร</b> (เช่น WD69-001) และปุ่มบันทึกใบเบิก ดูวิธีบันทึกและพิมพ์ด้านล่าง', '6-pdf')}
+      <ol class="guide-steps">
+        ${HELP_STEPS.map((x, i) => `<li class="guide-step${x.warn ? ' warn' : ''}"${x.contact ? ' id="h-out"' : ''}>
+          ${shot(x.img, x.t, i < 2)}
+          <div class="guide-txt">
+            <span class="guide-n">${x.warn ? '!' : i + 1 - HELP_STEPS.slice(0, i).filter((y) => y.warn).length}</span>
+            <h3>${x.t}</h3>
+            <ul>${x.d.map((l) => `<li>${l}</li>`).join('')}</ul>
+            ${x.contact ? contactButtons() : ''}
+            ${x.link ? `<button type="button" class="link guide-link" data-go="h-save">ดูวิธีบันทึกและพิมพ์ ›</button>` : ''}
+          </div>
+        </li>`).join('')}
       </ol>
-    </section>
-    <section class="card help-sec" id="h-multi">
-      <h2>เบิกหลายรายการในใบเบิกเดียว</h2>
-      <div class="help-split">
-        <img src="tour/4b-multi.jpg" alt="เลือกพัสดุ 3 รายการในใบเบิกเดียว" width="393" height="460" loading="lazy">
-        <ul class="help-list">
-          <li><b>เลือกได้หลายรายการ ไม่จำกัด</b> กด <b>+ เลือก</b> ที่พัสดุทุกชิ้นที่ต้องการ ก่อนกดยืนยัน</li>
-          <li>ปรับจำนวนของ<b>แต่ละรายการ</b>แยกกันได้ด้วยปุ่ม − +</li>
-          <li>แถบด้านล่างบอกจำนวนรวม เช่น <b>3 รายการ · 5 ชิ้น</b></li>
-          <li>กดแถบ <b>ที่เลือก</b> เพื่อดูเฉพาะรายการที่เลือกไว้ ตรวจให้ครบก่อนยืนยัน</li>
-          <li>กด <b>ยืนยันการเบิก</b> ครั้งเดียว จะได้ <b>ใบเบิก 1 ใบ</b> ที่มีครบทุกรายการ ไม่ต้องส่งทีละชิ้น</li>
-        </ul>
-      </div>
     </section>
     <section class="card help-sec" id="h-save">
       <h2>บันทึกและพิมพ์ใบเบิก (PDF)</h2>
-      <button type="button" class="save-alert" data-save-demo>
-        <span class="save-alert-ic" aria-hidden="true">${ICON.bell}</span>
-        <span class="save-alert-txt"><b>ดูภาพสาธิตวิธีบันทึกไฟล์</b><span>สไลด์ภาพทีละขั้น สำหรับ iPhone และ Android</span></span>
-        <span class="save-alert-go">ดูภาพ ›</span>
-      </button>
-      <p class="muted">หรืออ่านขั้นตอนแบบข้อความ เลือกอุปกรณ์ที่ใช้อยู่ (ระบบเลือกให้ตามเครื่องนี้แล้ว)</p>
+      <p class="muted">เลือกเครื่องที่ใช้อยู่ (ระบบเลือกให้ตามเครื่องนี้แล้ว) แล้วทำตามภาพจากซ้ายไปขวา</p>
       <div class="segmented big" id="help-dev" role="tablist">
         ${Object.entries(SAVE_GUIDE).map(([k, g]) => `<button type="button" role="tab" data-dev="${k}"><span class="l-long">${g.label}</span><span class="l-short" aria-hidden="true">${g.short}</span></button>`).join('')}
       </div>
       <div id="help-dev-body"></div>
+      <button type="button" class="btn guide-slide" data-save-demo>${ICON.book} ดูแบบสไลด์เต็มจอ</button>
+    </section>
+    <section class="card help-sec guide-faq">
+      <h2>คำถามที่พบบ่อย</h2>
+      <details><summary>ลืมบันทึกไฟล์ หรือไฟล์หาย</summary><p>แจ้งเจ้าหน้าที่พัสดุพร้อม <b>เลขที่ใบเบิก</b> เจ้าหน้าที่ดาวน์โหลดใบเบิกให้ใหม่ได้จากหน้าประวัติเบิก</p></details>
+      <details><summary>ของที่ต้องการขึ้นว่า "หมด"</summary><p>ต้องติดต่อสอบถามเจ้าหน้าที่พัสดุก่อนเบิกทุกครั้ง</p>${contactButtons()}</details>
+      <details><summary>ดูยอดพัสดุคงเหลือได้ที่ไหน</summary><p>เมนู <b>พัสดุคงเหลือ</b> แสดงยอดในคลังล่าสุด อัปเดตให้อัตโนมัติ</p></details>
+      <details><summary>เปิดเว็บจากลิงก์ใน LINE แล้วบันทึกไฟล์ไม่ได้</summary><p>แตะ <span class="kbd">⋯</span> มุมบน → <b>เปิดใน Safari</b> (iPhone) หรือ <b>เปิดใน Chrome</b> (Android) แล้วเบิกใหม่</p></details>
     </section>
     <div class="help-end">
       <a class="btn primary lg" href="#/request">เริ่มเบิกพัสดุ</a>
-      <p class="muted small">ลืมบันทึกไฟล์หรือไฟล์หาย แจ้งเจ้าหน้าที่พัสดุพร้อมเลขที่ใบเบิก เจ้าหน้าที่พัสดุดาวน์โหลดใบเบิกให้ใหม่ได้จากหน้าประวัติเบิก</p>
     </div>`);
   const drawDev = () => {
     const g = SAVE_GUIDE[dev];
     $$('#help-dev button').forEach((b) => { b.classList.toggle('active', b.dataset.dev === dev); b.setAttribute('aria-selected', String(b.dataset.dev === dev)); });
     $('#help-dev-body').innerHTML = `
-      <div class="help-cols">
-        <div class="help-box"><h3><span class="help-badge">1</span>บันทึกไฟล์ลงเครื่อง</h3><ol class="help-ol">${g.save.map((x) => `<li>${x}</li>`).join('')}</ol></div>
-        <div class="help-box"><h3><span class="help-badge">2</span>พิมพ์ใบเบิก</h3><ol class="help-ol">${g.print.map((x) => `<li>${x}</li>`).join('')}</ol></div>
-      </div>
+      <ol class="guide-gallery">${SAVE_DEMO[dev].map((x, i) => `<li>
+        ${shot(x.img, x.t)}
+        <div class="guide-cap"><span class="guide-tag ${x.s === 'พิมพ์' ? 'print' : ''}">${x.s}</span><b><span class="guide-n sm">${i + 1}</span>${esc(x.t)}</b><p>${esc(x.d)}</p></div>
+      </li>`).join('')}</ol>
       ${g.tips.length ? `<div class="help-tips"><b>เคล็ดลับ</b><ul>${g.tips.map((x) => `<li>${x}</li>`).join('')}</ul></div>` : ''}`;
   };
   $$('#help-dev button').forEach((b) => b.addEventListener('click', () => { dev = b.dataset.dev; drawDev(); }));
@@ -3086,8 +3331,8 @@ function renderHelp(page) {
     const el = document.getElementById(id);
     if (el) window.scrollTo({ top: el.getBoundingClientRect().top + scrollY - $('#nav-bar').offsetHeight - 12, behavior: motionOK() ? 'smooth' : 'auto' });
   };
-  $$('.help-toc [data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
-  $('.help-toc [data-tour]').addEventListener('click', showTour);
+  page.addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) go(b.dataset.go); });
+  $('.guide-toc [data-tour]').addEventListener('click', showTour);
   $('[data-save-demo]').addEventListener('click', () => showSaveGuide());
   if (want === 'save') requestAnimationFrame(() => go('h-save'));
   scrollHint();
@@ -3120,9 +3365,11 @@ const TOUR = [
   { img: '1-home', t: 'ยินดีต้อนรับสู่ระบบเบิกพัสดุ', d: 'เบิกพัสดุได้ง่าย ๆ ใน 4 ขั้นตอน ไม่ต้องเขียนใบเบิกเอง ระบบออกใบเบิกเป็นไฟล์ PDF ให้อัตโนมัติ' },
   { img: '2-start', t: 'ขั้นที่ 1 · กด "เบิกพัสดุ"', d: 'ที่หน้าแรกกดการ์ด เบิกพัสดุ (หรือเมนู เบิกพัสดุ ด้านบน)' },
   { img: '3-form', t: 'ขั้นที่ 2 · กรอกชื่อและเลือกแผนก', d: 'ใส่ชื่อ-นามสกุล แล้วเลือกแผนกของคุณ ครั้งต่อไประบบจำไว้ให้' },
-  { img: '4-pick', t: 'ขั้นที่ 3 · เลือกพัสดุและจำนวน', d: 'พิมพ์ค้นหาหรือเลื่อนหา กด "+ เลือก" แล้วปรับจำนวนด้วยปุ่ม − +', note: '(พัสดุที่ขึ้นว่า "หมด" ก็กดเลือกเบิกได้ ระบบจะบันทึกยอดในคลังเป็นติดลบไว้ก่อน)' },
+  { img: '4-pick', t: 'ขั้นที่ 3 · เลือกพัสดุและจำนวน', d: 'พิมพ์ค้นหาหรือเลื่อนหา กด "+ เลือก" แล้วปรับจำนวนด้วยปุ่ม − +' },
+  { img: '4c-out', t: 'ของหมด / เหลือ 0 ต้องติดต่อก่อน', d: 'กดเลือกของที่หมดจะมีป๊อปอัปให้โทรหรือทัก LINE สอบถามเจ้าหน้าที่พัสดุก่อนเบิก', note: `โทร ${CONFIG.CONTACT_PHONE || ''}` },
   { img: '4b-multi', t: 'เลือกได้หลายรายการในใบเบิกเดียว', d: 'กด "+ เลือก" ได้หลายรายการ และปรับจำนวนแต่ละรายการได้ แล้วกดยืนยันครั้งเดียว จะได้ใบเบิก 1 ใบที่มีครบทุกรายการ', note: 'กดแถบ "ที่เลือก" เพื่อตรวจรายการทั้งหมดก่อนยืนยัน' },
-  { img: '5-confirm', t: 'ขั้นที่ 4 · กด "ยืนยันการเบิก"', d: 'ตรวจจำนวนรายการด้านล่าง แล้วกดปุ่มสีฟ้า ยืนยันการเบิก' },
+  { img: '5-confirm', t: 'ขั้นที่ 4 · กด "ยืนยันการเบิก"', d: 'ตรวจจำนวนรายการและราคารวมด้านล่าง แล้วกดปุ่มสีฟ้า ยืนยันการเบิก' },
+  { img: '5b-check', t: 'ตรวจใบสรุป แล้วกด "ยืนยันเบิก"', d: 'ป๊อปอัปสรุปรายการ จำนวน และราคารวม ถูกต้องแล้วกด ยืนยันเบิก' },
   { img: '6-pdf', t: 'เสร็จแล้ว! บันทึกใบเบิก PDF', d: 'จะได้เลขที่เอกสาร กดปุ่ม บันทึก PDF (iPhone) หรือ ดาวน์โหลด PDF (Android/คอม) เพื่อเก็บไว้พิมพ์และลงลายมือชื่อ', link: ['#save-demo', 'ดูภาพสาธิตวิธีบันทึกไฟล์ iPhone / Android'] },
   { img: '7-stock', t: 'ดูยอดพัสดุคงเหลือ', d: 'เมนู พัสดุคงเหลือ แสดงยอดในคลังล่าสุด อัปเดตให้อัตโนมัติ เปิดวิธีใช้งานนี้อีกครั้งได้ที่ปุ่ม ? มุมขวาบน', link: ['#/help', 'อ่านวิธีใช้งานฉบับเต็ม (เมนู วิธีใช้งาน)'] },
 ];

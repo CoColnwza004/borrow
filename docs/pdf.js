@@ -215,15 +215,32 @@ const PdfDoc = (() => {
   }
 
   // แปลง HTML เป็น PDF (A4) ทีละหน้า · เลขหน้ามุมขวาล่างเมื่อมีหลายหน้า
+  // ตัวเลขที่ยาวเกินช่อง (เช่น มูลค่าหลักแสน) ย่อตัวอักษรเฉพาะช่องนั้นให้พอดี ช่องอื่นคงขนาดเดิม · อ่านขนาดทุกช่องก่อนแล้วค่อยแก้ (คำนวณ layout รอบเดียว)
+  function fitCells(root, selector, min = 11) {
+    const cells = [...root.querySelectorAll(selector)];
+    const over = cells.map((td) => {
+      const pad = parseFloat(getComputedStyle(td).paddingLeft) + parseFloat(getComputedStyle(td).paddingRight);
+      return td.scrollWidth > td.clientWidth + 0.5 ? (td.clientWidth - pad) / (td.scrollWidth - pad) : 0;
+    });
+    cells.forEach((td, i) => {
+      if (!over[i]) return;
+      const size = parseFloat(getComputedStyle(td).fontSize);
+      td.style.fontSize = Math.max(min, Math.floor(size * over[i] * 2) / 2 - 0.5) + 'px';
+    });
+  }
+
   async function render(html, { pageNumbers = false, landscape = false } = {}) {
     await loadLib();
-    await Promise.all(['400 16px Sarabun', '600 16px Sarabun', '700 16px Sarabun'].map((f) => document.fonts.load(f).catch(() => null)));
+    const fonts = ['400 16px Sarabun', '600 16px Sarabun', '700 16px Sarabun'];
+    if (html.includes('pdf-ledger')) fonts.push('400 16px "TH SarabunPSK"', '700 16px "TH SarabunPSK"');
+    await Promise.all(fonts.map((f) => document.fonts.load(f, 'กขค 0123').catch(() => null)));
     const stage = document.createElement('div');
     stage.className = 'pdf-stage';
     stage.innerHTML = html;
     markThaiWords(stage);
     document.body.appendChild(stage);
     try {
+      fitCells(stage, '.lg-table td.r');
       const pages = paginate(stage, stage.firstElementChild);
       const opt = {
         margin: 0,
@@ -386,6 +403,8 @@ const PdfDoc = (() => {
   // L = BorrowCore.ledgerSummary() · f = { year (พ.ศ.), fiscal, org, payCode, type, chair: {name, pos}, members: [{name, pos} × 6], generatedAt }
   const thMonth = (ymd) => new Date(ymd + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
   const thShort = (ymd) => new Date(ymd + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+  // ความกว้างคอลัมน์ (%) ตามแบบฟอร์มรายงานบัญชีวัสดุ (คอลัมน์ A–O ในไฟล์ Excel)
+  const LEDGER_COLS = [6.2, 9, 25, 13.7, 8.5, 13.7, 9.7, 8.5, 13.7, 9, 8.5, 13.2, 9.2, 8.5, 16.7].map((w, _, a) => +(w * 100 / a.reduce((x, y) => x + y)).toFixed(2));
   function ledgerTemplate(L, f) {
     const t = L.totals;
     const q = (v) => (v ? num(v) : '-');
@@ -394,12 +413,14 @@ const PdfDoc = (() => {
     const sign = (role, p) => `<div class="lg-sign"><div>ลงชื่อ.......................................................${role}</div>
       <div>( ${p && p.name ? esc(p.name) : '...................................................'} )</div><div>${p && p.pos ? esc(p.pos) : '&nbsp;'}</div></div>`;
     const members = f.members || [];
-    const group = (title, sub, k) => [`จำนวนยอด<br>${sub}`, 'ราคา<br>ต่อหน่วย<br>(บาท)', `ราคารวม<br>${title} (บาท)<br>(${k})`];
+    const group = (title, sub, k) => [`จำนวนยอด<br>${sub}`, 'ราคา<br>ต่อหน่วย<br>(บาท)', `ราคารวม<br>${title}<br>(บาท) (${k})`];
+    // วันที่ในหัวตาราง: วัน-เดือน / ปี คนละบรรทัด (คอลัมน์จำนวนแคบตามแบบฟอร์ม)
+    const day = (d) => esc(thShort(d)).replace(/ (\d{4})$/, '<br>$1');
     const heads = [
-      ...group('คงเหลือยกมา', `คงเหลือยกมา<br>${esc(thShort(L.start))}`, 1),
+      ...group('คงเหลือยกมา', `ยกมา<br>${day(L.start)}`, 1),
       ...group('จัดซื้อ', 'จัดซื้อ', 2),
       ...group('ใช้ไป', 'ใช้ไป', 3),
-      ...group('คงเหลือ', `คงเหลือ<br>${esc(thShort(L.end))}`, 4),
+      ...group('คงเหลือ', `คงเหลือ<br>${day(L.end)}`, 4),
     ];
     return `<div class="pdf-report pdf-ledger">
       <div class="lg-head">
@@ -409,17 +430,17 @@ const PdfDoc = (() => {
         <div class="lg-period">${f.fiscal ? 'ปีงบประมาณ' : 'ปี'} พ.ศ. ${esc(f.year)} · ตั้งแต่วันที่ ${esc(thMonth(L.start))} ถึงวันที่ ${esc(thMonth(L.end))}</div>
       </div>
       <table class="pdf-grid lg-table">
-        <colgroup><col style="width:3.6%"><col style="width:6.4%"><col><col span="12" style="width:5.55%"></colgroup>
+        <colgroup>${LEDGER_COLS.map((w) => `<col style="width:${w}%">`).join('')}</colgroup>
         <thead>
           <tr><th rowspan="2">ลำดับ</th><th rowspan="2">รหัสวัสดุ</th><th rowspan="2">รายการวัสดุ</th>
             <th colspan="3">ยอดยกมา</th><th colspan="3">รับ</th><th colspan="3">จ่าย</th><th colspan="3">ยอดคงเหลือ</th></tr>
           <tr>${heads.map((h) => `<th>${h}</th>`).join('')}</tr>
         </thead>
-        <tbody>${L.items.map((r, i) => `<tr><td class="c">${i + 1}</td><td>${esc(r.code)}</td><td>${esc(r.name)}</td>
+        <tbody>${L.items.map((r, i) => `<tr><td class="c b">${i + 1}</td><td class="b">${esc(r.code)}</td><td class="b">${esc(r.name)}</td>
           <td class="r">${q(r.open_qty)}</td><td class="r">${m(r.price)}</td><td class="r">${m(r.open_value)}</td>
           <td class="r">${q(r.in_qty)}</td><td class="r">${m(r.price)}</td><td class="r">${m(r.in_value)}</td>
           <td class="r">${q(r.out_qty)}</td><td class="r">${m(r.price)}</td><td class="r">${m(r.out_value)}</td>
-          <td class="r">${q(r.close_qty)}</td><td class="r">${m(r.price)}</td><td class="r">${m(r.close_value)}</td></tr>`).join('')}</tbody>
+          <td class="r lg-close">${q(r.close_qty)}</td><td class="r">${m(r.price)}</td><td class="r b">${m(r.close_value)}</td></tr>`).join('')}</tbody>
         <tfoot><tr class="pdf-total"><th colspan="3">ยอดรวมสุทธิ</th>
           <td colspan="3" class="r"><b>${money(t.open_value)} บาท</b></td><td colspan="3" class="r"><b>${money(t.in_value)} บาท</b></td>
           <td colspan="3" class="r"><b>${money(t.out_value)} บาท</b></td><td colspan="3" class="r"><b>${money(t.close_value)} บาท</b></td></tr></tfoot>
