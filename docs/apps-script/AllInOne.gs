@@ -441,6 +441,8 @@ var BorrowCore = (function () {
     return n;
   }
   function isDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(s || ''); }
+  // วันที่มีจริง (ไม่ใช่ 30 ก.พ. / 31 เม.ย.)
+  function realDate(s) { if (!isDate(s)) return false; var d = new Date(s + 'T00:00:00'); return !isNaN(d) && ymd(d) === s; }
   function nextId(rows) { var m = 0; rows.forEach(function (r) { if (r.id > m) m = r.id; }); return m + 1; }
   // รหัสพัสดุถัดไป: ตามรูปแบบที่ใช้มากที่สุด เช่น NSO-301 → NSO-302 (จำนวนหลักเท่าเดิม) · ยังไม่มีพัสดุ = NSO-001
   function nextItemCode(items) {
@@ -549,12 +551,22 @@ var BorrowCore = (function () {
     if (!o.allowNegative && o.delta < 0 && available < 0) fail('"' + item.name + '" คงเหลือไม่พอ (คงเหลือ ' + item.available_qty + ' ' + item.unit + ')');
     item.available_qty = available;
     db.movements.push({
-      id: nextId(db.movements), created_at: stamp(ctx.now), item_id: item.id, type: o.type, qty: o.delta,
+      id: nextId(db.movements), created_at: o.at ? atDate(o.at, ctx) : stamp(ctx.now), item_id: item.id, type: o.type, qty: o.delta,
       available_after: available, request_no: o.request_no || '', note: str(o.note),
       supplier: str(o.supplier), expiry_date: str(o.expiry_date), delivery_no: str(o.delivery_no),
       price: o.type === 'receive' ? (o.price === undefined || str(o.price) === '' ? item.price || 0 : money(o.price, 'ราคาต่อหน่วย')) : 0,
     });
   }
+
+  // วันที่รับเข้าที่เลือกเอง (YYYY-MM-DD) + เวลาปัจจุบัน · ห้ามเป็นวันในอนาคต
+  function receiveDate(v, ctx) {
+    var d = str(v);
+    if (!d) return '';
+    if (!realDate(d)) fail('วันที่รับเข้าไม่ถูกต้อง (วว/ดด/ปปปป)');
+    if (d > ymd(ctx.now)) fail('วันที่รับเข้าต้องไม่เกินวันนี้');
+    return d;
+  }
+  function atDate(d, ctx) { return d + stamp(ctx.now).slice(10); }
 
   function lines(db, requestId) {
     var m = indexOf(db.request_items, 'request_id');
@@ -572,12 +584,12 @@ var BorrowCore = (function () {
   }
 
   var MASTERS = { departments: 1, categories: 1, suppliers: 1, units: 1, locations: 1 };
-  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest', 'addBudget', 'setBudgets', 'removeBudget'];
+  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest', 'addBudget', 'setBudgets', 'removeBudget', 'receiveBatch', 'editReceipt'];
 
   // ข้อมูลล็อตที่รับเข้า (ไม่บังคับ): บริษัท วันหมดอายุ เลขใบส่งของ
   function lot(p) {
     var expiry = str(p.expiry_date);
-    if (expiry && !isDate(expiry)) fail('วันหมดอายุไม่ถูกต้อง กรุณาเลือกจากปฏิทิน');
+    if (expiry && !realDate(expiry)) fail('วันหมดอายุไม่ถูกต้อง (วว/ดด/ปปปป)');
     return { supplier: str(p.supplier), expiry_date: expiry, delivery_no: str(p.delivery_no) };
   }
   function withLot(o, p) { var l = lot(p); o.supplier = l.supplier; o.expiry_date = l.expiry_date; o.delivery_no = l.delivery_no; return o; }
@@ -667,7 +679,7 @@ var BorrowCore = (function () {
       var q;
       if (p.type === 'receive') {
         q = int(p.qty, 'จำนวน', 1);
-        moveStock(db, ctx, withLot({ item_id: item.id, type: 'receive', delta: q, note: p.note, price: p.price }, p));
+        moveStock(db, ctx, withLot({ item_id: item.id, type: 'receive', delta: q, note: p.note, price: p.price, at: receiveDate(p.date, ctx) }, p));
       } else if (p.type === 'lost') {
         q = int(p.qty, 'จำนวน', 1);
         // ตัดชำรุดได้เกินยอดในระบบ (ยอดติดลบ = ต้องตรวจนับ/รับเข้าเพิ่ม)
@@ -679,6 +691,44 @@ var BorrowCore = (function () {
         fail('ประเภทการปรับสต็อกไม่ถูกต้อง');
       }
       return item.id;
+    },
+
+    // รับเข้าหลายรายการตามใบส่งของ 1 ใบ: บริษัท เลขใบส่งของ วันที่รับ ใช้ร่วมกัน · items = [{ item_id, qty, price, expiry_date }]
+    // set_price = ตั้งราคาต่อหน่วยของพัสดุเป็นราคาล็อตนี้ด้วย
+    receiveBatch: function (db, p, ctx) {
+      if (!p.items || !p.items.length) fail('กรุณาเพิ่มพัสดุอย่างน้อย 1 รายการ');
+      var at = receiveDate(p.date, ctx);
+      var head = { supplier: p.supplier, delivery_no: p.delivery_no };
+      lot(head);
+      var rows = p.items.map(function (x) {
+        var item = byId(db.items, x.item_id) || fail('ไม่พบรายการพัสดุ');
+        var price = str(x.price) === '' ? '' : money(x.price, 'ราคาต่อหน่วยของ "' + item.name + '"');
+        lot({ expiry_date: x.expiry_date });
+        return { item: item, qty: int(x.qty, 'จำนวนของ "' + item.name + '"', 1), price: price, expiry_date: str(x.expiry_date) };
+      });
+      rows.forEach(function (r) {
+        moveStock(db, ctx, withLot({ item_id: r.item.id, type: 'receive', delta: r.qty, note: p.note, price: r.price, at: at },
+          { supplier: head.supplier, delivery_no: head.delivery_no, expiry_date: r.expiry_date }));
+        if (p.set_price && r.price !== '' && r.price > 0) r.item.price = r.price;
+      });
+      return rows.length;
+    },
+
+    // แก้ข้อมูลล็อตที่รับเข้าแล้ว: ราคาต่อหน่วยของล็อต วันที่รับ วันหมดอายุ บริษัท เลขใบส่งของ (จำนวนแก้ด้วย "แก้ยอด / ตรวจนับ")
+    editReceipt: function (db, p, ctx) {
+      var m = byId(db.movements, p.id) || fail('ไม่พบรายการรับเข้านี้');
+      if (m.type !== 'receive') fail('แก้ได้เฉพาะรายการรับเข้า');
+      var l = lot(p);
+      if (str(p.price) !== '') m.price = money(p.price, 'ราคาต่อหน่วย');
+      var d = receiveDate(p.date, ctx);
+      if (d) m.created_at = d + (m.created_at.slice(10) || ' 00:00:00');
+      m.supplier = l.supplier;
+      m.expiry_date = l.expiry_date;
+      m.delivery_no = l.delivery_no;
+      if (p.note !== undefined) m.note = str(p.note);
+      var item = byId(db.items, m.item_id);
+      if (p.set_price && item && m.price > 0) item.price = m.price;
+      return m.id;
     },
 
     // ลบใบเบิก (เจ้าหน้าที่): restock = คืนจำนวนพัสดุในใบนั้นเข้าสต็อก (บันทึกในประวัติสต็อกว่า "คืนจากใบเบิกที่ลบ")
@@ -1199,7 +1249,7 @@ var BorrowCore = (function () {
       var key = str(m.delivery_no) || m.created_at.slice(0, 10);
       var d = s.docs[key] || (s.docs[key] = { delivery_no: str(m.delivery_no), date: m.created_at, lines: [], qty: 0, value: 0 });
       if (m.created_at < d.date) d.date = m.created_at;
-      d.lines.push({ code: item.code, name: item.name, unit: item.unit, qty: m.qty, price: price, value: v, expiry_date: m.expiry_date });
+      d.lines.push({ id: m.id, item_id: item.id, code: item.code, name: item.name, unit: item.unit, qty: m.qty, price: price, value: v, expiry_date: m.expiry_date, date: m.created_at });
       d.qty += m.qty; d.value = round(d.value + v);
     });
     return Object.keys(out).map(function (k) {

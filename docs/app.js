@@ -184,6 +184,8 @@ const store = {
       if (hud) done ? hud.success(...(typeof done === 'function' ? done(result) : text.slice(2))) : hud.close();
       return result;
     } catch (e) {
+      // Apps Script เวอร์ชันเก่ายังไม่มีคำสั่งใหม่
+      if (/^ไม่รู้จักคำสั่ง/.test(e.message)) e.message = 'Apps Script ยังเป็นเวอร์ชันเก่า: วาง AllInOne.gs ล่าสุด แล้ว Deploy → Manage deployments → New version ก่อน';
       if (hud) { hud.fail(e.message); e.shown = true; }
       throw e;
     }
@@ -292,6 +294,50 @@ const safe = (fn) => async (...args) => {
   try { await fn(...args); } catch (e) { if (!e.shown) toast(e.message, true); }
 };
 // ช่องกรอกที่ผิด: ขอบแดง + สั่นเบา ๆ จนกว่าจะแก้
+// ===================== ช่องวันที่แบบพิมพ์เอง วว/ดด/ปปปป (ไม่มีปฏิทิน) =====================
+// พิมพ์แค่ตัวเลข ระบบใส่ / ให้เอง · ปี พ.ศ. (เช่น 2570) หรือ ค.ศ. (2027) ก็ได้ · แสดงเป็น พ.ศ.
+const thDate = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${Number(iso.slice(0, 4)) + 543}` : '');
+function dateInput(name, iso = '', { id = '', cls = '', attrs = '', text } = {}) {
+  return `<input ${name ? `name="${name}"` : ''} ${id ? `id="${id}"` : ''} class="date-text ${cls}" data-date ${attrs} inputmode="numeric" maxlength="10" autocomplete="off" placeholder="วว/ดด/ปปปป" value="${esc(text ?? thDate(iso))}">`;
+}
+// '31/12/2570' → '2027-12-31' · ว่าง → '' · ไม่ถูกต้อง → null
+function parseThDate(v) {
+  const s = String(v || '').trim();
+  if (!s) return '';
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s) || /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  let [d, mo, y] = s.includes('-') ? [+m[3], +m[2], +m[1]] : [+m[1], +m[2], +m[3]];
+  if (y > 2400) y -= 543;
+  const dt = new Date(y, mo - 1, d);
+  if (y < 1900 || dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+  return BorrowCore.ymd(dt);
+}
+function dateValue(inp, label) {
+  const v = parseThDate(inp.value);
+  if (v === null) { flag(inp); throw new Error(`${label}ไม่ถูกต้อง — พิมพ์เป็น วว/ดด/ปปปป เช่น 31/12/${new Date().getFullYear() + 543}`); }
+  return v;
+}
+// ใส่ / ให้อัตโนมัติขณะพิมพ์ · พิมพ์ / เองหลังวันหรือเดือนหลักเดียว = เติม 0 ข้างหน้า (1/ → 01/)
+document.addEventListener('input', (e) => {
+  const inp = e.target;
+  if (!inp.matches?.('[data-date]')) return;
+  const del = /^delete/.test(e.inputType || '');
+  const parts = inp.value.split('/');
+  const d = parts.map((p, i) => { p = p.replace(/\D/g, ''); return i < parts.length - 1 && i < 2 && p.length === 1 ? '0' + p : p; }).join('').slice(0, 8);
+  let out = d.slice(0, 2);
+  if (d.length > 2 || (d.length === 2 && !del)) out += '/' + d.slice(2, 4);
+  if (d.length > 4 || (d.length === 4 && !del)) out += '/' + d.slice(4, 8);
+  if (out !== inp.value) inp.value = out;
+  inp.classList.toggle('bad', inp.value.length === 10 && parseThDate(inp.value) === null);
+});
+document.addEventListener('focusout', (e) => {
+  const inp = e.target;
+  if (!inp.matches?.('[data-date]')) return;
+  const v = parseThDate(inp.value);
+  if (v) inp.value = thDate(v); // ปี ค.ศ. → แสดงเป็น พ.ศ.
+  inp.classList.toggle('bad', v === null);
+});
+
 function flag(inp) {
   inp.focus();
   const f = inp.closest('.field');
@@ -1597,7 +1643,7 @@ function showItem(id) {
       <thead><tr><th>วันเวลา</th><th>ประเภท</th><th class="num">จำนวน</th><th class="num">คงเหลือ</th><th>อ้างอิง</th></tr></thead>
       <tbody>${moves.map((m) => `<tr><td>${fmtDateTime(m.created_at)}</td><td>${movePill(m)}</td>
         <td class="num">${m.qty > 0 ? '+' : ''}${fmtNum(m.qty)}</td><td class="num">${fmtNum(m.available_after)}</td>
-        <td>${esc(m.request_no)} ${m.note ? `<div class="muted small">${esc(m.note)}</div>` : ''}${lotInfo(m)}</td></tr>`).join('') ||
+        <td>${esc(m.request_no)} ${m.note ? `<div class="muted small">${esc(m.note)}</div>` : ''}${lotInfo(m)}${receiptEdit(m)}</td></tr>`).join('') ||
         '<tr><td colspan="5" class="empty">ไม่มี</td></tr>'}</tbody>
     </table></div>` : ''}`, { wide: isAdmin() });
   $$('[data-close]', body).forEach((a) => a.addEventListener('click', closeModal));
@@ -1605,6 +1651,7 @@ function showItem(id) {
   if (isAdmin()) {
     $('#i-edit', body).addEventListener('click', () => itemForm(i));
     $$('[data-stock]', body).forEach((b) => b.addEventListener('click', () => stockForm(i, b.dataset.stock)));
+    body.addEventListener('click', (e) => { const b = e.target.closest('[data-receipt]'); if (b) receiptForm(Number(b.dataset.receipt), () => showItem(id)); });
   }
 }
 
@@ -1669,35 +1716,26 @@ function formValues(form) {
   return data;
 }
 
-// ข้อมูลล็อตที่รับเข้า: บริษัท (เลือกจากรายการ หรือเพิ่มใหม่) · วันหมดอายุ (เลือกจากปฏิทินเท่านั้น) · เลขใบส่งของ
-function lotFields() {
+// ข้อมูลล็อตที่รับเข้า: บริษัท (เลือกจากรายการ หรือเพิ่มใหม่) · วันที่รับเข้า · วันหมดอายุ (พิมพ์ วว/ดด/ปปปป) · เลขใบส่งของ
+function lotFields({ date = false } = {}) {
   return `
     ${masterField('suppliers', 'supplier', { label: 'บริษัท / ผู้จำหน่าย', selected: lsGet('last-supplier'), blank: '- ไม่ระบุ -' })}
-    <label class="field">วันหมดอายุ <span class="hint">(แตะเพื่อเลือกวัน)</span>
-      <span class="date-wrap"><input name="expiry_date" type="date" class="date-pick" min="${today()}"><button type="button" class="link date-clear" hidden>ล้าง</button></span></label>
+    ${date ? `<label class="field">วันที่รับเข้า <span class="hint">(วว/ดด/ปปปป)</span>${dateInput('date', today())}</label>` : ''}
+    <label class="field">วันหมดอายุ <span class="hint">(วว/ดด/ปปปป · ไม่มีเว้นว่าง)</span>${dateInput('expiry_date')}</label>
     <label class="field">เลขใบส่งของ<input name="delivery_no" placeholder="เช่น IV-2569/0012" autocomplete="off"></label>`;
 }
-function bindLotFields(form) {
-  // วันหมดอายุ: เปิดปฏิทินเมื่อแตะ พิมพ์เองไม่ได้ (Backspace / Delete = ล้างค่า)
-  const d = form.expiry_date;
-  const clear = $('.date-clear', form);
-  const sync = () => { clear.hidden = !d.value; };
-  const open = () => { try { d.showPicker?.(); } catch { /* เบราว์เซอร์เก่า: ใช้ปฏิทินของช่องวันที่ตามปกติ */ } };
-  d.addEventListener('click', open);
-  d.addEventListener('keydown', (e) => {
-    if (e.key === 'Tab' || e.key === 'Escape') return;
-    e.preventDefault();
-    if (e.key === 'Backspace' || e.key === 'Delete') { d.value = ''; sync(); } else if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') open();
-  });
-  d.addEventListener('paste', (e) => e.preventDefault());
-  d.addEventListener('change', sync);
-  clear.addEventListener('click', () => { d.value = ''; sync(); });
-}
+function bindLotFields() { /* ช่องวันที่จัดรูปแบบเองทั้งหน้า (ดู [data-date]) */ }
 // ค่าล็อตจากฟอร์ม
 function lotData(form) {
   const supplier = formValues(form).supplier || '';
   if (supplier) lsSet('last-supplier', supplier);
-  return { supplier, expiry_date: form.expiry_date.value, delivery_no: form.delivery_no.value.trim() };
+  const out = { supplier, expiry_date: dateValue(form.expiry_date, 'วันหมดอายุ'), delivery_no: form.delivery_no.value.trim() };
+  if (form.date) {
+    out.date = dateValue(form.date, 'วันที่รับเข้า');
+    if (!out.date) { flag(form.date); throw new Error('กรุณาใส่วันที่รับเข้า'); }
+    if (out.date > today()) { flag(form.date); throw new Error('วันที่รับเข้าต้องไม่เกินวันนี้'); }
+  }
+  return out;
 }
 // บริษัท · เลขใบส่งของ · วันหมดอายุ ของรายการรับเข้า (แสดงใต้ประวัติสต็อก)
 function lotInfo(m) {
@@ -1846,7 +1884,7 @@ function stockForm(item, type) {
     <form id="stock-form" class="fields">
       ${field}
       ${type === 'receive' ? `<label class="field full">ราคาต่อหน่วยของล็อตนี้ (บาท) <span class="hint">(ไม่ใส่ = ราคาปัจจุบัน ${item.price > 0 ? fmtMoney(item.price) : '0.00'} บาท / ${esc(item.unit)})</span>
-        <input name="price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="${item.price > 0 ? item.price : '0.00'}"></label>${lotFields()}` : ''}
+        <input name="price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="${item.price > 0 ? item.price : '0.00'}"></label>${lotFields({ date: true })}` : ''}
       <label class="field full">หมายเหตุ${type === 'receive' ? '' : ' / เลขที่เอกสาร'}<input name="note"></label>
       <div class="actions full"><button class="btn primary lg">บันทึก</button></div>
     </form>`);
@@ -1855,7 +1893,7 @@ function stockForm(item, type) {
   if (type === 'receive') bindLotFields(form);
   form.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
-    const data = { item_id: item.id, type, ...formValues(form), ...(type === 'receive' ? lotData(form) : {}) };
+    const data = { ...formValues(form), item_id: item.id, type, ...(type === 'receive' ? lotData(form) : {}) };
     await store.act('stock', data, {
       done: () => [{ receive: 'รับเข้าสต็อกเรียบร้อย', adjust: 'ปรับยอดตามที่นับได้เรียบร้อย', lost: 'ตัดชำรุด/สูญหายเรียบร้อย' }[type],
         `${item.name} · คงเหลือ ${fmtNum(itemById(item.id)?.available_qty)} ${item.unit}`],
@@ -2659,8 +2697,8 @@ function renderMovements(page) {
     <div class="toolbar">
       <select id="m-item" style="width:auto;max-width:100%"><option value="">ทุกพัสดุ</option>${items.map((i) => `<option value="${i.id}">${esc(i.code)} ${esc(i.name)}</option>`).join('')}</select>
       <select id="m-type" style="width:auto"><option value="">ทุกประเภท</option>${Object.entries(MOVE).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
-      <label class="check">ตั้งแต่ <input type="date" id="m-from" style="width:auto"></label>
-      <label class="check">ถึง <input type="date" id="m-to" style="width:auto"></label>
+      <label class="check">ตั้งแต่ ${dateInput('', '', { id: 'm-from', cls: 'date-sm' })}</label>
+      <label class="check">ถึง ${dateInput('', '', { id: 'm-to', cls: 'date-sm' })}</label>
       <span class="spacer"></span>
       <button class="btn" id="m-export">ส่งออก CSV</button>
     </div>
@@ -2669,7 +2707,7 @@ function renderMovements(page) {
       <tbody id="m-body"></tbody>
     </table></div></section>`);
   const filtered = () => {
-    const item = Number($('#m-item').value), type = $('#m-type').value, from = $('#m-from').value, to = $('#m-to').value;
+    const item = Number($('#m-item').value), type = $('#m-type').value, from = parseThDate($('#m-from').value) || '', to = parseThDate($('#m-to').value) || '';
     return state.db.movements.filter((m) => (!item || m.item_id === item) && (!type || m.type === type) &&
       (!from || m.created_at.slice(0, 10) >= from) && (!to || m.created_at.slice(0, 10) <= to)).sort((a, b) => b.id - a.id);
   };
@@ -2682,12 +2720,15 @@ function renderMovements(page) {
       return `<tr><td>${fmtDateTime(m.created_at)}</td><td>${esc(i?.name)}<div class="muted small">${esc(i?.code)}</div></td>
         <td>${movePill(m)}</td><td class="num">${m.qty > 0 ? '+' : ''}${fmtNum(m.qty)}</td>
         <td class="num">${fmtNum(m.available_after)}</td>
-        <td>${esc(m.request_no)} ${m.note ? `<div class="muted small">${esc(m.note)}</div>` : ''}${lotInfo(m)}</td></tr>`;
+        <td>${esc(m.request_no)} ${m.note ? `<div class="muted small">${esc(m.note)}</div>` : ''}${lotInfo(m)}${receiptEdit(m)}</td></tr>`;
     }).join('') || '<tr><td colspan="6" class="empty">ไม่พบรายการ</td></tr>';
     if (all.length > limit) $('#m-body').insertAdjacentHTML('beforeend', `<tr class="more-row"><td colspan="6"><button type="button" class="btn" id="m-more">แสดงเพิ่ม (อีก ${fmtNum(all.length - limit)} รายการ)</button></td></tr>`);
     $('#m-more')?.addEventListener('click', () => { limit += PAGE; draw(); });
   };
   ['#m-item', '#m-type', '#m-from', '#m-to'].forEach((s) => $(s).addEventListener('change', () => { limit = PAGE; draw(); }));
+  // ช่องวันที่: กรองทันทีเมื่อพิมพ์ครบหรือลบจนว่าง
+  ['#m-from', '#m-to'].forEach((s) => $(s).addEventListener('input', (e) => { if (e.target.value.length === 10 || !e.target.value) { limit = PAGE; draw(); } }));
+  $('#m-body').addEventListener('click', (e) => { const b = e.target.closest('[data-receipt]'); if (b) receiptForm(Number(b.dataset.receipt)); });
   $('#m-export').addEventListener('click', () => downloadCsv('stock-movements',
     ['วันเวลา', 'รหัส', 'พัสดุ', 'ประเภท', 'จำนวน', 'คงเหลือหลังทำรายการ', 'เลขที่เอกสาร', 'หมายเหตุ', 'บริษัท', 'วันหมดอายุ', 'เลขใบส่งของ'],
     filtered().map((m) => [m.created_at, itemById(m.item_id)?.code, itemById(m.item_id)?.name, MOVE[m.type] || m.type, m.qty, m.available_after, m.request_no, m.note, m.supplier, m.expiry_date, m.delivery_no])));
@@ -2824,7 +2865,7 @@ function renderSuppliers(page) {
   page.insertAdjacentHTML('beforeend', `
     <div class="page-head-row">
       <div class="page-head"><h1>บริษัทผู้จำหน่าย</h1><p class="lead">ข้อมูลติดต่อ ประวัติการส่งของ และยอดซื้อรวมของแต่ละบริษัท</p></div>
-      <button class="btn primary" id="sup-add">+ เพิ่มบริษัท</button>
+      <div class="head-actions"><button class="btn" id="sup-add">+ เพิ่มบริษัท</button><button class="btn primary" id="sup-recv">${ICON.truck} รับพัสดุเข้า (ตามใบส่งของ)</button></div>
     </div>
     ${oldServerNote()}
     <div class="toolbar">
@@ -2862,6 +2903,7 @@ function renderSuppliers(page) {
   $('#sup-q').addEventListener('input', draw);
   $('#sup-year').addEventListener('change', (e) => { year = e.target.value; draw(); });
   $('#sup-add').addEventListener('click', () => supplierForm(null));
+  $('#sup-recv').addEventListener('click', () => receiveBatchForm(''));
   $('#sup-csv').addEventListener('click', () => downloadCsv('suppliers-' + (Number(year) + 543),
     ['บริษัท', 'ผู้ติดต่อ', 'เบอร์โทร', 'อีเมล', 'หมายเหตุ', 'ส่งของ (ครั้ง)', `ยอดซื้อปี ${Number(year) + 543}`, 'ยอดซื้อรวม', 'ส่งล่าสุด'],
     suppliersView(year).map((s) => [s.name, s.contact, s.phone, s.email, s.note, s.deliveries, s.year_value, s.value, s.last_date.slice(0, 10)])));
@@ -2883,7 +2925,7 @@ function showSupplier(name, year = today().slice(0, 4)) {
       <div class="card stat"><span class="label">ยอดซื้อปี ${Number(year) + 543}</span><span class="value money">${fmtMoney(s.year_value)}</span><span class="sub">บาท</span></div>
       <div class="card stat"><span class="label">ยอดซื้อรวม</span><span class="value money">${fmtMoney(s.value)}</span><span class="sub">บาท</span></div>
     </div>
-    <div class="toolbar"><button class="btn" id="sup-edit">แก้ไขข้อมูลบริษัท</button>${s.listed ? `<span class="spacer"></span><button class="btn danger-soft" id="sup-del">${IC.trash} ลบออกจากรายชื่อ</button>` : ''}</div>
+    <div class="toolbar"><button class="btn primary" id="sup-recv1">${ICON.truck} รับพัสดุเข้าจากบริษัทนี้</button><button class="btn" id="sup-edit">แก้ไขข้อมูลบริษัท</button>${s.listed ? `<span class="spacer"></span><button class="btn danger-soft" id="sup-del">${IC.trash} ลบออกจากรายชื่อ</button>` : ''}</div>
     <h4>พัสดุที่ส่ง</h4>
     <div class="sub-card table-wrap"><table>
       <thead><tr><th>พัสดุ</th><th class="num">จำนวนรวม</th><th class="num">ราคาล่าสุด</th><th class="num">มูลค่ารวม</th></tr></thead>
@@ -2891,15 +2933,19 @@ function showSupplier(name, year = today().slice(0, 4)) {
         <td class="num">${fmtNum(i.qty)} ${esc(i.unit)}</td><td class="num">${i.last_price ? fmtMoney(i.last_price) : '-'}</td><td class="num">${fmtMoney(i.value)}</td></tr>`).join('') ||
         '<tr><td colspan="4" class="empty">ยังไม่มีการรับเข้าจากบริษัทนี้</td></tr>'}</tbody>
     </table></div>
-    <h4>ประวัติการส่งของ <span class="muted small">(แยกตามใบส่งของ ล่าสุดอยู่บน)</span></h4>
-    <div class="sup-docs">${s.docs.map((d) => `
-      <details class="sub-card sup-doc"><summary>
+    <h4>ประวัติการส่งของ <span class="muted small">(แยกตามใบส่งของ ล่าสุดอยู่บน · แตะรายการเพื่อแก้ราคา/วันที่)</span></h4>
+    <div class="sup-docs">${s.docs.map((d, k) => `
+      <details class="sub-card sup-doc"${k ? '' : ' open'}><summary>
         <span><b>${d.delivery_no ? 'ใบส่งของ ' + esc(d.delivery_no) : 'ไม่ระบุเลขใบส่งของ'}</b><span class="muted small"> · ${fmtDate(d.date)} · ${fmtNum(d.lines.length)} รายการ</span></span>
         <b class="num">${fmtMoney(d.value)} บาท</b></summary>
-        <ul class="item-lines">${d.lines.map((l) => `<li><span>${esc(l.name)}${l.expiry_date ? ` <span class="muted small">หมดอายุ ${fmtDate(l.expiry_date)}</span>` : ''}</span><b>×${fmtNum(l.qty)} ${esc(l.unit)} · ${fmtMoney(l.value)}</b></li>`).join('')}</ul>
+        <ul class="item-lines lot-lines">${d.lines.map((l) => `<li><button type="button" class="lot-line" data-receipt="${l.id}" title="แก้ราคา / วันที่ของล็อตนี้">
+          <span>${esc(l.name)}<span class="muted small"> ${fmtMoney(l.price)} บาท/${esc(l.unit)}${l.expiry_date ? ` · หมดอายุ ${fmtDate(l.expiry_date)}` : ''}</span></span>
+          <b>×${fmtNum(l.qty)} ${esc(l.unit)} · ${fmtMoney(l.value)}</b><span class="lot-edit">แก้ไข</span></button></li>`).join('')}</ul>
       </details>`).join('') || '<p class="muted">ยังไม่มีประวัติ</p>'}</div>`, { wide: true });
   bindRowClicks(body);
   $('#sup-edit', body).addEventListener('click', () => supplierForm(s));
+  $('#sup-recv1', body).addEventListener('click', () => receiveBatchForm(s.name));
+  body.addEventListener('click', (e) => { const b = e.target.closest('[data-receipt]'); if (b) receiptForm(Number(b.dataset.receipt), () => showSupplier(name, year)); });
   $('#sup-del', body)?.addEventListener('click', () => confirmBox({
     title: `ลบ "${s.name}" ออกจากรายชื่อ?`,
     html: '<p class="muted small">ประวัติการรับเข้าที่เคยบันทึกชื่อบริษัทนี้ยังอยู่ครบ</p>',
@@ -2909,6 +2955,142 @@ function showSupplier(name, year = today().slice(0, 4)) {
       closeModal();
       refresh();
     },
+  }));
+}
+
+// ปุ่ม "แก้ไข" ของรายการรับเข้า (ราคา วันที่ วันหมดอายุ บริษัท เลขใบส่งของ)
+const receiptEdit = (m) => (m.type === 'receive' && m.note !== BorrowCore.OPENING ? `<button type="button" class="link small" data-receipt="${m.id}">แก้ไขล็อตนี้</button>` : '');
+
+// แก้ล็อตที่รับเข้าแล้ว · back = เปิดหน้าต่างเดิมกลับหลังบันทึก
+function receiptForm(id, back) {
+  const m = state.db.movements.find((x) => x.id === id);
+  if (!m) return;
+  const i = itemById(m.item_id) || { name: '(ลบแล้ว)', code: '', unit: '', price: 0 };
+  const body = openModal('แก้ไขล็อตที่รับเข้า', `
+    <form id="rc-form" class="fields">
+      <div class="full sub-card rc-head"><b>${esc(i.name)}</b><span class="muted small">${esc(i.code)} · รับเข้า ${fmtNum(m.qty)} ${esc(i.unit)} · บันทึกเมื่อ ${fmtDateTime(m.created_at)}</span></div>
+      <label class="field">ราคาต่อหน่วยของล็อตนี้ (บาท)<input name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${m.price > 0 ? m.price : ''}" placeholder="${i.price > 0 ? i.price : '0.00'}"></label>
+      <label class="field">วันที่รับเข้า <span class="hint">(วว/ดด/ปปปป)</span>${dateInput('date', m.created_at.slice(0, 10))}</label>
+      ${masterField('suppliers', 'supplier', { label: 'บริษัท / ผู้จำหน่าย', selected: m.supplier, blank: '- ไม่ระบุ -' })}
+      <label class="field">เลขใบส่งของ<input name="delivery_no" value="${esc(m.delivery_no)}" autocomplete="off"></label>
+      <label class="field">วันหมดอายุ <span class="hint">(วว/ดด/ปปปป · ไม่มีเว้นว่าง)</span>${dateInput('expiry_date', m.expiry_date)}</label>
+      <label class="field">หมายเหตุ<input name="note" value="${esc(m.note)}"></label>
+      <label class="check wrap full"><input type="checkbox" name="set_price"> ตั้งเป็นราคาต่อหน่วยปัจจุบันของพัสดุด้วย <span class="muted small">(ตอนนี้ ${i.price > 0 ? fmtMoney(i.price) : '0.00'} บาท/${esc(i.unit)} ใช้คิดมูลค่าใบเบิกใหม่และรายงาน)</span></label>
+      <p class="muted small full">แก้จำนวน: ใช้ปุ่ม "แก้ยอด / ตรวจนับ" ที่หน้าพัสดุ · มูลค่ารับเข้าในรายงานและหน้าบริษัทคำนวณใหม่ตามราคาและวันที่ที่แก้</p>
+      <div class="actions full"><button type="button" class="btn" data-close>ยกเลิก</button><span class="spacer"></span><button class="btn primary lg">บันทึก</button></div>
+    </form>`);
+  const form = $('#rc-form', body);
+  bindMasterFields(form);
+  $('[data-close]', body).addEventListener('click', () => (back ? back() : closeModal()));
+  form.addEventListener('submit', safe(async (e) => {
+    e.preventDefault();
+    const date = dateValue(form.date, 'วันที่รับเข้า');
+    if (!date) { flag(form.date); throw new Error('กรุณาใส่วันที่รับเข้า'); }
+    if (date > today()) { flag(form.date); throw new Error('วันที่รับเข้าต้องไม่เกินวันนี้'); }
+    const v = formValues(form);
+    await store.act('editReceipt', { id: m.id, price: form.price.value, date, supplier: v.supplier || '', delivery_no: form.delivery_no.value.trim(),
+      expiry_date: dateValue(form.expiry_date, 'วันหมดอายุ'), note: form.note.value, set_price: form.set_price.checked },
+      { done: () => ['แก้ไขล็อตเรียบร้อย', `${i.name} · ${thDate(date)}`] });
+    refresh();
+    if (back) back(); else closeModal();
+  }));
+}
+
+// รับพัสดุเข้าหลายรายการตามใบส่งของ 1 ใบ: บริษัท เลขใบส่งของ วันที่รับ · แต่ละรายการมี จำนวน ราคาต่อหน่วยของล็อต วันหมดอายุ
+function receiveBatchForm(supplier) {
+  const lines = new Map(); // item_id → { qty, price, expiry }
+  const body = openModal(supplier ? `รับพัสดุเข้า · ${supplier}` : 'รับพัสดุเข้าตามใบส่งของ', `
+    <form id="rb-form" class="fields">
+      ${oldServerNote()}
+      ${masterField('suppliers', 'supplier', { label: 'บริษัท / ผู้จำหน่าย', selected: supplier || lsGet('last-supplier'), blank: '- ไม่ระบุ -', cls: '' })}
+      <label class="field">เลขใบส่งของ<input name="delivery_no" placeholder="เช่น IV-2569/0012" autocomplete="off"></label>
+      <label class="field">วันที่รับเข้า <span class="req">*</span> <span class="hint">(วว/ดด/ปปปป)</span>${dateInput('date', today())}</label>
+      <label class="field">หมายเหตุ<input name="note" placeholder="ไม่บังคับ"></label>
+      <div class="full">
+        <h4 class="er-h">พัสดุที่รับเข้า</h4>
+        <div class="er-add">
+          <div class="search">${ICON.search}<input type="search" id="rb-q" placeholder="ค้นหาชื่อหรือรหัสพัสดุ แล้วกด Enter เพื่อเพิ่ม" autocomplete="off"></div>
+          <ul class="er-results" id="rb-results" hidden></ul>
+        </div>
+        <ul class="rb-lines" id="rb-lines"></ul>
+      </div>
+      <div class="er-sum full" id="rb-sum"></div>
+      <label class="check wrap full"><input type="checkbox" name="set_price"> ตั้งราคาต่อหน่วยปัจจุบันของพัสดุเป็นราคาล็อตนี้ด้วย <span class="muted small">(ใช้คิดมูลค่าใบเบิกใหม่และรายงาน)</span></label>
+      <div class="actions full"><button type="button" class="btn" data-close>ยกเลิก</button><span class="spacer"></span><button class="btn primary lg">บันทึกรับเข้า</button></div>
+    </form>`, { wide: true });
+  const form = $('#rb-form', body);
+  bindMasterFields(form);
+  $('[data-close]', body).addEventListener('click', () => (supplier ? showSupplier(supplier) : closeModal()));
+  const sum = () => {
+    let qty = 0, value = 0;
+    lines.forEach((l, id) => { const q = Number(l.qty) || 0; qty += q; value += q * (l.price === '' ? itemById(id)?.price || 0 : Number(l.price) || 0); });
+    $('#rb-sum', body).innerHTML = `<span>${fmtNum(lines.size)} รายการ · ${fmtNum(qty)} หน่วย</span><span>มูลค่ารับเข้า <b>${fmtMoney(round2(value))}</b> บาท</span>`;
+  };
+  const draw = () => {
+    $('#rb-lines', body).innerHTML = [...lines].map(([id, l]) => {
+      const i = itemById(id);
+      return `<li data-id="${id}">
+        <div class="rb-name"><b>${esc(i.name)}</b><span class="muted small">${esc(i.code)} · คงเหลือ ${fmtNum(i.available_qty)} ${esc(i.unit)}${i.price > 0 ? ` · ราคาปัจจุบัน ${fmtMoney(i.price)}` : ''}</span></div>
+        <label class="rb-f">จำนวน (${esc(i.unit)})<input data-k="qty" type="number" min="1" inputmode="numeric" value="${l.qty}"></label>
+        <label class="rb-f">ราคา/หน่วย (บาท)<input data-k="price" type="number" min="0" step="0.01" inputmode="decimal" value="${l.price}" placeholder="${i.price > 0 ? i.price : '0.00'}"></label>
+        <label class="rb-f">วันหมดอายุ${dateInput('', '', { cls: 'rb-exp', attrs: 'data-k="expiry"', text: l.expiry })}</label>
+        <button type="button" class="icon-btn rb-rm" data-rm="${id}" aria-label="ลบ ${esc(i.name)}">${IC.trash}</button>
+      </li>`;
+    }).join('') || '<li class="empty">ยังไม่มีรายการ — ค้นหาพัสดุด้านบนเพื่อเพิ่ม</li>';
+    sum();
+  };
+  $('#rb-lines', body).addEventListener('input', (e) => {
+    const inp = e.target.closest('[data-k]');
+    const li = inp?.closest('li[data-id]');
+    if (!li) return;
+    lines.get(Number(li.dataset.id))[inp.dataset.k] = inp.value;
+    sum();
+  });
+  $('#rb-lines', body).addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (b) { lines.delete(Number(b.dataset.rm)); draw(); } });
+  const norm = (v) => String(v).toLowerCase().replace(/[\s\-_.,()/*"]/g, '');
+  const results = $('#rb-results', body);
+  $('#rb-q', body).addEventListener('input', (e) => {
+    const q = norm(e.target.value.trim());
+    if (!q) { results.hidden = true; return; }
+    const found = itemsView().filter((i) => norm(i.name + ' ' + i.code).includes(q)).slice(0, 8);
+    results.hidden = false;
+    results.innerHTML = found.map((i) => `<li><button type="button" data-add="${i.id}">
+      <span><b>${esc(i.name)}</b><span class="muted small">${esc(i.code)} · คงเหลือ ${fmtNum(i.available_qty)} ${esc(i.unit)}${i.price > 0 ? ` · ${fmtMoney(i.price)} บาท` : ''}</span></span>
+      <span class="er-plus">${lines.has(i.id) ? 'มีแล้ว' : '+ เพิ่ม'}</span></button></li>`).join('') || '<li class="empty">ไม่พบพัสดุ</li>';
+  });
+  $('#rb-q', body).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('[data-add]', results)?.click(); } });
+  results.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-add]');
+    if (!b) return;
+    const id = Number(b.dataset.add);
+    if (!lines.has(id)) lines.set(id, { qty: '', price: '', expiry: '' });
+    $('#rb-q', body).value = '';
+    results.hidden = true;
+    draw();
+    $(`#rb-lines li[data-id="${id}"] [data-k="qty"]`, body)?.focus();
+  });
+  draw();
+  form.addEventListener('submit', safe(async (e) => {
+    e.preventDefault();
+    if (!lines.size) { $('#rb-q', body).focus(); throw new Error('กรุณาเพิ่มพัสดุอย่างน้อย 1 รายการ'); }
+    const date = dateValue(form.date, 'วันที่รับเข้า');
+    if (!date) { flag(form.date); throw new Error('กรุณาใส่วันที่รับเข้า'); }
+    if (date > today()) { flag(form.date); throw new Error('วันที่รับเข้าต้องไม่เกินวันนี้'); }
+    const items = [...lines].map(([id, l]) => {
+      const li = $(`#rb-lines li[data-id="${id}"]`, body);
+      const name = itemById(id).name;
+      if (!(Number(l.qty) >= 1) || Number(l.qty) % 1) { $('[data-k="qty"]', li).focus(); throw new Error(`กรุณาใส่จำนวนของ "${name}" (จำนวนเต็มตั้งแต่ 1)`); }
+      const exp = parseThDate(l.expiry);
+      if (exp === null) { $('[data-k="expiry"]', li).focus(); throw new Error(`วันหมดอายุของ "${name}" ไม่ถูกต้อง — พิมพ์เป็น วว/ดด/ปปปป`); }
+      return { item_id: id, qty: Number(l.qty), price: l.price, expiry_date: exp };
+    });
+    const v = formValues(form);
+    if (v.supplier) lsSet('last-supplier', v.supplier);
+    const n = await store.act('receiveBatch', { supplier: v.supplier || '', delivery_no: form.delivery_no.value.trim(), date, note: form.note.value, set_price: form.set_price.checked, items },
+      { done: (c) => ['รับพัสดุเข้าเรียบร้อย', `${c} รายการ${form.delivery_no.value.trim() ? ' · ใบส่งของ ' + form.delivery_no.value.trim() : ''} · ${thDate(date)}`] });
+    refresh();
+    if (v.supplier) showSupplier(v.supplier); else closeModal();
+    return n;
   }));
 }
 
