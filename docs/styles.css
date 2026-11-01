@@ -1997,3 +1997,8 @@ button.shortcut { border: 0; font: inherit; text-align: left; cursor: pointer; w
 .lot-line:hover { background: var(--fill); }
 .lot-line > span:first-child { min-width: 0; }
 .lot-edit { flex: none; font-size: 13px; font-weight: 600; color: var(--accent); }
+.rb-new-link { margin-top: 8px; font-weight: 600; font-size: 14.5px; }
+.rb-new { margin-top: 10px; padding: 14px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 0 0 1.5px var(--accent) inset; }
+.rb-new-head { display: flex; flex-direction: column; gap: 2px; }
+.rb-new .actions { display: flex; gap: 8px; }
+.er-results .rb-new-opt b { color: var(--accent); }

@@ -3012,6 +3012,19 @@ function receiveBatchForm(supplier) {
           <div class="search">${ICON.search}<input type="search" id="rb-q" placeholder="ค้นหาชื่อหรือรหัสพัสดุ แล้วกด Enter เพื่อเพิ่ม" autocomplete="off"></div>
           <ul class="er-results" id="rb-results" hidden></ul>
         </div>
+        <button type="button" class="link rb-new-link" data-new-item>+ เพิ่มพัสดุใหม่ที่ยังไม่มีในระบบ</button>
+        <div class="sub-card rb-new" id="rb-new" hidden>
+          <div class="rb-new-head"><b>เพิ่มพัสดุใหม่</b><span class="muted small">ระบบตั้งรหัสให้เอง (<span id="rb-n-code"></span>) · บันทึกลงรายการพัสดุ แล้วใส่ในใบรับเข้านี้</span></div>
+          <div class="fields">
+            <label class="field full">ชื่อพัสดุ <span class="req">*</span><input id="rb-n-name" autocomplete="off" placeholder="เช่น ถุงมือไนไตรล์ M (100 ชิ้น/กล่อง)"></label>
+            ${masterField('units', 'rb_unit', { label: 'หน่วยนับ', selected: 'ชิ้น', cls: '' })}
+            <label class="field">หมวดหมู่<select id="rb-n-cat">${options(state.db.categories, '', '- ไม่ระบุ -')}</select></label>
+            <label class="field">ราคาต่อหน่วย (บาท)<input id="rb-n-price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00"></label>
+            <label class="field">จุดสั่งซื้อขั้นต่ำ <span class="hint">(เตือนเมื่อคงเหลือ ≤)</span><input id="rb-n-min" type="number" min="0" inputmode="numeric" value="0"></label>
+            ${masterField('locations', 'rb_loc', { label: 'สถานที่เก็บ', blank: '- ไม่ระบุ -' })}
+          </div>
+          <div class="actions"><button type="button" class="btn" data-new-cancel>ยกเลิก</button><span class="spacer"></span><button type="button" class="btn primary" data-new-save>เพิ่มพัสดุและใส่ในรายการ</button></div>
+        </div>
         <ul class="rb-lines" id="rb-lines"></ul>
       </div>
       <div class="er-sum full" id="rb-sum"></div>
@@ -3056,9 +3069,46 @@ function receiveBatchForm(supplier) {
     results.hidden = false;
     results.innerHTML = found.map((i) => `<li><button type="button" data-add="${i.id}">
       <span><b>${esc(i.name)}</b><span class="muted small">${esc(i.code)} · คงเหลือ ${fmtNum(i.available_qty)} ${esc(i.unit)}${i.price > 0 ? ` · ${fmtMoney(i.price)} บาท` : ''}</span></span>
-      <span class="er-plus">${lines.has(i.id) ? 'มีแล้ว' : '+ เพิ่ม'}</span></button></li>`).join('') || '<li class="empty">ไม่พบพัสดุ</li>';
+      <span class="er-plus">${lines.has(i.id) ? 'มีแล้ว' : '+ เพิ่ม'}</span></button></li>`).join('') +
+      `<li><button type="button" class="rb-new-opt" data-new-item><span><b>+ เพิ่มพัสดุใหม่ "${esc(e.target.value.trim())}"</b><span class="muted small">${found.length ? 'ไม่มีในรายการด้านบน?' : 'ไม่พบพัสดุนี้ในระบบ'} สร้างรายการใหม่แล้วรับเข้าเลย</span></span></button></li>`;
   });
-  $('#rb-q', body).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('[data-add]', results)?.click(); } });
+  // เพิ่มพัสดุใหม่ระหว่างรับเข้า (รายการที่กรอกไว้ไม่หาย)
+  const panel = $('#rb-new', body);
+  const openNew = () => {
+    const q = $('#rb-q', body).value.trim();
+    $('#rb-n-code', body).textContent = BorrowCore.nextItemCode(state.db.items);
+    if (q && !/^[A-Z]{2,}-?\d+$/i.test(q)) $('#rb-n-name', body).value = q; // พิมพ์ชื่อค้างไว้ = ใช้เป็นชื่อพัสดุใหม่
+    results.hidden = true;
+    panel.hidden = false;
+    $('.rb-new-link', body).hidden = true;
+    $('#rb-n-name', body).focus();
+  };
+  const closeNew = () => {
+    panel.hidden = true;
+    $('.rb-new-link', body).hidden = false;
+    ['#rb-n-name', '#rb-n-price'].forEach((x) => { $(x, body).value = ''; });
+    $('#rb-n-min', body).value = '0';
+  };
+  body.addEventListener('click', (e) => { if (e.target.closest('[data-new-item]')) openNew(); });
+  $('[data-new-cancel]', body).addEventListener('click', closeNew);
+  $('#rb-n-name', body).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('[data-new-save]', body).click(); } });
+  $('[data-new-save]', body).addEventListener('click', safe(async () => {
+    const name = $('#rb-n-name', body).value.trim();
+    if (!name) { flag($('#rb-n-name', body)); throw new Error('กรุณาใส่ชื่อพัสดุ'); }
+    const dup = state.db.items.find((i) => i.name.trim().toLowerCase() === name.toLowerCase());
+    if (dup) { flag($('#rb-n-name', body)); throw new Error(`มีพัสดุชื่อนี้แล้ว (${dup.code}) — ค้นหาแล้วกดเพิ่มจากรายการได้เลย`); }
+    const v = formValues(form);
+    const price = $('#rb-n-price', body).value;
+    const id = await store.act('saveItem', { name, unit: v.rb_unit || 'ชิ้น', category: $('#rb-n-cat', body).value, location: v.rb_loc || '',
+      min_qty: $('#rb-n-min', body).value || 0, price, active: true },
+      { busy: ['กำลังเพิ่มพัสดุใหม่', name], done: (nid) => ['เพิ่มพัสดุใหม่เรียบร้อย', `${itemById(nid)?.code || ''} ${name} · ใส่จำนวนที่รับเข้าได้เลย`] });
+    lines.set(Number(id), { qty: '', price: price || '', expiry: '' });
+    $('#rb-q', body).value = '';
+    closeNew();
+    draw();
+    $(`#rb-lines li[data-id="${id}"] [data-k="qty"]`, body)?.focus();
+  }));
+  $('#rb-q', body).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); ($('[data-add]', results) || $('[data-new-item]', results))?.click(); } });
   results.addEventListener('click', (e) => {
     const b = e.target.closest('[data-add]');
     if (!b) return;
