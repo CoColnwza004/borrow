@@ -1073,3 +1073,33 @@ test('Apps Script: budgets saved in the งบประมาณแผนก tab
   assert.deepEqual([st.budgets.length, st.budgets[0].department, st.budgets[0].fiscal_year, st.budgets[0].amount], [1, 'ICU', '2570', 5000]);
   assert.equal(post({ action: 'load' }).state.budgets, undefined);
 });
+
+test('core: receive a whole delivery note, backdate it, and edit a lot price/date afterwards', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const at = { ...admin, now: new Date('2026-11-01T10:20:30') };
+  const [paper, gloves] = [db.items[0], db.items[1]];
+  const n = Core.run(db, 'receiveBatch', { supplier: 'บริษัท เอ', delivery_no: 'IV-9', date: '2026-10-28', set_price: true,
+    items: [{ item_id: paper.id, qty: 10, price: '95.50', expiry_date: '' }, { item_id: gloves.id, qty: 4, price: '', expiry_date: '2027-06-30' }] }, at);
+  assert.equal(n, 2);
+  const [a, b] = db.movements.slice(-2);
+  assert.deepEqual([a.created_at, a.qty, a.price, a.supplier, a.delivery_no], ['2026-10-28 10:20:30', 10, 95.5, 'บริษัท เอ', 'IV-9']);
+  assert.deepEqual([b.price, b.expiry_date], [gloves.price || 0, '2027-06-30']); // ไม่ใส่ราคา = ราคาปัจจุบัน
+  assert.deepEqual([paper.available_qty, paper.price, gloves.available_qty], [130, 95.5, 10]);
+  // แก้ราคาและวันที่ของล็อต (เวลาเดิม) · ตั้งเป็นราคาปัจจุบัน
+  Core.run(db, 'editReceipt', { id: a.id, price: 90, date: '2026-10-20', supplier: 'บริษัท บี', delivery_no: 'IV-10', expiry_date: '2028-01-31', set_price: true }, at);
+  assert.deepEqual([a.created_at, a.price, a.supplier, a.delivery_no, a.expiry_date, paper.price, a.qty], ['2026-10-20 10:20:30', 90, 'บริษัท บี', 'IV-10', '2028-01-31', 90, 10]);
+  const sup = Core.supplierSummary(db, '2026').find((s) => s.name === 'บริษัท บี');
+  assert.deepEqual([sup.value, sup.docs[0].delivery_no, sup.docs[0].lines[0].id], [900, 'IV-10', a.id]);
+  // ตรวจข้อมูล: วันที่ไม่มีจริง / อนาคต / ไม่ใช่รายการรับเข้า / ไม่มี PIN
+  assert.throws(() => Core.run(db, 'editReceipt', { id: a.id, date: '2026-02-30' }, at), /วันที่รับเข้าไม่ถูกต้อง/);
+  assert.throws(() => Core.run(db, 'editReceipt', { id: a.id, date: '2026-11-02' }, at), /ไม่เกินวันนี้/);
+  assert.throws(() => Core.run(db, 'editReceipt', { id: a.id, expiry_date: '2027-04-31' }, at), /วันหมดอายุไม่ถูกต้อง/);
+  Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 1 }] }, user);
+  assert.throws(() => Core.run(db, 'editReceipt', { id: db.movements.at(-1).id, date: '2026-10-01' }, at), /เฉพาะรายการรับเข้า/);
+  assert.throws(() => Core.run(db, 'receiveBatch', { items: [{ item_id: paper.id, qty: 1 }] }, user), /PIN/);
+  assert.throws(() => Core.run(db, 'receiveBatch', { date: '2026-10-01', items: [{ item_id: paper.id, qty: 0 }] }, at), /ตั้งแต่ 1/);
+  assert.equal(db.movements.filter((m) => m.type === 'receive' && m.delivery_no === 'IV-9').length, 1, 'ล็อตที่ผิดไม่ถูกบันทึกบางส่วน');
+  // รับเข้ารายการเดียวย้อนวันที่ได้
+  Core.run(db, 'stock', { item_id: gloves.id, type: 'receive', qty: 2, date: '2026-10-15' }, at);
+  assert.equal(db.movements.at(-1).created_at, '2026-10-15 10:20:30');
+});
