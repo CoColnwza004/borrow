@@ -66,7 +66,7 @@ const PdfDoc = (() => {
   function template(r, org, staff) {
     const rows = r.items.map((l, i) => `<tr>
       <td class="c">${i + 1}</td><td>${esc(l.code)}</td><td>${esc(l.name)}</td>
-      <td class="r">${Number(l.qty).toLocaleString('th-TH')}</td><td class="c">${esc(l.unit)}</td>
+      <td class="r">${Number(l.qty).toLocaleString('th-TH')}${l.pcs ? `<div class="pdf-pcs">(${esc(l.pcs)})</div>` : ''}</td><td class="c">${esc(l.unit)}</td>
       <td class="r">${l.price > 0 ? money(l.price) : '-'}</td><td class="r">${l.price > 0 ? money(l.value) : '-'}</td></tr>`);
     for (let i = rows.length; i < MIN_ROWS; i++) rows.push('<tr class="blank"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>');
     const total = r.total || 0;

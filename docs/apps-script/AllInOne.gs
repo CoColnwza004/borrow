@@ -380,7 +380,9 @@ var BorrowCore = (function () {
   // คอลัมน์ที่ระบบอ่าน/เขียน · ชีตเวอร์ชันก่อนที่มีคอลัมน์ของระบบยืม (total_qty, kind, due_date ฯลฯ) อ่านได้ ระบบข้ามคอลัมน์นั้นไป
   var TABLES = {
     // price = ราคาต่อ 1 หน่วยนับ (บาท)
-    items: ['id', 'code', 'name', 'category', 'unit', 'available_qty', 'min_qty', 'location', 'active', 'price'],
+    // ขนาดบรรจุ: 1 unit = pack_qty pack_unit (เช่น 1 กล่อง = 100 ชิ้น) ใช้แสดงให้ผู้เบิกเห็น · สต็อกและราคายังนับเป็น unit
+    // pack_qty ว่าง = ยังไม่ได้ตั้ง (ระบบเดาจากชื่อให้) · 0 = ไม่มีขนาดบรรจุ
+    items: ['id', 'code', 'name', 'category', 'unit', 'available_qty', 'min_qty', 'location', 'active', 'price', 'pack_qty', 'pack_unit'],
     // edited_at = แก้ไขใบเบิกล่าสุดเมื่อ (ว่าง = ไม่เคยแก้)
     requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'status', 'created_at', 'note', 'edited_at'],
     // price = ราคาต่อหน่วย ณ วันที่เบิก (ราคาพัสดุเปลี่ยนภายหลัง ใบเบิกเดิมไม่เปลี่ยน)
@@ -499,6 +501,7 @@ var BorrowCore = (function () {
           TABLES[t].forEach(function (c) {
             // แถวที่เพิ่มในชีตเองแล้วเว้นช่อง active ไว้ = เปิดใช้งาน
             if (c === 'active' && str(r[c]) === '') { o[c] = 1; return; }
+            if (c === 'pack_qty') { o[c] = str(r[c]) === '' ? '' : Math.max(0, Math.floor(Number(r[c]) || 0)); return; }
             o[c] = c === 'price' ? money(r[c]) : c === 'amount' ? signedMoney(r[c]) : NUMERIC.indexOf(c) >= 0 ? Number(r[c] || 0) : str(r[c]);
           });
           return o;
@@ -514,6 +517,9 @@ var BorrowCore = (function () {
       if (!i.code) i.code = nextItemCode(db.items); // แถวที่พิมพ์ในชีตเองโดยไม่ใส่รหัส
       if (!i.name) i.name = i.code || 'พัสดุ #' + i.id;
       if (!i.unit) i.unit = 'ชิ้น';
+      // ขนาดบรรจุที่ยังไม่ได้ตั้ง: เดาจากชื่อ (เช่น "(100ชิ้น/กล่อง)") บันทึกลงชีตตอนบันทึกครั้งถัดไป
+      if (i.pack_qty === '') { var g = guessPack(i); if (g) { i.pack_qty = g.qty; i.pack_unit = g.unit; } }
+      if (!(i.pack_qty > 0)) i.pack_unit = i.pack_qty === '' ? '' : str(i.pack_unit);
     });
     // ตัวเลือกหน่วยนับ / สถานที่เก็บ: แท็บยังว่าง (ชีตก่อนมีแท็บนี้) ตั้งจากค่าที่พัสดุใช้อยู่ บันทึกครั้งถัดไปจะลงชีตให้
     if (!db.units.length) addNames(db, 'units', DEFAULT_UNITS.concat(db.items.map(function (i) { return i.unit; })));
@@ -522,6 +528,30 @@ var BorrowCore = (function () {
     db.requests.forEach(function (r) { r.status = 'issued'; });
     // คงเหลือติดลบได้ (เบิกของที่หมด = ค้างจ่าย) รับเข้าครั้งถัดไปจะหักล้างเอง
     return db;
+  }
+
+  // เดาขนาดบรรจุจากชื่อพัสดุ: "(100ชิ้น/กล่อง)" "1 โหล/กล่อง" (= 12 ชิ้น) หรือหน่วยนับ "โหล" (= 12 ชิ้น)
+  // ใช้เฉพาะเมื่อหน่วยใหญ่ในชื่อตรงกับหน่วยนับของพัสดุ (พัสดุที่นับเป็นชิ้นอยู่แล้วไม่ต้องมี)
+  // ชื่อในไฟล์สต็อกมีทั้งภาษาอังกฤษ (100ชิ้น/Pack) และพิมพ์ผิด (100ขิ้น/กล่อง)
+  var PACK_RE = /(\d+)\s*(โหล|ชิ้น|ขิ้น|อัน|ซอง|ม้วน|คู่|แผ่น|ขวด|เส้น|ตัว|หลอด|ก้อน|ชุด|แท่ง)\s*\/\s*1?\s*(กล่อง|ห่อ|แพ็ค|แพค|โหล|ลัง|ถุง|pack|box)/i;
+  var PACK_BIG = { pack: 'แพ็ค', box: 'กล่อง', 'แพค': 'แพ็ค' };
+  function guessPack(item) {
+    var m = PACK_RE.exec(str(item.name));
+    var big = m && (PACK_BIG[m[3].toLowerCase()] || m[3]);
+    var unit = item.unit === 'แพค' ? 'แพ็ค' : item.unit;
+    if (m && big === unit && m[2] !== item.unit) {
+      var n = Number(m[1]);
+      return m[2] === 'โหล' ? { qty: n * 12, unit: 'ชิ้น' } : { qty: n, unit: m[2] === 'ขิ้น' ? 'ชิ้น' : m[2] };
+    }
+    // "25pc/box" "6pc/pack" "10 pc (กล่อง)" = ชิ้น ต่อหน่วยนับ
+    var pc = /(\d+)\s*pcs?\b/i.exec(str(item.name));
+    if (pc && ['กล่อง', 'แพ็ค', 'แพค', 'ห่อ', 'ลัง', 'ถุง'].indexOf(item.unit) >= 0 && Number(pc[1]) > 0) return { qty: Number(pc[1]), unit: 'ชิ้น' };
+    if (item.unit === 'โหล') return { qty: 12, unit: 'ชิ้น' };
+    return null;
+  }
+  function packFields(p) {
+    var q = str(p.pack_qty) === '' ? 0 : int(p.pack_qty, 'ขนาดบรรจุ', 0);
+    return { pack_qty: q, pack_unit: q ? str(p.pack_unit) || 'ชิ้น' : '' };
   }
 
   // เพิ่มชื่อลงรายการตัวเลือก (หน่วยนับ สถานที่เก็บ ฯลฯ) เฉพาะที่ยังไม่มี
@@ -584,7 +614,7 @@ var BorrowCore = (function () {
   }
 
   var MASTERS = { departments: 1, categories: 1, suppliers: 1, units: 1, locations: 1 };
-  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest', 'addBudget', 'setBudgets', 'removeBudget', 'receiveBatch', 'editReceipt'];
+  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest', 'addBudget', 'setBudgets', 'removeBudget', 'receiveBatch', 'editReceipt', 'setPacks', 'convertToPieces'];
 
   // ข้อมูลล็อตที่รับเข้า (ไม่บังคับ): บริษัท วันหมดอายุ เลขใบส่งของ
   function lot(p) {
@@ -649,6 +679,8 @@ var BorrowCore = (function () {
         min_qty: int(p.min_qty || 0, 'จุดสั่งซื้อขั้นต่ำ'), location: str(p.location), active: p.active === false ? 0 : 1,
         price: money(p.price, 'ราคาต่อหน่วย'),
       };
+      // ส่งขนาดบรรจุมาเท่านั้นจึงแก้ (เว็บเวอร์ชันก่อนไม่ส่ง = คงค่าเดิม)
+      if (p.pack_qty !== undefined) { var pk = packFields(p); fields.pack_qty = pk.pack_qty; fields.pack_unit = pk.pack_unit; }
       // หน่วยนับ / สถานที่เก็บใหม่ เพิ่มลงรายการตัวเลือกให้ด้วย
       addNames(db, 'units', [fields.unit]);
       addNames(db, 'locations', [fields.location]);
@@ -663,6 +695,7 @@ var BorrowCore = (function () {
         }
       } else {
         item = fields;
+        if (item.pack_qty === undefined) { var g = guessPack(item); item.pack_qty = g ? g.qty : ''; item.pack_unit = g ? g.unit : ''; }
         item.id = nextId(db.items);
         item.available_qty = 0;
         db.items.push(item);
@@ -729,6 +762,46 @@ var BorrowCore = (function () {
       var item = byId(db.items, m.item_id);
       if (p.set_price && item && m.price > 0) item.price = m.price;
       return m.id;
+    },
+
+    // ตั้งขนาดบรรจุหลายรายการพร้อมกัน: items = [{ item_id, pack_qty, pack_unit }] (pack_qty 0 = ไม่มีขนาดบรรจุ)
+    setPacks: function (db, p) {
+      if (!p.items || !p.items.length) fail('ยังไม่ได้ใส่ขนาดบรรจุรายการใด');
+      var rows = p.items.map(function (x) {
+        var item = byId(db.items, x.item_id) || fail('ไม่พบรายการพัสดุ');
+        return { item: item, pk: packFields(x) };
+      });
+      rows.forEach(function (r) { r.item.pack_qty = r.pk.pack_qty; r.item.pack_unit = r.pk.pack_unit; });
+      return rows.length;
+    },
+
+    // เปลี่ยนพัสดุให้นับเป็นหน่วยย่อยทั้งรายการ (เช่น กล่อง → ชิ้น ×100): ยอดคงเหลือ จุดสั่งซื้อ ประวัติสต็อก และใบเบิกเดิมคูณตาม
+    // ราคาต่อหน่วย (พัสดุ ล็อตที่รับ และราคาในใบเบิก) หารตาม · บันทึกในประวัติสต็อกว่าเปลี่ยนหน่วยนับเมื่อไร
+    convertToPieces: function (db, p, ctx) {
+      var item = byId(db.items, p.item_id) || fail('ไม่พบรายการพัสดุ');
+      var n = item.pack_qty;
+      if (!(n > 1)) fail('ต้องตั้งขนาดบรรจุมากกว่า 1 ก่อน (เช่น 1 กล่อง = 100 ชิ้น)');
+      var from = item.unit, to = item.pack_unit || 'ชิ้น';
+      var per = function (v) { return Math.round((v / n) * 100) / 100; };
+      item.available_qty *= n;
+      item.min_qty *= n;
+      item.price = per(item.price || 0);
+      db.movements.forEach(function (m) {
+        if (m.item_id !== item.id) return;
+        m.qty *= n; m.available_after *= n;
+        if (m.price > 0) m.price = per(m.price);
+      });
+      db.request_items.forEach(function (l) {
+        if (l.item_id !== item.id) return;
+        l.qty *= n;
+        if (l.price > 0) l.price = per(l.price);
+      });
+      item.unit = to;
+      item.pack_qty = 0;
+      item.pack_unit = '';
+      addNames(db, 'units', [to]);
+      moveStock(db, ctx, { item_id: item.id, type: 'adjust', delta: 0, allowNegative: true, note: 'เปลี่ยนหน่วยนับ ' + from + ' → ' + to + ' (1 ' + from + ' = ' + n + ' ' + to + ')' });
+      return item.id;
     },
 
     // ลบใบเบิก (เจ้าหน้าที่): restock = คืนจำนวนพัสดุในใบนั้นเข้าสต็อก (บันทึกในประวัติสต็อกว่า "คืนจากใบเบิกที่ลบ")
@@ -1385,7 +1458,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { budgetSummary: budgetSummary, fiscalYear: fiscalYear, fiscalRange: fiscalRange, ledgerSummary: ledgerSummary, applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { guessPack: guessPack, budgetSummary: budgetSummary, fiscalYear: fiscalYear, fiscalRange: fiscalRange, ledgerSummary: ledgerSummary, applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

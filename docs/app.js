@@ -131,6 +131,7 @@ async function remote(action, payload) {
   if (data.sheet) state.sheet = data.sheet; // ลิงก์ Google Sheet ส่งมาเฉพาะคำขอที่มี PIN เจ้าหน้าที่
   // Apps Script เวอร์ชันเก่า (ก่อนมีแท็บหน่วยนับ / สถานที่เก็บ / ราคา) ส่งข้อมูลเจ้าหน้าที่มาโดยไม่มี units
   if (state.pin && data.state) { state.oldServer = !('units' in data.state); state.noBudget = !('budgets' in data.state); }
+  if (data.state?.items?.length) state.noPack = !('pack_qty' in data.state.items[0]);
   return data;
 }
 
@@ -233,13 +234,13 @@ function requestView(r) {
     const item = itemById(l.item_id) || { name: '(ลบแล้ว)', code: '', unit: '', available_qty: 0, price: 0 };
     // ราคา ณ วันที่เบิก · ใบที่เบิกก่อนใส่ราคาใช้ราคาปัจจุบันของพัสดุ (เหมือน BorrowCore.linePrice)
     const price = l.price > 0 ? l.price : item.price || 0;
-    return { ...l, name: item.name, code: item.code, unit: item.unit, available_qty: item.available_qty, price, value: round2(l.qty * price) };
+    return { ...l, name: item.name, code: item.code, unit: item.unit, available_qty: item.available_qty, price, value: round2(l.qty * price), pcs: pcsText(item, l.qty) };
   });
   return {
     ...r,
     items: lines,
     total: round2(lines.reduce((s, l) => s + l.value, 0)),
-    item_summary: lines.map((l) => `${l.name} ×${l.qty}`).join(', '),
+    item_summary: lines.map((l) => `${l.name} ×${l.qty}${l.pcs ? ` (${l.pcs})` : ''}`).join(', '),
     department_full: deptFull(r.department),
   };
 }
@@ -250,6 +251,17 @@ function requestsView() {
   return rvCache.list;
 }
 const isLow = (i) => i.available_qty <= i.min_qty;
+// ===================== ขนาดบรรจุ: 1 กล่อง = 100 ชิ้น (สต็อกและราคายังนับเป็นหน่วยนับเดิม) =====================
+const BIG_UNITS = ['กล่อง', 'โหล', 'แพ็ค', 'แพค', 'ห่อ', 'ลัง', 'ถุง'];
+const PACK_UNITS = ['ชิ้น', 'อัน', 'ซอง', 'ก้อน', 'แผ่น', 'ม้วน', 'เส้น', 'หลอด', 'คู่', 'ขวด', 'ตัว', 'ชุด'];
+const hasPack = (i) => !!i && i.pack_qty > 0;
+const packUnit = (i) => i.pack_unit || 'ชิ้น';
+const packText = (i) => (hasPack(i) ? `1 ${i.unit} = ${fmtNum(i.pack_qty)} ${packUnit(i)}` : '');
+const pcsText = (i, q) => (hasPack(i) ? `${fmtNum(q * i.pack_qty)} ${packUnit(i)}` : '');
+const packChip = (i) => (hasPack(i) ? `<span class="pack-chip">${ICON.box}${esc(packText(i))}</span>` : '');
+// นับเป็นหน่วยใหญ่แต่ยังไม่ได้บอกว่ามีกี่ชิ้น (0 = เจ้าหน้าที่ตั้งว่าไม่มี)
+const needsPack = (i) => i.active && BIG_UNITS.includes(i.unit) && i.pack_qty === '';
+const PACK_OLD_MSG = 'Apps Script ยังเป็นเวอร์ชันเก่า: วาง AllInOne.gs ล่าสุด แล้ว Deploy → Manage deployments → New version ก่อน จึงจะบันทึกขนาดบรรจุได้';
 
 // ===================== UI helpers =====================
 let toastTimer;
@@ -1088,17 +1100,19 @@ function renderRequestForm(page) {
 
   function drawSummary() {
     const chosen = Object.entries(state.picks).map(([id, q]) => ({ item: itemById(id), q })).filter((x) => x.item);
-    $('#rf-count').textContent = chosen.length ? `${chosen.length} รายการ · ${fmtNum(chosen.reduce((s, x) => s + x.q, 0))} ชิ้น` : 'ยังไม่ได้เลือกพัสดุ';
+    // หน่วยเดียวกันทั้งหมด = บอกหน่วยนั้น (เช่น 2 กล่อง) · ปนกัน = "หน่วย" (ไม่ให้เข้าใจว่า 2 กล่องคือ 2 ชิ้น)
+    const units = [...new Set(chosen.map((x) => x.item.unit))];
+    $('#rf-count').textContent = chosen.length ? `${chosen.length} รายการ · ${fmtNum(chosen.reduce((s, x) => s + x.q, 0))} ${units.length === 1 ? units[0] : 'หน่วย'}` : 'ยังไม่ได้เลือกพัสดุ';
     const money = round2(chosen.reduce((s, x) => s + x.q * (x.item.price || 0), 0));
     $('#rf-money').hidden = !money;
     $('#rf-money').textContent = `ราคารวม ${fmtMoney(money)} บาท`;
-    $('#rf-detail').textContent = chosen.length ? chosen.map((x) => `${x.item.name} ×${x.q}`).join(', ') : 'เลือกพัสดุที่ต้องการเบิกจากรายการด้านบน';
+    $('#rf-detail').textContent = chosen.length ? chosen.map((x) => `${x.item.name} ${fmtNum(x.q)} ${x.item.unit}${hasPack(x.item) ? ` (${pcsText(x.item, x.q)})` : ''}`).join(', ') : 'เลือกพัสดุที่ต้องการเบิกจากรายการด้านบน';
     $('#rf-submit').textContent = 'ยืนยันการเบิก';
     form.classList.toggle('has-picks', chosen.length > 0);
     // ใบเบิกด้านขวา (จอกว้าง): รายการที่เลือกพร้อมปุ่มปรับจำนวน
     $('#rf-slip').innerHTML = chosen.length
       ? `<ul class="slip-list">${chosen.map(({ item: i, q }) => `<li>
-          <div class="slip-name"><span>${esc(i.name)}</span><small>${esc(i.code)} · ${esc(i.unit)}${i.price > 0 ? ` · ${fmtMoney(i.price)} × ${fmtNum(q)} = <b>${fmtMoney(i.price * q)}</b> บาท` : ''}${q > i.available_qty ? ' · <em class="neg">ยอดจะติดลบ</em>' : ''}</small></div>
+          <div class="slip-name"><span>${esc(i.name)}</span><small>${esc(i.code)} · ${esc(i.unit)}${hasPack(i) ? ` · <b class="pcs">${fmtNum(q)} ${esc(i.unit)} = ${esc(pcsText(i, q))}</b>` : ''}${i.price > 0 ? ` · ${fmtMoney(i.price)} × ${fmtNum(q)} = <b>${fmtMoney(i.price * q)}</b> บาท` : ''}${q > i.available_qty ? ' · <em class="neg">ยอดจะติดลบ</em>' : ''}</small></div>
           <div class="mini-step">
             <button type="button" data-dec="${i.id}" aria-label="${q === 1 ? 'นำออก' : 'ลด'} ${esc(i.name)}">${q === 1 ? IC.trash : IC.minus}</button>
             <b>${fmtNum(q)}</b>
@@ -1152,13 +1166,14 @@ function renderRequestForm(page) {
         <div class="pick-body">
           <div class="pick-name">${esc(i.name)}</div>
           <div class="pick-meta"><span class="code">${esc(i.code)}</span>${stockBadge(i)}${i.price > 0 ? `<span class="price">${fmtMoney(i.price)} บาท / ${esc(i.unit)}</span>` : ''}</div>
-          ${n && i.price > 0 ? `<div class="pick-sum">รวม ${fmtMoney(i.price * n)} บาท</div>` : ''}
+          ${hasPack(i) ? `<div class="pick-pack">${packChip(i)}</div>` : ''}
+          ${n && (hasPack(i) || i.price > 0) ? `<div class="pick-sum">เบิก <b>${fmtNum(n)} ${esc(i.unit)}</b>${hasPack(i) ? ` <b class="pcs">= ${esc(pcsText(i, n))}</b>` : ''}${i.price > 0 ? ` · รวม ${fmtMoney(i.price * n)} บาท` : ''}</div>` : ''}
         </div>
-        ${n ? `<div class="stepper">
+        ${n ? `<div class="step-col"><div class="stepper">
             <button type="button" data-dec="${i.id}" class="${n === 1 ? 'rm' : ''}" aria-label="${n === 1 ? 'นำออก' : 'ลด'}">${n === 1 ? IC.trash : IC.minus}</button>
             <input type="number" inputmode="numeric" min="0" max="${MAX_QTY}" value="${n}" data-qty="${i.id}" aria-label="จำนวน">
             <button type="button" data-inc="${i.id}" aria-label="เพิ่ม" ${n >= MAX_QTY ? 'disabled' : ''}>${IC.plus}</button>
-          </div>`
+          </div><span class="step-unit">${esc(i.unit)}</span></div>`
           : `<button type="button" class="btn add-btn" data-inc="${i.id}">+ เลือก</button>`}
       </li>`;
     };
@@ -1323,14 +1338,14 @@ function renderRequestForm(page) {
 // รายการพัสดุในใบเบิก บรรทัดละ 1 รายการ ลงท้ายด้วยจำนวน (ยาวเกิน max แสดง "และอีก n รายการ")
 function itemLines(lines, max = 5) {
   const shown = lines.slice(0, max);
-  return `<ul class="item-lines">${shown.map((l) => `<li><span>${esc(l.name)}</span><b>×${fmtNum(l.qty)} ${esc(l.unit)}</b></li>`).join('')}${lines.length > max ? `<li class="more">และอีก ${fmtNum(lines.length - max)} รายการ</li>` : ''}</ul>`;
+  return `<ul class="item-lines">${shown.map((l) => `<li><span>${esc(l.name)}</span><b>×${fmtNum(l.qty)} ${esc(l.unit)}${l.pcs ? ` <small class="pcs">(${esc(l.pcs)})</small>` : ''}</b></li>`).join('')}${lines.length > max ? `<li class="more">และอีก ${fmtNum(lines.length - max)} รายการ</li>` : ''}</ul>`;
 }
 
 // ป๊อปอัปยืนยันการเบิก: ผู้เบิก แผนก รายการพัสดุ จำนวน ราคา และยอดรวม
 function confirmWithdraw(data, items, onOk) {
   const lines = items.map(({ item_id, qty }) => {
     const i = itemById(item_id);
-    return { name: i.name, code: i.code, unit: i.unit, qty, price: i.price || 0, value: round2(qty * (i.price || 0)), neg: qty > i.available_qty };
+    return { name: i.name, code: i.code, unit: i.unit, qty, price: i.price || 0, value: round2(qty * (i.price || 0)), neg: qty > i.available_qty, pcs: pcsText(i, qty) };
   });
   const total = round2(lines.reduce((s, l) => s + l.value, 0));
   const qty = lines.reduce((s, l) => s + l.qty, 0);
@@ -1345,7 +1360,7 @@ function confirmWithdraw(data, items, onOk) {
       <div class="wd-lines"><table>
         <thead><tr><th>พัสดุ</th><th class="num">จำนวน</th><th class="num">รวม (บาท)</th></tr></thead>
         <tbody>${lines.map((l) => `<tr><td>${esc(l.name)}<div class="muted small">${esc(l.code)}${l.price ? ` · ${fmtMoney(l.price)} บาท / ${esc(l.unit)}` : ''}${l.neg ? ' · <em class="neg">ยอดจะติดลบ</em>' : ''}</div></td>
-          <td class="num">${fmtNum(l.qty)} ${esc(l.unit)}</td><td class="num">${l.price ? fmtMoney(l.value) : '-'}</td></tr>`).join('')}</tbody>
+          <td class="num">${fmtNum(l.qty)} ${esc(l.unit)}${l.pcs ? `<div class="pcs-tag">= ${esc(l.pcs)}</div>` : ''}</td><td class="num">${l.price ? fmtMoney(l.value) : '-'}</td></tr>`).join('')}</tbody>
       </table></div>
       <div class="wd-total"><span>${fmtNum(lines.length)} รายการ · ${fmtNum(qty)} หน่วย</span><span>ราคารวม <b>${fmtMoney(total)}</b> บาท</span></div>
       ${data.note ? `<p class="muted small">หมายเหตุ: ${esc(data.note)}</p>` : ''}
@@ -1543,7 +1558,7 @@ function renderItems(page) {
   page.insertAdjacentHTML('beforeend', `
     <div class="page-head-row">
       <div class="page-head"><h1>พัสดุคงเหลือ</h1><p class="lead">ยอดคงเหลือจาก Google Sheet อัปเดตให้อัตโนมัติ</p></div>
-      ${isAdmin() ? '<div class="head-actions"><button class="btn" id="btn-bulk">แก้ยอดคงเหลือ</button><button class="btn primary" id="btn-add">+ เพิ่มพัสดุ</button></div>' : ''}
+      ${isAdmin() ? `<div class="head-actions"><button class="btn" id="btn-pack">${ICON.box} ขนาดบรรจุ${(() => { const n = state.db.items.filter(needsPack).length; return n ? ` <span class="seg-count warn">ยังขาด ${fmtNum(n)}</span>` : ''; })()}</button><button class="btn" id="btn-bulk">แก้ยอดคงเหลือ</button><button class="btn primary" id="btn-add">+ เพิ่มพัสดุ</button></div>` : ''}
     </div>
     ${isAdmin() ? `<div id="items-value">${stockValueCard()}</div>` : stockOutNotice()}
     ${DEMO ? '' : `<div class="live" id="live"><span class="live-dot" aria-hidden="true"></span>
@@ -1586,7 +1601,7 @@ function renderItems(page) {
       <div class="item-card${i.available_qty <= 0 ? ' out' : ''}${changed ? ' changed' : ''}" data-item="${i.id}">
         <div class="top">
           <span class="pick-icon">${ICON.box}</span>
-          <div style="flex:1;min-width:0"><div class="name">${esc(i.name)}</div><div class="code">${esc(i.code)} · ${esc(i.category || 'ไม่ระบุหมวด')}</div></div>
+          <div style="flex:1;min-width:0"><div class="name">${esc(i.name)}</div><div class="code">${esc(i.code)} · ${esc(i.category || 'ไม่ระบุหมวด')}</div>${packChip(i)}</div>
         </div>
         ${(() => {
           const p = (i.available_qty < 0 ? `<span class="pill out">ติดลบ ${fmtNum(-i.available_qty)}</span>` : i.available_qty === 0 ? '<span class="pill out">หมด</span>' : isLow(i) ? '<span class="pill low">ใกล้หมด</span>' : '') +
@@ -1606,11 +1621,12 @@ function renderItems(page) {
   $('#f-cat').addEventListener('change', draw);
   $('#f-low').addEventListener('change', draw);
   $('#btn-export')?.addEventListener('click', () => downloadCsv('stock',
-    ['รหัส', 'ชื่อ', 'หมวดหมู่', 'หน่วย', 'คงเหลือ', 'จุดสั่งซื้อขั้นต่ำ', 'สถานที่เก็บ', 'ราคาต่อหน่วย (บาท)'],
-    filtered().map((i) => [i.code, i.name, i.category, i.unit, i.available_qty, i.min_qty, i.location, i.price || 0])));
+    ['รหัส', 'ชื่อ', 'หมวดหมู่', 'หน่วย', 'คงเหลือ', 'จุดสั่งซื้อขั้นต่ำ', 'สถานที่เก็บ', 'ราคาต่อหน่วย (บาท)', 'ขนาดบรรจุ'],
+    filtered().map((i) => [i.code, i.name, i.category, i.unit, i.available_qty, i.min_qty, i.location, i.price || 0, packText(i)])));
   if (isAdmin()) {
     $('#btn-add').addEventListener('click', () => itemForm(null));
     $('#btn-bulk').addEventListener('click', () => bulkStockForm());
+    $('#btn-pack').addEventListener('click', () => packListForm());
   }
   $('#live-refresh')?.addEventListener('click', () => syncFromSheet({ manual: true }));
   redrawItems = () => { draw(); if ($('#items-value')) $('#items-value').innerHTML = stockValueCard(); };
@@ -1629,6 +1645,7 @@ function showItem(id) {
       <dt>จุดสั่งซื้อขั้นต่ำ</dt><dd>${fmtNum(i.min_qty)} ${esc(i.unit)}</dd>
       <dt>สถานที่เก็บ</dt><dd>${esc(i.location || '-')}</dd>
       <dt>ราคาต่อหน่วย</dt><dd>${priceText(i)}</dd>
+      ${hasPack(i) ? `<dt>ขนาดบรรจุ</dt><dd>${packChip(i)}${i.price > 0 && i.pack_qty > 1 ? ` <span class="muted small">≈ ${fmtMoney(i.price / i.pack_qty)} บาท/${esc(packUnit(i))}</span>` : ''}</dd>` : ''}
       ${isAdmin() && i.price > 0 ? `<dt>มูลค่าคงเหลือ</dt><dd>${fmtMoney(Math.max(0, i.available_qty) * i.price)} บาท</dd>` : ''}
     </dl>
     <div class="toolbar">
@@ -1763,6 +1780,18 @@ function itemForm(item) {
       ${masterField('units', 'unit', { label: 'หน่วยนับ', selected: unit, cls: '' })}
       <label class="field">ราคาต่อหน่วย (บาท) <span class="hint" id="price-unit">ต่อ 1 ${esc(unit)}</span>
         <input name="price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${item?.price > 0 ? item.price : ''}"></label>
+      <fieldset class="pack-box full">
+        <legend>${ICON.box} ขนาดบรรจุ <span class="pack-auto" id="pk-auto" hidden>อ่านจากชื่อให้แล้ว</span></legend>
+        <div class="pack-row"><b>1 <span id="pk-u">${esc(unit)}</span> =</b>
+          <input name="pack_qty" type="number" min="0" step="1" inputmode="numeric" aria-label="จำนวนต่อ 1 หน่วยนับ" placeholder="เช่น 100" value="${item && item.pack_qty !== '' ? item.pack_qty || '' : ''}">
+          <input name="pack_unit" list="pk-units" aria-label="หน่วยย่อย" placeholder="ชิ้น" value="${esc(item?.pack_unit || '')}" autocomplete="off"></div>
+        <datalist id="pk-units">${PACK_UNITS.map((u) => `<option value="${u}"></option>`).join('')}</datalist>
+        <p class="muted small">เว้นว่างถ้าพัสดุนับเป็นชิ้นอยู่แล้ว · ใส่ 0 = ไม่มีขนาดบรรจุ · สต็อกและราคายังนับเป็นหน่วยนับเดิม</p>
+        <div class="pack-preview" id="pk-prev"></div>
+      </fieldset>
+      ${item && item.pack_qty > 1 ? `<div class="pack-convert full">
+        <span>แผนกเบิกทีละ${esc(packUnit(item))}เป็นประจำ? เปลี่ยนให้รายการนี้นับเป็น${esc(packUnit(item))}ทั้งรายการ: ${fmtNum(item.available_qty)} ${esc(item.unit)} → ${fmtNum(item.available_qty * item.pack_qty)} ${esc(packUnit(item))}${item.price > 0 ? ` · ${fmtMoney(item.price)} → ${fmtMoney(item.price / item.pack_qty)} บาท/${esc(packUnit(item))}` : ''}</span>
+        <button type="button" class="btn sm" id="pk-convert">เปลี่ยนเป็นนับเป็น${esc(packUnit(item))}…</button></div>` : ''}
       ${item ? `<label class="field">จำนวนคงเหลือ <span class="hint">(แก้ได้เลย ติดลบได้)</span><input name="available_qty" type="number" step="1" value="${item.available_qty}"></label>` : ''}
       <label class="field">จุดสั่งซื้อขั้นต่ำ <span class="hint">(เตือนเมื่อคงเหลือ ≤)</span><input name="min_qty" type="number" min="0" value="${item?.min_qty ?? 0}"></label>
       ${item ? '' : '<label class="field">จำนวนเริ่มต้น<input name="initial_qty" type="number" min="0" value="0"></label>'}
@@ -1775,12 +1804,38 @@ function itemForm(item) {
   bindMasterFields(form);
   if (!item) bindLotFields(form);
   // ราคาต่อหน่วยตามหน่วยนับที่เลือก
-  form.unit.addEventListener('change', () => { if (form.unit.value !== ADD_NEW) $('#price-unit', form).textContent = 'ต่อ 1 ' + form.unit.value; });
+  form.unit.addEventListener('change', () => { if (form.unit.value !== ADD_NEW) $('#price-unit', form).textContent = 'ต่อ 1 ' + form.unit.value; drawPack(); });
+  // ขนาดบรรจุ: เดาจากชื่อให้ (จนกว่าจะพิมพ์เอง) · ตัวอย่างที่ผู้เบิกจะเห็น
+  let packTyped = !!(item && item.pack_qty !== '' && !(item.pack_qty > 0 && sameGuess()));
+  function sameGuess() { const g = BorrowCore.guessPack(item); return g && g.qty === item.pack_qty && g.unit === item.pack_unit; }
+  function drawPack() {
+    const u = form.unit.value === ADD_NEW ? unit : form.unit.value;
+    $('#pk-u', form).textContent = u;
+    if (!packTyped) {
+      const g = BorrowCore.guessPack({ name: form.name.value, unit: u });
+      form.pack_qty.value = g ? g.qty : (item && item.pack_qty > 0 && !sameGuess() ? item.pack_qty : '');
+      if (g) form.pack_unit.value = g.unit;
+      $('#pk-auto', form).hidden = !g;
+    }
+    const q = Math.floor(Number(form.pack_qty.value) || 0);
+    const pu = form.pack_unit.value.trim() || 'ชิ้น';
+    const price = Number(form.price.value) || 0;
+    const fake = { unit: u, pack_qty: q, pack_unit: pu };
+    $('#pk-prev', form).innerHTML = q > 0 ? `<span class="muted small">ผู้เบิกจะเห็น</span> ${packChip(fake)} · เบิก 2 ${esc(u)} <b class="pcs">= ${esc(pcsText(fake, 2))}</b>${price > 0 && q > 1 ? ` · ≈ ${fmtMoney(price / q)} บาท/${esc(pu)}` : ''}` : '';
+  }
+  form.name.addEventListener('input', drawPack);
+  form.price.addEventListener('input', drawPack);
+  ['pack_qty', 'pack_unit'].forEach((n) => form[n].addEventListener('input', () => { packTyped = true; $('#pk-auto', form).hidden = true; drawPack(); }));
+  drawPack();
+  $('#pk-convert', form)?.addEventListener('click', () => convertPiecesAsk(item));
   form.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
     const data = formValues(form);
     if (!data.unit) { form.unit.focus(); throw new Error('กรุณาเลือกหน่วยนับ'); }
     if (state.oldServer && Number(data.price) > 0) throw new Error(OLD_SERVER_MSG); // เวอร์ชันเก่าไม่เก็บราคา
+    // ขนาดบรรจุ: ช่องว่างของรายการที่ยังไม่เคยตั้ง = ยังไม่ตั้ง (ไม่ส่ง) · ว่างของรายการที่เคยตั้ง = ลบออก
+    if (String(data.pack_qty).trim() === '' && (!item || item.pack_qty === '')) { delete data.pack_qty; delete data.pack_unit; }
+    else if (state.noPack && Number(data.pack_qty) > 0) throw new Error(PACK_OLD_MSG);
     if (item) {
       data.id = item.id;
       data.active = form.active.checked;
@@ -1798,6 +1853,102 @@ function itemForm(item) {
     refresh();
     showItem(id);
   }));
+}
+
+// เปลี่ยนพัสดุให้นับเป็นหน่วยย่อยทั้งรายการ (เช่น กล่อง → ชิ้น) มีป๊อปอัปสรุปให้ยืนยันก่อน
+function convertPiecesAsk(item) {
+  const n = item.pack_qty, pu = packUnit(item);
+  confirmBox({
+    title: `เปลี่ยน "${item.name}" ให้นับเป็น${pu}?`,
+    tone: 'primary',
+    icon: ICON.box,
+    ok: `เปลี่ยนเป็นนับเป็น${pu}`,
+    html: `<ul class="conv-list">
+        <li>คงเหลือ <b>${fmtNum(item.available_qty)} ${esc(item.unit)}</b> → <b>${fmtNum(item.available_qty * n)} ${esc(pu)}</b></li>
+        ${item.price > 0 ? `<li>ราคา <b>${fmtMoney(item.price)}</b> → <b>${fmtMoney(item.price / n)}</b> บาท/${esc(pu)}</li>` : ''}
+        <li>จุดสั่งซื้อขั้นต่ำ ${fmtNum(item.min_qty)} → ${fmtNum(item.min_qty * n)} ${esc(pu)}</li>
+        <li>ประวัติสต็อกและใบเบิกเดิมแปลงตาม มูลค่าเท่าเดิม</li></ul>
+      <p class="muted small">ผู้เบิกจะเบิกเป็น${esc(pu)} · รายงานบัญชีวัสดุรายการนี้จะนับเป็น${esc(pu)} · เปลี่ยนกลับต้องแก้เอง</p>`,
+    onOk: async () => {
+      if (state.noPack) throw new Error(PACK_OLD_MSG);
+      await store.act('convertToPieces', { item_id: item.id }, { busy: ['กำลังเปลี่ยนหน่วยนับ', item.name], done: () => ['เปลี่ยนหน่วยนับเรียบร้อย', `${item.name} · นับเป็น${pu}แล้ว`] });
+      refresh();
+      showItem(item.id);
+    },
+  });
+}
+
+// ตั้งขนาดบรรจุหลายรายการ: พัสดุที่นับเป็นกล่อง โหล แพ็ค ฯลฯ · Enter ไปช่องถัดไป · บันทึกเฉพาะที่แก้
+function packListForm() {
+  // ดึงใหม่ทุกครั้งที่วาด (หลังบันทึก ข้อมูลพัสดุเป็นชุดใหม่)
+  const poolOf = () => itemsView().filter((i) => i.active && (BIG_UNITS.includes(i.unit) || i.pack_qty > 0));
+  const edits = new Map(); // item_id → { qty, unit }
+  let tab = poolOf().some(needsPack) ? 'need' : 'all';
+  const val = (i) => edits.get(i.id) || { qty: i.pack_qty === '' ? '' : String(i.pack_qty), unit: i.pack_unit || '' };
+  const body = openModal('ขนาดบรรจุ', `
+    <p class="muted small">พัสดุที่นับเป็นกล่อง โหล แพ็ค ฯลฯ ใส่ว่า 1 หน่วยมีกี่ชิ้น ผู้เบิกจะเห็นในหน้าเบิกทันที · ใส่ 0 = ไม่มีขนาดบรรจุ · ช่องที่ไม่แก้จะไม่เปลี่ยน</p>
+    <div class="sub-card pk-progress" id="pk-progress"></div>
+    <div class="toolbar">
+      <div class="segmented" id="pk-tabs"><button type="button" data-t="need">ยังขาด</button><button type="button" data-t="done">ใส่แล้ว</button><button type="button" data-t="all">ทั้งหมด</button></div>
+      <div class="search">${ICON.search}<input type="search" id="pk-q" placeholder="ค้นหาชื่อหรือรหัส"></div>
+    </div>
+    <datalist id="pkl-units">${PACK_UNITS.map((u) => `<option value="${u}"></option>`).join('')}</datalist>
+    <ul class="pk-list" id="pk-list"></ul>
+    <div class="actions"><span class="muted small">กด Enter ไปช่องถัดไป</span><span class="spacer"></span><button type="button" class="btn primary lg" id="pk-save" disabled>บันทึก</button></div>`, { wide: true });
+  const isDone = (i) => { const v = val(i); return v.qty !== ''; };
+  const draw = () => {
+    const pool = poolOf();
+    const done = pool.filter(isDone).length;
+    $('#pk-progress', body).innerHTML = `<div class="pk-prog-top"><b>ใส่แล้ว ${fmtNum(done)} จาก ${fmtNum(pool.length)} รายการ</b><span class="muted small">ยังขาด ${fmtNum(pool.length - done)}</span></div>
+      <div class="bar pk-bar"><span style="width:${pool.length ? (done / pool.length) * 100 : 0}%"></span></div>`;
+    $$('#pk-tabs button', body).forEach((b) => b.classList.toggle('active', b.dataset.t === tab));
+    const q = $('#pk-q', body).value.trim().toLowerCase();
+    const list = pool.filter((i) => (tab === 'all' || (tab === 'need') !== isDone(i) || edits.has(i.id)) && (!q || (i.name + ' ' + i.code).toLowerCase().includes(q)));
+    $('#pk-list', body).innerHTML = list.map((i) => {
+      const v = val(i);
+      return `<li data-id="${i.id}">
+        <div class="pk-name"><b>${esc(i.name)}</b><span class="muted small">${esc(i.code)} · นับเป็น ${esc(i.unit)}</span></div>
+        <div class="pack-row"><b>1 ${esc(i.unit)} =</b>
+          <input data-k="qty" type="number" min="0" step="1" inputmode="numeric" aria-label="จำนวนต่อ 1 ${esc(i.unit)}" placeholder="?" value="${esc(v.qty)}">
+          <input data-k="unit" list="pkl-units" aria-label="หน่วยย่อย" placeholder="ชิ้น" value="${esc(v.unit)}" autocomplete="off"></div>
+      </li>`;
+    }).join('') || `<li class="empty">${tab === 'need' ? 'ใส่ครบทุกรายการแล้ว' : 'ไม่พบรายการ'}</li>`;
+    $('#pk-save', body).disabled = !edits.size;
+    $('#pk-save', body).textContent = edits.size ? `บันทึก ${fmtNum(edits.size)} รายการ` : 'บันทึก';
+  };
+  $('#pk-list', body).addEventListener('input', (e) => {
+    const inp = e.target.closest('[data-k]');
+    const li = inp?.closest('li[data-id]');
+    if (!li) return;
+    const i = itemById(li.dataset.id);
+    const v = { ...val(i), [inp.dataset.k]: inp.value.trim() };
+    const orig = { qty: i.pack_qty === '' ? '' : String(i.pack_qty), unit: i.pack_unit || '' };
+    if (v.qty === orig.qty && (v.unit || '') === orig.unit) edits.delete(i.id); else edits.set(i.id, v);
+    $('#pk-save', body).disabled = !edits.size;
+    $('#pk-save', body).textContent = edits.size ? `บันทึก ${fmtNum(edits.size)} รายการ` : 'บันทึก';
+  });
+  $('#pk-list', body).addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !e.target.matches('[data-k="qty"]')) return;
+    e.preventDefault();
+    const all = $$('#pk-list [data-k="qty"]', body);
+    all[all.indexOf(e.target) + 1]?.focus();
+  });
+  $('#pk-tabs', body).addEventListener('click', (e) => { const b = e.target.closest('[data-t]'); if (b) { tab = b.dataset.t; draw(); } });
+  $('#pk-q', body).addEventListener('input', draw);
+  $('#pk-save', body).addEventListener('click', safe(async () => {
+    const items = [...edits].map(([id, v]) => {
+      const n = v.qty === '' ? 0 : Number(v.qty);
+      if (!(n >= 0) || n % 1) { throw new Error(`ขนาดบรรจุของ "${itemById(id).name}" ต้องเป็นจำนวนเต็ม`); }
+      return { item_id: id, pack_qty: n, pack_unit: v.unit || 'ชิ้น' };
+    });
+    if (state.noPack) throw new Error(PACK_OLD_MSG);
+    await store.act('setPacks', { items }, { busy: ['กำลังบันทึกขนาดบรรจุ', `${items.length} รายการ`], done: (n) => ['บันทึกขนาดบรรจุเรียบร้อย', `${n} รายการ · ผู้เบิกเห็นในหน้าเบิกแล้ว`] });
+    edits.clear();
+    refresh();
+    draw();
+  }));
+  draw();
+  $('#pk-list [data-k="qty"]', body)?.focus();
 }
 
 // แก้ยอดคงเหลือหลายรายการพร้อมกัน (เหมือนกรอกในตาราง): พิมพ์ยอดใหม่ เว้นว่าง = ไม่เปลี่ยน · Enter ไปช่องถัดไป
@@ -1987,7 +2138,7 @@ function showRequest(id) {
       <thead><tr><th>พัสดุ</th><th class="num">จำนวน</th><th class="num">ราคา/หน่วย</th><th class="num">รวม (บาท)</th></tr></thead>
       <tbody>${r.items.map((l) => `<tr>
         <td>${esc(l.name)}<div class="muted small">${esc(l.code)}</div></td>
-        <td class="num">${fmtNum(l.qty)} ${esc(l.unit)}</td>
+        <td class="num">${fmtNum(l.qty)} ${esc(l.unit)}${l.pcs ? `<div class="pcs-tag">= ${esc(l.pcs)}</div>` : ''}</td>
         <td class="num">${l.price > 0 ? fmtMoney(l.price) : '-'}</td>
         <td class="num">${l.price > 0 ? fmtMoney(l.value) : '-'}</td>
       </tr>`).join('')}</tbody>
