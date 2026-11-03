@@ -72,13 +72,14 @@ const PdfDoc = (() => {
     const total = r.total || 0;
     const dept = esc(r.department_full || r.department);
     const statement = `ข้าพเจ้าขอเบิกพัสดุตามรายการต่อไปนี้ เพื่อใช้ใน${dept}`;
-    // วันที่ใต้ช่องลงชื่อทั้งสองฝั่ง = วันที่เบิก เช่น 24 / 10 / 2569
+    // วันที่ใต้ช่องลงชื่อ = วันที่เบิก เช่น 24 / 10 / 2569 (ช่องผู้รับพัสดุเว้นว่างให้กรอกเองตอนรับของ)
     const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.created_at || '');
     const signDate = ymd ? `${Number(ymd[3])} / ${Number(ymd[2])} / ${Number(ymd[1]) + 543}` : '........ / ........ / ........';
-    const sign = (role, name) => `<div class="pdf-sign-box">
+    const blankDate = '........ / ........ / ........';
+    const sign = (role, name, date = signDate) => `<div class="pdf-sign-box">
       <div>ลงชื่อ .......................................... ${role}</div>
       <div>( ${name ? esc(name) : '..........................................'} )</div>
-      <div>วันที่ ${signDate}</div></div>`;
+      <div>วันที่ ${date}</div></div>`;
     return `<div class="pdf-page">
       <div class="pdf-head">
         <div><div class="pdf-org">${esc(org || 'ระบบเบิกพัสดุ')}</div>
@@ -98,7 +99,7 @@ const PdfDoc = (() => {
         <tbody>${rows.join('')}</tbody>
         <tfoot><tr class="pdf-total"><td colspan="5" class="c">( ${bahtText(total)} )</td><th>รวมเป็นเงิน</th><td class="r"><b>${money(total)}</b></td></tr></tfoot>
       </table>
-      <div class="pdf-sign">${sign('ผู้เบิก', r.borrower_name)}${sign('เจ้าหน้าที่พัสดุ', staff)}</div>
+      <div class="pdf-sign">${sign('ผู้เบิก', r.borrower_name)}${sign('ผู้อนุมัติ', staff)}${sign('เจ้าหน้าที่พัสดุ', staff)}${sign('ผู้รับพัสดุ', '', blankDate)}</div>
       <div class="pdf-foot">ออกโดยระบบเบิกพัสดุ · บันทึกเมื่อ ${esc(thaiDateTime(r.created_at))}${r.edited_at ? ` · แก้ไขล่าสุด ${esc(thaiDateTime(r.edited_at))}` : ''}</div>
     </div>`;
   }
