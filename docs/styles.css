@@ -733,7 +733,8 @@ dialog.sheet.closing::backdrop { animation: fade-out .2s var(--ease-in) forwards
 .pdf-items td.r { text-align: right; }
 .pdf-items tr.blank td { height: 31px; }
 .pdf-page tbody tr:last-child td { border-bottom: 1px solid #000; }
-.pdf-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 22px; }
+.pdf-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 24px; margin-top: 16px; }
+.pdf-sign .pdf-sign-box { gap: 6px; }
 .pdf-sign-box { text-align: center; display: flex; flex-direction: column; gap: 8px; }
 .pdf-page tfoot th, .pdf-page tfoot td { border: 1px solid #000; }
 .pdf-total th { background: #f2f2f2; font-weight: 700; text-align: center; }
