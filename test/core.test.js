@@ -159,7 +159,7 @@ test('core: rows from the old borrow system still load as withdrawals', () => {
     requests: [{ id: 1, request_no: 'BR2601-0001', borrower_name: 'a', department: 'b', status: 'borrowed', type: 'borrow', due_date: '2026-01-31' }],
     request_items: [{ request_id: 1, item_id: 1, qty: 3, returned_qty: 0, lost_qty: 0 }],
   });
-  assert.deepEqual(db.items[0], { id: 1, code: 'X', name: 'old', category: '', unit: 'ชิ้น', available_qty: 2, min_qty: 0, location: '', active: 1, price: 0 });
+  assert.deepEqual(db.items[0], { id: 1, code: 'X', name: 'old', category: '', unit: 'ชิ้น', available_qty: 2, min_qty: 0, location: '', active: 1, price: 0, pack_qty: '', pack_unit: '' });
   assert.equal(db.requests[0].status, 'issued');
   assert.equal(db.requests[0].due_date, undefined);
   assert.deepEqual(db.request_items[0], { request_id: 1, item_id: 1, qty: 3, price: 0 });
@@ -1102,4 +1102,41 @@ test('core: receive a whole delivery note, backdate it, and edit a lot price/dat
   // รับเข้ารายการเดียวย้อนวันที่ได้
   Core.run(db, 'stock', { item_id: gloves.id, type: 'receive', qty: 2, date: '2026-10-15' }, at);
   assert.equal(db.movements.at(-1).created_at, '2026-10-15 10:20:30');
+});
+
+test('core: pack size — guessed from the name, set in bulk, shown per unit, and convert a box item to pieces', () => {
+  const db = Core.seed(new Date(), {
+    departments: [['ICU', '']], categories: ['ทั่วไป'],
+    items: [['B-1', 'Blade No10 (100ชิ้น/กล่อง)', 'ทั่วไป', 'กล่อง', 12, 2, ''], ['S-1', 'silk no3/0 (กล่อง) 3โหล/กล่อง', 'ทั่วไป', 'กล่อง', 5, 0, ''],
+      ['C-1', 'Cutting No 21 (โหล)', 'ทั่วไป', 'โหล', 4, 0, ''], ['A-1', 'Airway 100mm', 'ทั่วไป', 'ชิ้น', 20, 0, ''], ['X-1', 'Cord Clamp(100ชิ้น/กล่อง)', 'ทั่วไป', 'ชิ้น', 50, 0, '']],
+  });
+  const by = (c) => db.items.find((i) => i.code === c);
+  assert.deepEqual(['B-1', 'S-1', 'C-1', 'A-1', 'X-1'].map((c) => [by(c).pack_qty, by(c).pack_unit]),
+    [[100, 'ชิ้น'], [36, 'ชิ้น'], [12, 'ชิ้น'], ['', ''], ['', '']]); // X-1 นับเป็นชิ้นอยู่แล้ว (ว่าง = ยังไม่ได้ตั้ง)
+  const g = (name, unit) => Core.guessPack({ name, unit });
+  assert.deepEqual([g('Extension 36 นิ้ว(100ขิ้น/กล่อง)', 'กล่อง'), g('Gauze 100ชิ้น/Pack', 'แพ็ค'), g('Spinocan 25pc/box', 'กล่อง'), g('IOBAN 6640 10 pc (กล่อง)', 'กล่อง'), g('Spinocan 25pc/box', 'ชิ้น'), g('Nylon (1โหล/กล่อง)', 'กล่อง')],
+    [{ qty: 100, unit: 'ชิ้น' }, { qty: 100, unit: 'ชิ้น' }, { qty: 25, unit: 'ชิ้น' }, { qty: 10, unit: 'ชิ้น' }, null, { qty: 12, unit: 'ชิ้น' }]);
+  // ชีตเก่าที่ยังไม่มีคอลัมน์: เดาให้ · ตั้งเป็น 0 แล้ว (ไม่มีขนาดบรรจุ) ไม่เดาซ้ำ
+  const back = Core.normalize(JSON.parse(JSON.stringify({ ...db, items: db.items.map((i) => ({ ...i, pack_qty: i.code === 'C-1' ? 0 : '', pack_unit: '' })) })));
+  assert.deepEqual(back.items.map((i) => i.pack_qty), [100, 36, 0, '', '']); // เดาไม่ได้ = ยังไม่ได้ตั้ง
+  // ตั้งหลายรายการ · แก้ในฟอร์มพัสดุ · ไม่ส่งช่องนี้ = คงเดิม
+  Core.run(db, 'setPacks', { items: [{ item_id: by('A-1').id, pack_qty: 10, pack_unit: 'ชิ้น' }, { item_id: by('S-1').id, pack_qty: 36, pack_unit: 'เส้น' }] }, admin);
+  assert.deepEqual([by('A-1').pack_qty, by('S-1').pack_unit], [10, 'เส้น']);
+  Core.run(db, 'saveItem', { id: by('A-1').id, code: 'A-1', name: 'Airway 100mm', unit: 'ชิ้น', pack_qty: '' }, admin);
+  assert.deepEqual([by('A-1').pack_qty, by('A-1').pack_unit], [0, '']);
+  Core.run(db, 'saveItem', { id: by('B-1').id, code: 'B-1', name: 'Blade No10 (100ชิ้น/กล่อง)', unit: 'กล่อง', price: 700, min_qty: 2 }, admin);
+  assert.equal(by('B-1').pack_qty, 100);
+  assert.throws(() => Core.run(db, 'setPacks', { items: [{ item_id: by('B-1').id, pack_qty: -1 }] }, admin), /ขนาดบรรจุ/);
+  assert.throws(() => Core.run(db, 'setPacks', { items: [{ item_id: by('B-1').id, pack_qty: 5 }] }, user), /PIN/);
+  // เปลี่ยนเป็นนับเป็นชิ้น: ยอด ประวัติ ใบเบิก คูณ 100 · ราคาหาร 100 · มูลค่าคงเดิม
+  const b = by('B-1');
+  const rid = Core.run(db, 'createRequest', { borrower_name: 'ก', department: 'ICU', items: [{ item_id: b.id, qty: 2 }] }, user);
+  const valueBefore = Core.requestValue(db, rid);
+  Core.run(db, 'convertToPieces', { item_id: b.id }, admin);
+  assert.deepEqual([b.unit, b.available_qty, b.min_qty, b.price, b.pack_qty], ['ชิ้น', 1000, 200, 7, 0]);
+  assert.equal(db.request_items.find((l) => l.request_id === rid).qty, 200);
+  assert.equal(Core.requestValue(db, rid), valueBefore);
+  assert.deepEqual(db.movements.filter((m) => m.item_id === b.id).slice(0, 2).map((m) => m.qty), [1200, -200]);
+  assert.match(db.movements.at(-1).note, /เปลี่ยนหน่วยนับ กล่อง → ชิ้น \(1 กล่อง = 100 ชิ้น\)/);
+  assert.throws(() => Core.run(db, 'convertToPieces', { item_id: b.id }, admin), /ขนาดบรรจุมากกว่า 1/);
 });
