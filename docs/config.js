@@ -12,7 +12,7 @@
 window.APP_CONFIG = {
   API_URL: 'https://script.google.com/macros/s/AKfycbympkHAvksAQhtFxKcp7J68PXGVbd7bvTZTNFkPDpKEh82g-WEwEuhDXY36lWyc39hb1w/exec',
   HOSPITAL_NAME: 'โรงพยาบาลปากเกร็ด',
-  STAFF_NAME: 'เสาวลักษณ์ ถาน้อย',
+  STAFF_NAME: 'นางเสาวลักษณ์ ถาน้อย',
   PIN_LENGTH: 4,
   // กระดิ่งแจ้งเตือนของเจ้าหน้าที่พัสดุ: เตือนพัสดุที่จะหมดอายุภายในกี่เดือน
   EXPIRY_ALERT_MONTHS: 8,
