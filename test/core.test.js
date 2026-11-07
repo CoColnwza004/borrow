@@ -209,11 +209,13 @@ function mockAppsScript() {
   };
   const triggers = [];
   const cache = new Map();
+  const props = new Map();
+  const fetched = [];
   const ScriptApp = {
     getProjectTriggers: () => triggers.slice(),
     deleteTrigger: (t) => triggers.splice(triggers.indexOf(t), 1),
     newTrigger: (fn) => {
-      const b = { timeBased: () => b, everyDays: () => b, atHour: () => b, nearMinute: () => b,
+      const b = { timeBased: () => b, everyDays: () => b, everyHours: () => b, atHour: () => b, nearMinute: () => b,
         create: () => { const t = { getHandlerFunction: () => fn }; triggers.push(t); return t; } };
       return b;
     },
@@ -231,15 +233,17 @@ function mockAppsScript() {
     ScriptApp,
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: (s) => ({ body: s, setMimeType() { return this; } }) },
     Utilities: { formatDate: (d) => d.toISOString().slice(0, 10) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props.get(k) ?? null, setProperty: (k, v) => { props.set(k, String(v)); } }) },
+    UrlFetchApp: { fetch: (url, opt) => { fetched.push({ url, opt, body: JSON.parse(opt.payload) }); return { getResponseCode: () => 200, getContentText: () => '{}' }; } },
     Logger: { log: (m) => { logs.push(m); } },
     CacheService: { getScriptCache: () => ({ get: (k) => cache.get(k) ?? null, put: (k, v) => { cache.set(k, v); }, remove: (k) => { cache.delete(k); } }) },
   });
-  return { sheets, ctx, triggers, order, logs, cache };
+  return { sheets, ctx, triggers, order, logs, cache, props, fetched };
 }
 
 test('Apps Script: only changed tabs are rewritten, shrinking tabs leave no stale rows', () => {
   const { sheets, ctx } = mockAppsScript();
-  for (const f of ['core.js', 'apps-script/Code.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
+  for (const f of ['core.js', 'apps-script/Code.gs', 'apps-script/Line.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
   ctx.setup();
   const writes = () => Object.fromEntries(Object.entries(sheets).map(([k, v]) => [k, v.writes]));
   const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
@@ -263,7 +267,7 @@ test('Apps Script: only changed tabs are rewritten, shrinking tabs leave no stal
 
 test('Apps Script: old "คำขอยืม" tab is renamed to "ประวัติการเบิก" and keeps its data', () => {
   const { sheets, ctx } = mockAppsScript();
-  for (const f of ['core.js', 'apps-script/Code.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
+  for (const f of ['core.js', 'apps-script/Code.gs', 'apps-script/Line.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
   ctx.setup();
   const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
   post({ action: 'createRequest', payload: { borrower_name: 'ผู้เบิกเดิม', department: 'ICU', items: [{ item_id: 2, qty: 1 }] } });
@@ -1063,7 +1067,7 @@ test('core: department budgets per fiscal year — every withdrawal cuts its dep
 
 test('Apps Script: budgets saved in the งบประมาณแผนก tab and read back', () => {
   const { sheets, ctx } = mockAppsScript();
-  for (const f of ['core.js', 'apps-script/Code.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
+  for (const f of ['core.js', 'apps-script/Code.gs', 'apps-script/Line.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
   ctx.setup();
   const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
   assert.equal(post({ action: 'setBudgets', payload: { fiscal_year: 2570, items: [{ department: 'ICU', amount: 5000 }] } }).ok, false); // ต้องใช้ PIN
@@ -1139,4 +1143,67 @@ test('core: pack size — guessed from the name, set in bulk, shown per unit, an
   assert.deepEqual(db.movements.filter((m) => m.item_id === b.id).slice(0, 2).map((m) => m.qty), [1200, -200]);
   assert.match(db.movements.at(-1).note, /เปลี่ยนหน่วยนับ กล่อง → ชิ้น \(1 กล่อง = 100 ชิ้น\)/);
   assert.throws(() => Core.run(db, 'convertToPieces', { item_id: b.id }, admin), /ขนาดบรรจุมากกว่า 1/);
+});
+
+test('core + Apps Script: LINE OA — link with PIN, push on each withdrawal, daily expiry/low-stock summary', () => {
+  const { ctx, props, fetched, triggers } = mockAppsScript();
+  for (const f of ['core.js', 'apps-script/Code.gs', 'apps-script/Line.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
+  ctx.setup();
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  const hook = (text, source = { type: 'group', groupId: 'G1' }) =>
+    post({ destination: 'U0', events: [{ type: 'message', replyToken: 'R', source, message: { type: 'text', text } }] });
+  // ยังไม่ตั้ง token/ผู้รับ: เบิกได้ตามปกติ ไม่ส่งอะไร
+  assert.equal(post({ action: 'createRequest', payload: { borrower_name: 'ก', department: 'ICU', items: [{ item_id: 2, qty: 1 }] } }).ok, true);
+  assert.equal(fetched.length, 0);
+  props.set('LINE_TOKEN', 'tok');
+  assert.equal(hook('เชื่อมต่อ 0000').ok, true);
+  assert.match(fetched.at(-1).body.messages[0].text, /รหัสไม่ถูกต้อง/);
+  assert.equal(JSON.parse(props.get('LINE_TARGETS') || '[]').length, 0);
+  hook('เชื่อมต่อ 1234');
+  assert.deepEqual(JSON.parse(props.get('LINE_TARGETS')).map((t) => t.id), ['G1']);
+  assert.match(fetched.at(-1).url, /reply$/);
+  // PIN ในคุณสมบัติของสคริปต์ใช้แทนค่าในโค้ด
+  props.set('ADMIN_PIN', '9876');
+  assert.equal(post({ action: 'checkPin', pin: '1234' }).ok, false);
+  assert.equal(post({ action: 'checkPin', pin: '9876' }).result, true);
+  hook('เชื่อมต่อ 9876', { type: 'user', userId: 'U9' });
+  assert.equal(JSON.parse(props.get('LINE_TARGETS')).length, 2);
+  // เบิก = push ถึงทุกผู้รับ พร้อมรายการ
+  const n = fetched.length;
+  assert.equal(post({ action: 'createRequest', payload: { borrower_name: 'สมหญิง', department: 'ICU', items: [{ item_id: 3, qty: 2 }] } }).ok, true);
+  const pushes = fetched.slice(n);
+  assert.deepEqual(pushes.map((f) => [f.url.endsWith('push'), f.body.to]), [[true, 'G1'], [true, 'U9']]);
+  assert.match(pushes[0].body.messages[0].text, /มีผู้เบิกพัสดุ WD69-002[\s\S]*สมหญิง[\s\S]*×2/);
+  assert.equal(pushes[0].opt.headers.Authorization, 'Bearer tok');
+  // โหมดสรุปทุกชั่วโมง: เก็บไว้ก่อน แล้วส่งรวมข้อความเดียว
+  props.set('LINE_NOTIFY_REQUESTS', 'hourly');
+  const m = fetched.length;
+  post({ action: 'createRequest', payload: { borrower_name: 'ข', department: 'ICU', items: [{ item_id: 4, qty: 1 }] } });
+  assert.equal(fetched.length, m);
+  ctx.lineHourly();
+  assert.match(fetched.at(-1).body.messages[0].text, /มีผู้เบิกพัสดุ 1 ใบ[\s\S]*WD69-003/);
+  ctx.lineHourly();
+  assert.equal(fetched.length, m + 2, 'ไม่มีใบใหม่ ไม่ส่งซ้ำ');
+  // ยกเลิกแจ้งเตือน · ตั้งเวลาสรุปทุกเช้า
+  hook('ยกเลิกแจ้งเตือน', { type: 'user', userId: 'U9' });
+  assert.deepEqual(JSON.parse(props.get('LINE_TARGETS')).map((t) => t.id), ['G1']);
+  ctx.setupLine();
+  assert.ok(triggers.some((t) => t.getHandlerFunction() === 'lineDailySummary'));
+  // สถานะส่งให้หน้าเว็บของเจ้าหน้าที่ (ไม่มี token)
+  const st = post({ action: 'load', pin: '9876' }).line;
+  assert.deepEqual([st.configured, st.targets, st.mode, st.daily_on], [true, 1, 'hourly', true]);
+  assert.ok(!JSON.stringify(st).includes('tok'));
+});
+
+test('core: LINE daily summary lists expiring lots and low stock, and is empty when nothing to report', () => {
+  const db = Core.seed(new Date('2026-10-01T08:00:00'), FIXTURE);
+  assert.equal(Core.lineDailyText(db, '2026-11-07', 8), '');
+  const at = { ...admin, now: new Date('2026-11-01T09:00:00') };
+  Core.run(db, 'stock', { item_id: 1, type: 'receive', qty: 10, expiry_date: '2026-11-20' }, at);
+  Core.run(db, 'stock', { item_id: 2, type: 'receive', qty: 10, expiry_date: '2027-03-01' }, at);
+  Core.run(db, 'createRequest', { ...person, items: [{ item_id: 3, qty: 3 }] }, { now: new Date('2026-11-05T09:00:00') });
+  const t = Core.lineDailyText(db, '2026-11-07', 8);
+  assert.match(t, /ภายใน 30 วัน: 1 ล็อต\n• กระดาษ A4 ~10 รีม · 20\/11\/2569 \(อีก 13 วัน\)/);
+  assert.match(t, /ภายใน 8 เดือน\): 1 ล็อต\n• ถุงมือ M ~10 กล่อง · 1\/3\/2570/);
+  assert.match(t, /ใกล้หมดสต็อก: 1 รายการ\n• ผ้าก๊อซ เหลือ 0 ห่อ \(ขั้นต่ำ 1\)/);
 });

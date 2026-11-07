@@ -7,6 +7,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const parts = [
   ['Code.gs (ตัวเชื่อม Google Sheets — แก้ ADMIN_PIN ได้ที่นี่)', 'docs/apps-script/Code.gs'],
+  ['Line.gs (แจ้งเตือนผ่าน LINE OA)', 'docs/apps-script/Line.gs'],
   ['Core (กฎการเบิก/ยืมและการตัดสต็อก) — จาก docs/core.js', 'docs/core.js'],
   ['SeedData (รายการพัสดุและแผนกตั้งต้น) — จาก docs/seed-data.js', 'docs/seed-data.js'],
   ['Report2569 (ราคาตามรายงานบัญชีวัสดุ 2569 + รายชื่อบริษัท) — จาก docs/apps-script/report-2569.js', 'docs/apps-script/report-2569.js'],
@@ -18,7 +19,7 @@ function build() {
  * ไฟล์นี้สร้างอัตโนมัติด้วย npm run build:gs ห้ามแก้ตรงนี้ ให้แก้ไฟล์ต้นฉบับใน docs/ แล้ว build ใหม่
  *
  * วิธีใช้: ใน Apps Script ให้มีไฟล์ Code.gs ไฟล์เดียว ลบเนื้อหาเดิมทั้งหมด แล้ววางไฟล์นี้ทั้งไฟล์
- * จากนั้นแก้ ADMIN_PIN ด้านล่าง กดบันทึก แล้วเรียกใช้ฟังก์ชัน setup
+ * จากนั้นแก้ ADMIN_PIN ด้านล่าง (หรือตั้งใน คุณสมบัติของสคริปต์) กดบันทึก แล้วเรียกใช้ฟังก์ชัน setup
  */
 `;
   const body = parts.map(([title, file]) =>
