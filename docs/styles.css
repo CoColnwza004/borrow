@@ -2046,3 +2046,17 @@ button.shortcut { border: 0; font: inherit; text-align: left; cursor: pointer; w
   :root:not([data-theme="light"]) .item-lines .pcs { color: #FFB340; }
 }
 .pdf-pcs { font-size: 12px; color: #333; white-space: nowrap; }
+
+/* ============ แจ้งเตือนผ่าน LINE OA (หน้า Google Sheet) ============ */
+.line-card { padding-bottom: 18px; }
+.line-card .card-head { display: flex; align-items: center; gap: 10px; }
+.line-rows { list-style: none; margin: 0 24px; padding: 0; border-radius: var(--r-md); background: var(--bg); }
+.line-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--separator); font-size: 14.5px; }
+.line-row:first-child { border-top: 0; }
+.line-row > span:nth-child(2) { flex: 1; min-width: 0; }
+.line-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--orange); flex: none; }
+.line-dot.on { background: #06c755; }
+.line-steps { margin: 14px 24px 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14.5px; line-height: 1.5; }
+.line-card > .muted { margin: 0 24px; }
+.line-card code { font-size: 0.92em; padding: 1px 6px; border-radius: 6px; background: var(--fill); }
+@media (max-width: 600px) { .line-rows { margin: 0 14px; } .line-steps, .line-card > .muted { margin-left: 14px; margin-right: 14px; } }

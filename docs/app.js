@@ -129,6 +129,7 @@ async function remote(action, payload) {
     throw new Error(/ไม่รู้จักคำสั่ง/.test(msg) ? msg + ' — Apps Script ยังเป็นเวอร์ชันเก่า: วาง AllInOne.gs ล่าสุด แล้ว Deploy → Manage deployments → New version' : msg);
   }
   if (data.sheet) state.sheet = data.sheet; // ลิงก์ Google Sheet ส่งมาเฉพาะคำขอที่มี PIN เจ้าหน้าที่
+  if (data.line) state.line = data.line; // สถานะแจ้งเตือน LINE OA (เจ้าหน้าที่)
   // Apps Script เวอร์ชันเก่า (ก่อนมีแท็บหน่วยนับ / สถานที่เก็บ / ราคา) ส่งข้อมูลเจ้าหน้าที่มาโดยไม่มี units
   if (state.pin && data.state) { state.oldServer = !('units' in data.state); state.noBudget = !('budgets' in data.state); }
   if (data.state?.items?.length) state.noPack = !('pack_qty' in data.state.items[0]);
@@ -1403,6 +1404,7 @@ function renderSheet(page) {
             ลิงก์จะแสดงที่นี่อัตโนมัติ (หรือใส่ SHEET_URL ใน config.js)</p>`}
       </div>
     </section>
+    ${lineCard()}
     <section class="card">
       <div class="card-head"><h3>แท็บในชีต</h3></div>
       <ul class="rows sheet-tabs">${SHEET_TABS.map(([n, d, k]) => `<li><div class="sheet-tab"><b>${esc(n)}</b>${tag[k]}</div><p>${esc(d)}</p></li>`).join('')}</ul>
@@ -1413,6 +1415,33 @@ function renderSheet(page) {
     await navigator.clipboard.writeText(url);
     toast('คัดลอกลิงก์แล้ว');
   }));
+}
+
+// สถานะแจ้งเตือน LINE OA (ตั้งค่าที่ Apps Script · ดู README หัวข้อ "แจ้งเตือนผ่าน LINE OA")
+function lineCard() {
+  if (DEMO) return '';
+  const l = state.line;
+  const MODE = { instant: 'แจ้งทันทีทุกใบ', hourly: 'สรุปทุกชั่วโมง', off: 'ปิด' };
+  const row = (ok, label, value) => `<li class="line-row"><span class="line-dot ${ok ? 'on' : ''}" aria-hidden="true"></span><span>${label}</span><b>${value}</b></li>`;
+  const ready = l && l.configured && l.targets > 0;
+  return `<section class="card line-card">
+    <div class="card-head"><h3>แจ้งเตือนผ่าน LINE OA</h3><span class="pill ${ready ? 'in' : 'low'}">${ready ? 'ใช้งานอยู่' : 'ยังไม่ได้ตั้งค่า'}</span></div>
+    ${l ? `<ul class="line-rows">
+        ${row(l.configured, 'Channel access token (LINE_TOKEN)', l.configured ? 'ตั้งแล้ว' : 'ยังไม่ได้ตั้ง')}
+        ${row(l.targets > 0, 'ผู้รับที่เชื่อมต่อ (คน/กลุ่ม)', fmtNum(l.targets))}
+        ${row(l.mode !== 'off', 'แจ้งเมื่อมีผู้เบิก', MODE[l.mode] || esc(l.mode))}
+        ${row(l.daily_on, 'สรุปของใกล้หมดอายุ / ใกล้หมดสต็อก', l.daily_on ? `ทุกวันราว ${l.daily_hour}:00 น.` : 'ยังไม่ได้ตั้งเวลา')}
+      </ul>` : '<p class="muted">Apps Script ยังเป็นเวอร์ชันเก่า: วาง AllInOne.gs ล่าสุด แล้ว Deploy → New version ก่อน</p>'}
+    <ol class="line-steps">
+      <li>สร้าง LINE Official Account แล้วเปิด Messaging API (LINE OA Manager → ตั้งค่า → Messaging API)</li>
+      <li>คัดลอก <b>Channel access token</b> จาก LINE Developers ไปใส่ใน Apps Script → ตั้งค่าโปรเจ็กต์ → คุณสมบัติของสคริปต์ ชื่อ <code>LINE_TOKEN</code></li>
+      <li>ตั้ง <b>Webhook URL</b> เป็นลิงก์ /exec ของ Apps Script นี้ แล้วเปิด Use webhook</li>
+      <li>เพิ่ม LINE OA เป็นเพื่อน หรือเชิญเข้ากลุ่ม LINE ของเจ้าหน้าที่ แล้วพิมพ์ <code>เชื่อมต่อ รหัสPIN</code></li>
+      <li>ใน Apps Script เลือกฟังก์ชัน <code>setupLine</code> แล้วกด เรียกใช้ (ตั้งเวลาสรุปทุกเช้า) · ทดสอบด้วย <code>testLine</code></li>
+    </ol>
+    <p class="muted small">LINE OA แบบฟรีส่งได้ราว 300 ข้อความ/เดือน นับ 1 ข้อความต่อผู้รับ 1 คน (ส่งเข้ากลุ่มนับตามจำนวนสมาชิก) ·
+      เบิกเยอะ ตั้ง <code>LINE_NOTIFY_REQUESTS</code> = <code>hourly</code> เพื่อสรุปรวมทุกชั่วโมง</p>
+  </section>`;
 }
 
 // ===================== Success + PDF =====================

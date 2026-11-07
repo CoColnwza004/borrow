@@ -3,7 +3,7 @@
  * ไฟล์นี้สร้างอัตโนมัติด้วย npm run build:gs ห้ามแก้ตรงนี้ ให้แก้ไฟล์ต้นฉบับใน docs/ แล้ว build ใหม่
  *
  * วิธีใช้: ใน Apps Script ให้มีไฟล์ Code.gs ไฟล์เดียว ลบเนื้อหาเดิมทั้งหมด แล้ววางไฟล์นี้ทั้งไฟล์
- * จากนั้นแก้ ADMIN_PIN ด้านล่าง กดบันทึก แล้วเรียกใช้ฟังก์ชัน setup
+ * จากนั้นแก้ ADMIN_PIN ด้านล่าง (หรือตั้งใน คุณสมบัติของสคริปต์) กดบันทึก แล้วเรียกใช้ฟังก์ชัน setup
  */
 
 // ==================== Code.gs (ตัวเชื่อม Google Sheets — แก้ ADMIN_PIN ได้ที่นี่) ====================
@@ -20,7 +20,12 @@
  */
 
 // *** เปลี่ยนรหัส PIN สำหรับเจ้าหน้าที่พัสดุ (ใช้ดูประวัติเบิก / จัดการสต็อก) ***
+// แนะนำ: ตั้งใน ตั้งค่าโปรเจ็กต์ (⚙) → คุณสมบัติของสคริปต์ → ADMIN_PIN = รหัสของคุณ ครั้งเดียว
+// แล้ววางโค้ดเวอร์ชันใหม่ทับได้เลยโดยไม่ต้องแก้บรรทัดนี้ (ค่าในคุณสมบัติของสคริปต์ใช้ก่อน)
 var ADMIN_PIN = '1234';
+function adminPin_() {
+  try { return PropertiesService.getScriptProperties().getProperty('ADMIN_PIN') || ADMIN_PIN; } catch (e) { return ADMIN_PIN; }
+}
 
 // ชื่อแท็บคงไว้ตามเวอร์ชันก่อน เพื่อให้ชีตที่ใช้งานอยู่แล้วอ่านต่อได้
 var SHEET_NAMES = {
@@ -201,11 +206,15 @@ function doPost(e) {
   } catch (err) {
     return json_({ ok: false, error: 'คำขอไม่ถูกต้อง' });
   }
+  // Webhook จาก LINE OA (มี events) — ดู Line.gs
+  if (body && Array.isArray(body.events) && body.destination !== undefined) {
+    return typeof lineWebhook_ === 'function' ? lineWebhook_(body) : json_({ ok: true });
+  }
   return handle_(body);
 }
 
 function handle_(body) {
-  var isAdmin = String(body.pin || '') === ADMIN_PIN;
+  var isAdmin = String(body.pin || '') === adminPin_();
   if (body.action === 'load' && !isAdmin) {
     var c = cache_();
     var hit = c && c.get(PUBLIC_CACHE_KEY);
@@ -222,6 +231,8 @@ function handle_(body) {
     if (!readOnly) {
       result = BorrowCore.run(db, body.action, body.payload, { isAdmin: isAdmin });
       saveDb_(db);
+      // แจ้งเตือน LINE OA (ถ้าตั้งไว้ · ติดตั้งแบบแยกไฟล์โดยไม่มี Line.gs = ข้ามไป)
+      if (body.action === 'createRequest' && typeof lineOnRequest_ === 'function') lineOnRequest_(db, result);
     } else if (body.action === 'checkPin') {
       result = BorrowCore.run(db, 'checkPin', null, { isAdmin: isAdmin });
     } else {
@@ -234,6 +245,7 @@ function handle_(body) {
     if (isAdmin) {
       var ss = SpreadsheetApp.getActiveSpreadsheet();
       out.sheet = { url: ss.getUrl(), name: ss.getName() };
+      try { if (typeof lineStatus_ === 'function') out.line = lineStatus_(); } catch (e) { /* ยังไม่อนุญาตสิทธิ์ใหม่ */ }
     }
     return json_(out);
   } catch (err) {
@@ -363,6 +375,149 @@ function saveDb_(db) {
     }
   });
   cachePublic_(db);
+}
+
+// ==================== Line.gs (แจ้งเตือนผ่าน LINE OA) ====================
+
+/**
+ * แจ้งเตือนผ่าน LINE Official Account (Messaging API)
+ * - มีผู้เบิกพัสดุ: แจ้งทันที (หรือสรุปทุกชั่วโมง ประหยัดโควตา)
+ * - ทุกเช้า: ล็อตใกล้หมดอายุ และของใกล้หมดสต็อก (ไม่มีอะไรต้องแจ้ง = ไม่ส่ง)
+ *
+ * ตั้งค่า (ทำครั้งเดียว) — วิธีละเอียดอยู่ใน README หัวข้อ "แจ้งเตือนผ่าน LINE OA"
+ * 1. Apps Script → ตั้งค่าโปรเจ็กต์ (⚙) → คุณสมบัติของสคริปต์ → เพิ่ม LINE_TOKEN = Channel access token (long-lived)
+ * 2. ตั้ง Webhook URL ของ LINE OA เป็นลิงก์ /exec ของเว็บแอปนี้ แล้วเปิด Use webhook
+ * 3. เพิ่ม LINE OA เป็นเพื่อน (หรือเชิญเข้ากลุ่ม LINE ของเจ้าหน้าที่) แล้วพิมพ์ "เชื่อมต่อ <รหัส PIN>"
+ * 4. เลือกฟังก์ชัน setupLine แล้วกด เรียกใช้ (ตั้งเวลาส่งสรุปทุกเช้า) · ทดสอบด้วย testLine
+ *
+ * คุณสมบัติของสคริปต์ที่ปรับได้ (ไม่ใส่ = ค่าตั้งต้น):
+ *   LINE_NOTIFY_REQUESTS = instant (แจ้งทันทีทุกใบ) | hourly (สรุปทุกชั่วโมง) | off (ไม่แจ้ง)
+ *   LINE_DAILY_HOUR = 8 (ส่งสรุปประจำวันราว 8 โมงเช้า) · LINE_EXPIRY_MONTHS = 8 (เตือนก่อนหมดอายุกี่เดือน)
+ * โควตา LINE OA แบบฟรีนับ 1 ข้อความต่อผู้รับ 1 คน (ส่งเข้ากลุ่ม = นับตามจำนวนสมาชิก) ดูยอดที่ใช้ได้ใน LINE OA Manager
+ */
+var LINE_API = 'https://api.line.me/v2/bot/message/';
+
+function lineProps_() { return PropertiesService.getScriptProperties(); }
+function lineTargets_() {
+  try { return JSON.parse(lineProps_().getProperty('LINE_TARGETS') || '[]'); } catch (e) { return []; }
+}
+function lineSaveTargets_(list) { lineProps_().setProperty('LINE_TARGETS', JSON.stringify(list)); }
+function lineMode_() { return lineProps_().getProperty('LINE_NOTIFY_REQUESTS') || 'instant'; }
+
+// สถานะสำหรับหน้าเว็บของเจ้าหน้าที่ (ไม่ส่ง token หรือรหัสผู้รับ)
+function lineStatus_() {
+  var p = lineProps_();
+  return { configured: !!p.getProperty('LINE_TOKEN'), targets: lineTargets_().length, mode: lineMode_(),
+    daily_hour: Number(p.getProperty('LINE_DAILY_HOUR') || 8), daily_on: ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'lineDailySummary'; }) };
+}
+
+function lineCall_(kind, payload) {
+  var token = lineProps_().getProperty('LINE_TOKEN');
+  if (!token) return { ok: false, error: 'ยังไม่ได้ตั้ง LINE_TOKEN' };
+  var res = UrlFetchApp.fetch(LINE_API + kind, {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + token }, payload: JSON.stringify(payload),
+  });
+  var code = res.getResponseCode();
+  return code === 200 ? { ok: true } : { ok: false, error: 'LINE ' + code + ': ' + res.getContentText().slice(0, 300) };
+}
+
+// ส่งถึงผู้รับทุกคน/ทุกกลุ่มที่เชื่อมต่อไว้ · ข้อความยาวเกินตัดท้าย (LINE รับได้ 5,000 ตัวอักษร)
+function linePush_(text) {
+  if (!text) return 0;
+  var sent = 0;
+  lineTargets_().forEach(function (t) {
+    var r = lineCall_('push', { to: t.id, messages: [{ type: 'text', text: text.slice(0, 4900) }] });
+    if (r.ok) sent++; else Logger.log('ส่ง LINE ไม่สำเร็จ (' + t.name + '): ' + r.error);
+  });
+  return sent;
+}
+
+// Webhook จาก LINE: พิมพ์ "เชื่อมต่อ <PIN>" = รับแจ้งเตือน · "ยกเลิกแจ้งเตือน" · "สถานะ"
+// (Apps Script อ่าน header X-Line-Signature ไม่ได้ จึงใช้ PIN เป็นตัวยืนยันก่อนเพิ่มผู้รับ)
+function lineWebhook_(body) {
+  (body.events || []).forEach(function (ev) {
+    if (ev.type !== 'message' || !ev.message || ev.message.type !== 'text') return;
+    var src = ev.source || {};
+    var id = src.groupId || src.roomId || src.userId;
+    if (!id) return;
+    var text = String(ev.message.text || '').trim();
+    var list = lineTargets_();
+    var has = list.some(function (t) { return t.id === id; });
+    var reply = '';
+    var m = /^(เชื่อมต่อ|connect)\s*(\S+)$/i.exec(text);
+    if (m) {
+      if (m[2] !== adminPin_()) reply = 'รหัสไม่ถูกต้อง';
+      else {
+        if (!has) list.push({ id: id, type: src.type || 'user', name: src.type === 'group' ? 'กลุ่ม' : src.type === 'room' ? 'ห้องแชต' : 'ผู้ใช้', at: new Date().toISOString() });
+        lineSaveTargets_(list);
+        reply = 'เชื่อมต่อแล้ว ✅ จะได้รับแจ้งเตือนเมื่อมีผู้เบิกพัสดุ และสรุปของใกล้หมดอายุ/ใกล้หมดสต็อกทุกเช้า\nพิมพ์ "ยกเลิกแจ้งเตือน" เพื่อหยุดรับ';
+      }
+    } else if (/^ยกเลิกแจ้งเตือน$/.test(text) && has) {
+      lineSaveTargets_(list.filter(function (t) { return t.id !== id; }));
+      reply = 'หยุดส่งแจ้งเตือนมาที่นี่แล้ว';
+    } else if (/^สถานะ$/.test(text) && has) {
+      var s = lineStatus_();
+      reply = 'รับแจ้งเตือนอยู่ · ผู้รับทั้งหมด ' + s.targets + ' · ใบเบิก: ' + ({ instant: 'แจ้งทันที', hourly: 'สรุปทุกชั่วโมง', off: 'ปิด' }[s.mode] || s.mode) +
+        ' · สรุปประจำวัน: ' + (s.daily_on ? 'ราว ' + s.daily_hour + ':00 น.' : 'ยังไม่ได้ตั้ง (เรียกใช้ setupLine)');
+    }
+    // ตอบกลับ (reply) ไม่นับโควตาข้อความ
+    if (reply && ev.replyToken) lineCall_('reply', { replyToken: ev.replyToken, messages: [{ type: 'text', text: reply }] });
+  });
+  return json_({ ok: true });
+}
+
+// หลังบันทึกใบเบิก: ส่งทันที หรือเก็บไว้รอสรุปทุกชั่วโมง · ส่งไม่สำเร็จไม่กระทบการเบิก
+function lineOnRequest_(db, requestId) {
+  try {
+    if (!lineTargets_().length) return;
+    var mode = lineMode_();
+    if (mode === 'instant') linePush_(BorrowCore.lineRequestText(db, requestId));
+    else if (mode === 'hourly') {
+      var p = lineProps_();
+      var pending = JSON.parse(p.getProperty('LINE_PENDING') || '[]');
+      pending.push(requestId);
+      p.setProperty('LINE_PENDING', JSON.stringify(pending));
+    }
+  } catch (e) { Logger.log('แจ้งเตือน LINE ไม่สำเร็จ: ' + e.message); }
+}
+
+// ทริกเกอร์ทุกชั่วโมง (โหมด hourly): รวมใบเบิกที่รอไว้เป็นข้อความเดียว
+function lineHourly() {
+  var p = lineProps_();
+  var pending = JSON.parse(p.getProperty('LINE_PENDING') || '[]');
+  if (!pending.length) return;
+  p.setProperty('LINE_PENDING', '[]');
+  linePush_(BorrowCore.lineRequestsDigest(loadDb_(), pending));
+}
+
+// ทริกเกอร์ทุกเช้า: ล็อตใกล้หมดอายุ + ของใกล้หมดสต็อก
+function lineDailySummary() {
+  var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  var today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  var months = Number(lineProps_().getProperty('LINE_EXPIRY_MONTHS') || 8);
+  var text = BorrowCore.lineDailyText(loadDb_(), today, months);
+  if (text) linePush_(text);
+}
+
+// เรียกใช้ครั้งเดียวหลังตั้ง LINE_TOKEN: ตั้งเวลาส่งสรุปทุกเช้า (และทุกชั่วโมงถ้าเลือกโหมด hourly) แล้วบอกสถานะ
+function setupLine() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (['lineDailySummary', 'lineHourly'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t);
+  });
+  var hour = Number(lineProps_().getProperty('LINE_DAILY_HOUR') || 8);
+  ScriptApp.newTrigger('lineDailySummary').timeBased().everyDays(1).atHour(hour).create();
+  if (lineMode_() === 'hourly') ScriptApp.newTrigger('lineHourly').timeBased().everyHours(1).create();
+  var s = lineStatus_();
+  Logger.log((s.configured ? 'ตั้ง LINE_TOKEN แล้ว' : 'ยังไม่ได้ตั้ง LINE_TOKEN (คุณสมบัติของสคริปต์)') + ' · ผู้รับที่เชื่อมต่อ ' + s.targets +
+    ' · ใบเบิก: ' + s.mode + ' · สรุปประจำวันราว ' + hour + ':00 น.' + (s.targets ? '' : ' — เพิ่ม LINE OA เป็นเพื่อน/เชิญเข้ากลุ่ม แล้วพิมพ์ "เชื่อมต่อ <PIN>"'));
+}
+
+// ทดสอบส่งข้อความ + สรุปประจำวันตอนนี้
+function testLine() {
+  var n = linePush_('ทดสอบแจ้งเตือนจากระบบเบิกพัสดุ ✅');
+  Logger.log('ส่งถึง ' + n + ' จาก ' + lineTargets_().length + ' ผู้รับ');
+  lineDailySummary();
 }
 
 // ==================== Core (กฎการเบิก/ยืมและการตัดสต็อก) — จาก docs/core.js ====================
@@ -1292,6 +1447,80 @@ var BorrowCore = (function () {
     return out.sort(function (a, b) { return a.expiry_date.localeCompare(b.expiry_date) || a.code.localeCompare(b.code); });
   }
 
+  // ---------- ข้อความแจ้งเตือน LINE (ข้อความล้วน ไม่เกิน 5,000 ตัวอักษร) ----------
+  function commas(s) { return String(s).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function baht(n) { var p = (Math.round(n * 100) / 100).toFixed(2).split('.'); return commas(p[0]) + '.' + p[1]; }
+  function thDay(ymdStr) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymdStr || ''); return m ? Number(m[3]) + '/' + Number(m[2]) + '/' + (Number(m[1]) + 543) : ''; }
+  function packNote(item, q) { return item && item.pack_qty > 0 ? ' (' + commas(q * item.pack_qty) + ' ' + (item.pack_unit || 'ชิ้น') + ')' : ''; }
+  // ใบเบิกใหม่: เลขที่ ผู้เบิก แผนก รายการ ยอดเงิน และของที่ยอดติดลบ (เบิกของที่หมด)
+  function lineRequestText(db, requestId) {
+    var r = byId(db.requests, requestId);
+    if (!r) return '';
+    var dept = find(db.departments, function (d) { return d.name === r.department; });
+    var ls = lines(db, r.id);
+    var out = ['📦 มีผู้เบิกพัสดุ ' + r.request_no, 'ผู้เบิก: ' + r.borrower_name + ' · ' + (dept && dept.full_name ? dept.full_name + ' (' + r.department + ')' : r.department),
+      'เวลา: ' + thaiStamp(r.created_at) + ' น.'];
+    ls.slice(0, 15).forEach(function (l) {
+      var it = byId(db.items, l.item_id) || { name: '(ลบแล้ว)', unit: '' };
+      out.push('• ' + it.name + ' ×' + commas(l.qty) + ' ' + it.unit + packNote(it, l.qty));
+    });
+    if (ls.length > 15) out.push('และอีก ' + (ls.length - 15) + ' รายการ');
+    out.push('รวม ' + ls.length + ' รายการ · ' + baht(requestValue(db, r.id)) + ' บาท');
+    var short = ls.map(function (l) { return byId(db.items, l.item_id); }).filter(function (i) { return i && i.available_qty < 0; });
+    if (short.length) out.push('⚠️ ของไม่พอ (ยอดติดลบ): ' + short.map(function (i) { return i.name + ' ' + commas(i.available_qty) + ' ' + i.unit; }).join(', '));
+    if (r.note) out.push('หมายเหตุ: ' + r.note);
+    return out.join('\n');
+  }
+  // สรุปประจำวัน: ล็อตใกล้หมดอายุ (ภายใน months เดือน) และของใกล้หมดสต็อก · ไม่มีอะไรต้องแจ้ง = ข้อความว่าง (ไม่ส่ง)
+  function lineDailyText(db, today, months) {
+    var exp = expiryAlerts(db, today, months);
+    var urgent = exp.filter(function (x) { return x.days <= 30; });
+    var later = exp.filter(function (x) { return x.days > 30; });
+    // ใกล้หมด = ถึงจุดสั่งซื้อที่ตั้งไว้ หรือยอดติดลบ (เบิกของที่หมด) · ไม่นับของที่ไม่ได้ตั้งจุดสั่งซื้อและยอดเป็น 0 (มีเป็นร้อยรายการ)
+    var low = db.items.filter(function (i) { return i.active && (i.available_qty < 0 || (i.min_qty > 0 && i.available_qty <= i.min_qty)); })
+      .sort(function (a, b) { return a.available_qty - b.available_qty || a.code.localeCompare(b.code); });
+    if (!exp.length && !low.length) return '';
+    var lot = function (x) {
+      var when = x.expired ? 'หมดอายุแล้ว' : x.days === 0 ? 'หมดอายุวันนี้' : 'อีก ' + commas(x.days) + ' วัน';
+      return '• ' + x.name + ' ~' + commas(x.qty) + ' ' + x.unit + ' · ' + thDay(x.expiry_date) + ' (' + when + ')';
+    };
+    var out = ['🔔 สรุปพัสดุประจำวันที่ ' + thDay(today)];
+    if (urgent.length) {
+      out.push('', '⛔ หมดอายุแล้ว / ภายใน 30 วัน: ' + urgent.length + ' ล็อต');
+      urgent.slice(0, 10).forEach(function (x) { out.push(lot(x)); });
+      if (urgent.length > 10) out.push('และอีก ' + (urgent.length - 10) + ' ล็อต');
+    }
+    if (later.length) {
+      out.push('', '⏳ ใกล้หมดอายุ (ภายใน ' + months + ' เดือน): ' + later.length + ' ล็อต');
+      later.slice(0, 5).forEach(function (x) { out.push(lot(x)); });
+      if (later.length > 5) out.push('และอีก ' + (later.length - 5) + ' ล็อต');
+    }
+    if (low.length) {
+      out.push('', '📉 ใกล้หมดสต็อก: ' + low.length + ' รายการ');
+      low.slice(0, 10).forEach(function (i) {
+        out.push('• ' + i.name + ' เหลือ ' + commas(i.available_qty) + ' ' + i.unit + (i.min_qty ? ' (ขั้นต่ำ ' + commas(i.min_qty) + ')' : ''));
+      });
+      if (low.length > 10) out.push('และอีก ' + (low.length - 10) + ' รายการ');
+    }
+    out.push('', 'ดูทั้งหมดได้ที่กระดิ่งแจ้งเตือนในเว็บ (โหมดเจ้าหน้าที่)');
+    return out.join('\n');
+  }
+  // ใบเบิกหลายใบรวมเป็นข้อความเดียว (โหมดสรุปทุกชั่วโมง ประหยัดโควตาข้อความ)
+  function lineRequestsDigest(db, ids) {
+    var rs = ids.map(function (id) { return byId(db.requests, id); }).filter(Boolean);
+    if (!rs.length) return '';
+    var total = 0;
+    var out = ['📦 มีผู้เบิกพัสดุ ' + rs.length + ' ใบ'];
+    rs.slice(0, 20).forEach(function (r) {
+      var v = requestValue(db, r.id);
+      total += v;
+      out.push('• ' + r.request_no + ' ' + r.borrower_name + ' (' + r.department + ') ' + lines(db, r.id).length + ' รายการ · ' + baht(v) + ' บาท');
+    });
+    if (rs.length > 20) out.push('และอีก ' + (rs.length - 20) + ' ใบ');
+    out.push('รวม ' + baht(total) + ' บาท');
+    return out.join('\n');
+  }
+
   // ข้อมูลบริษัทผู้จำหน่าย: การส่งของ (รับเข้าที่ระบุบริษัท ไม่นับยอดยกมา) มูลค่ารวม มูลค่าในปี year พัสดุที่ส่ง และประวัติแยกตามใบส่งของ
   function supplierSummary(db, year) {
     year = str(year);
@@ -1458,7 +1687,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { guessPack: guessPack, budgetSummary: budgetSummary, fiscalYear: fiscalYear, fiscalRange: fiscalRange, ledgerSummary: ledgerSummary, applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { lineRequestText: lineRequestText, lineDailyText: lineDailyText, lineRequestsDigest: lineRequestsDigest, guessPack: guessPack, budgetSummary: budgetSummary, fiscalYear: fiscalYear, fiscalRange: fiscalRange, ledgerSummary: ledgerSummary, applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

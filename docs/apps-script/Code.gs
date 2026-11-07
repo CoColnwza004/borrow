@@ -10,7 +10,12 @@
  */
 
 // *** เปลี่ยนรหัส PIN สำหรับเจ้าหน้าที่พัสดุ (ใช้ดูประวัติเบิก / จัดการสต็อก) ***
+// แนะนำ: ตั้งใน ตั้งค่าโปรเจ็กต์ (⚙) → คุณสมบัติของสคริปต์ → ADMIN_PIN = รหัสของคุณ ครั้งเดียว
+// แล้ววางโค้ดเวอร์ชันใหม่ทับได้เลยโดยไม่ต้องแก้บรรทัดนี้ (ค่าในคุณสมบัติของสคริปต์ใช้ก่อน)
 var ADMIN_PIN = '1234';
+function adminPin_() {
+  try { return PropertiesService.getScriptProperties().getProperty('ADMIN_PIN') || ADMIN_PIN; } catch (e) { return ADMIN_PIN; }
+}
 
 // ชื่อแท็บคงไว้ตามเวอร์ชันก่อน เพื่อให้ชีตที่ใช้งานอยู่แล้วอ่านต่อได้
 var SHEET_NAMES = {
@@ -191,11 +196,15 @@ function doPost(e) {
   } catch (err) {
     return json_({ ok: false, error: 'คำขอไม่ถูกต้อง' });
   }
+  // Webhook จาก LINE OA (มี events) — ดู Line.gs
+  if (body && Array.isArray(body.events) && body.destination !== undefined) {
+    return typeof lineWebhook_ === 'function' ? lineWebhook_(body) : json_({ ok: true });
+  }
   return handle_(body);
 }
 
 function handle_(body) {
-  var isAdmin = String(body.pin || '') === ADMIN_PIN;
+  var isAdmin = String(body.pin || '') === adminPin_();
   if (body.action === 'load' && !isAdmin) {
     var c = cache_();
     var hit = c && c.get(PUBLIC_CACHE_KEY);
@@ -212,6 +221,8 @@ function handle_(body) {
     if (!readOnly) {
       result = BorrowCore.run(db, body.action, body.payload, { isAdmin: isAdmin });
       saveDb_(db);
+      // แจ้งเตือน LINE OA (ถ้าตั้งไว้ · ติดตั้งแบบแยกไฟล์โดยไม่มี Line.gs = ข้ามไป)
+      if (body.action === 'createRequest' && typeof lineOnRequest_ === 'function') lineOnRequest_(db, result);
     } else if (body.action === 'checkPin') {
       result = BorrowCore.run(db, 'checkPin', null, { isAdmin: isAdmin });
     } else {
@@ -224,6 +235,7 @@ function handle_(body) {
     if (isAdmin) {
       var ss = SpreadsheetApp.getActiveSpreadsheet();
       out.sheet = { url: ss.getUrl(), name: ss.getName() };
+      try { if (typeof lineStatus_ === 'function') out.line = lineStatus_(); } catch (e) { /* ยังไม่อนุญาตสิทธิ์ใหม่ */ }
     }
     return json_(out);
   } catch (err) {
