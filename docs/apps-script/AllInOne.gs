@@ -539,7 +539,8 @@ var BorrowCore = (function () {
     // pack_qty ว่าง = ยังไม่ได้ตั้ง (ระบบเดาจากชื่อให้) · 0 = ไม่มีขนาดบรรจุ
     items: ['id', 'code', 'name', 'category', 'unit', 'available_qty', 'min_qty', 'location', 'active', 'price', 'pack_qty', 'pack_unit'],
     // edited_at = แก้ไขใบเบิกล่าสุดเมื่อ (ว่าง = ไม่เคยแก้)
-    requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'status', 'created_at', 'note', 'edited_at'],
+    // received_at = เจ้าหน้าที่ติ๊กว่าผู้เบิกรับของ/เซ็นเอกสารแล้วเมื่อ (ว่าง = ยังไม่รับ)
+    requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'status', 'created_at', 'note', 'edited_at', 'received_at'],
     // price = ราคาต่อหน่วย ณ วันที่เบิก (ราคาพัสดุเปลี่ยนภายหลัง ใบเบิกเดิมไม่เปลี่ยน)
     request_items: ['request_id', 'item_id', 'qty', 'price'],
     // รับเข้า: บริษัทผู้จำหน่าย วันหมดอายุ (YYYY-MM-DD) และเลขใบส่งของ ของล็อตนั้น
@@ -769,7 +770,7 @@ var BorrowCore = (function () {
   }
 
   var MASTERS = { departments: 1, categories: 1, suppliers: 1, units: 1, locations: 1 };
-  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest', 'addBudget', 'setBudgets', 'removeBudget', 'receiveBatch', 'editReceipt', 'setPacks', 'convertToPieces'];
+  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest', 'addBudget', 'setBudgets', 'removeBudget', 'receiveBatch', 'editReceipt', 'setPacks', 'convertToPieces', 'markReceived'];
 
   // ข้อมูลล็อตที่รับเข้า (ไม่บังคับ): บริษัท วันหมดอายุ เลขใบส่งของ
   function lot(p) {
@@ -813,7 +814,7 @@ var BorrowCore = (function () {
       });
       var r = {
         id: nextId(db.requests), request_no: prefix + (seq + 1 < 1000 ? ('00' + (seq + 1)).slice(-3) : String(seq + 1)), borrower_name: name, phone: str(p.phone),
-        department: dept, purpose: str(p.purpose), status: 'issued', created_at: stamp(ctx.now), note: str(p.note), edited_at: '',
+        department: dept, purpose: str(p.purpose), status: 'issued', created_at: stamp(ctx.now), note: str(p.note), edited_at: '', received_at: '',
       };
       db.requests.push(r);
       Object.keys(merged).forEach(function (id) {
@@ -879,6 +880,15 @@ var BorrowCore = (function () {
         fail('ประเภทการปรับสต็อกไม่ถูกต้อง');
       }
       return item.id;
+    },
+
+    // เจ้าหน้าที่ติ๊ก/ยกเลิกเครื่องหมาย "รับของ/เซ็นเอกสารแล้ว" ของใบเบิก · ids = หลายใบพร้อมกันได้
+    markReceived: function (db, p, ctx) {
+      var ids = (p.ids || [p.id]).map(Number);
+      var rs = ids.map(function (id) { return byId(db.requests, id) || fail('ไม่พบใบเบิกนี้ (อาจถูกลบไปแล้ว)'); });
+      var at = p.received === false ? '' : stamp(ctx.now);
+      rs.forEach(function (r) { if (!at || !r.received_at) r.received_at = at; });
+      return rs.length;
     },
 
     // รับเข้าหลายรายการตามใบส่งของ 1 ใบ: บริษัท เลขใบส่งของ วันที่รับ ใช้ร่วมกัน · items = [{ item_id, qty, price, expiry_date }]
@@ -1235,6 +1245,7 @@ var BorrowCore = (function () {
       ['จำนวนรวม', function (r) { return lines(db, r.id).reduce(function (n, l) { return n + l.qty; }, 0); }],
       ['รวมเงิน (บาท)', function (r) { return requestValue(db, r.id); }],
       ['หมายเหตุ', function (r) { return r.note; }],
+      ['รับของ/เซ็นแล้ว', function (r) { return r.received_at ? '✓ ' + thaiStamp(r.received_at) : ''; }],
     ];
     var reqSys = TABLES.requests.filter(function (c) { return !LABELS.requests[c]; });
     out.requests = {

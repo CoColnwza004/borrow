@@ -133,6 +133,7 @@ async function remote(action, payload) {
   // Apps Script เวอร์ชันเก่า (ก่อนมีแท็บหน่วยนับ / สถานที่เก็บ / ราคา) ส่งข้อมูลเจ้าหน้าที่มาโดยไม่มี units
   if (state.pin && data.state) { state.oldServer = !('units' in data.state); state.noBudget = !('budgets' in data.state); }
   if (data.state?.items?.length) state.noPack = !('pack_qty' in data.state.items[0]);
+  if (state.pin && data.state?.requests?.length) state.noRcv = !('received_at' in data.state.requests[0]);
   return data;
 }
 
@@ -389,8 +390,10 @@ function stockBar(i) {
   return `<div class="bar ${i.available_qty <= 0 ? 'empty-stock' : isLow(i) ? 'low' : ''}"><span style="width:${pct}%"></span></div>`;
 }
 function bindRowClicks(root) {
-  $$('[data-item]', root).forEach((el) => el.addEventListener('click', () => showItem(Number(el.dataset.item))));
-  $$('[data-request]', root).forEach((el) => el.addEventListener('click', () => showRequest(Number(el.dataset.request))));
+  // ปุ่มในแถว (เช่น ติ๊กรับของแล้ว) ไม่เปิดรายละเอียด
+  const go = (fn) => (e) => { if (!e.target.closest('[data-stop]')) fn(); };
+  $$('[data-item]', root).forEach((el) => el.addEventListener('click', go(() => showItem(Number(el.dataset.item)))));
+  $$('[data-request]', root).forEach((el) => el.addEventListener('click', go(() => showRequest(Number(el.dataset.request)))));
 }
 
 function downloadCsv(name, header, rows) {
@@ -917,6 +920,7 @@ async function syncFromSheet({ manual = false } = {}) {
   const hud = manual ? progressHud('กำลังดึงข้อมูลล่าสุด', 'จาก Google Sheet…') : null;
   try {
     await store.load();
+    applyPendingReceived();
     const snap = JSON.stringify(state.db);
     hud?.success(snap === lastSnapshot ? 'ข้อมูลเป็นปัจจุบันแล้ว' : 'อัปเดตข้อมูลแล้ว', liveText());
     if ($('#bd-sync')) $('#bd-sync').textContent = 'อัปเดต ' + state.syncedAt.toLocaleTimeString('th-TH');
@@ -925,6 +929,7 @@ async function syncFromSheet({ manual = false } = {}) {
     if (modalOpen() || currentRoute() !== key) return;
     if (key === 'request') redrawPickList?.();
     else if (key === 'items' && redrawItems) redrawItems();
+    else if (key === 'requests' && redrawRequests) redrawRequests();
     else render();
   } catch (e) { if (hud) hud.fail(e.message); else toast(e.message, true); } finally {
     syncing = false;
@@ -2085,6 +2090,69 @@ function stockForm(item, type) {
 
 // ===================== Requests (history) =====================
 // ช่วงเวลา: ทุกเดือน / วันนี้ / เลือกเดือน (YYYY-MM)
+// ===================== ติ๊ก "รับของ/เซ็นเอกสารแล้ว" (เจ้าหน้าที่) =====================
+// กดแล้วเปลี่ยนทันที (ไม่ต้องรอ) แล้วบันทึกลงชีตเบื้องหลังทีละรายการตามลำดับ · บันทึกไม่สำเร็จ = กลับเป็นค่าเดิม
+let redrawRequests = null;
+const rcv = { chain: Promise.resolve(), pending: new Map() };
+const rcvText = (r) => (r.received_at ? `รับของ/เซ็นแล้ว ${fmtDateTime(r.received_at)}` : 'ยังไม่รับของ/ยังไม่เซ็น');
+function rcvButton(r, big = false) {
+  const on = !!r.received_at;
+  return `<button type="button" class="rcv-check${on ? ' on' : ''}${big ? ' big' : ''}" data-stop data-rcv="${r.id}" aria-pressed="${on}"
+    aria-label="${on ? 'ยกเลิกเครื่องหมายรับของแล้ว' : 'ทำเครื่องหมายว่ารับของ/เซ็นแล้ว'} ${esc(r.request_no)}" title="${esc(rcvText(r))}">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z"/></svg></button>`;
+}
+// ข้อมูลชุดใหม่จากชีต (ระหว่างที่ยังบันทึกไม่เสร็จ) ใส่เครื่องหมายที่เพิ่งกดกลับเข้าไป
+function applyPendingReceived() {
+  if (!rcv.pending.size) return;
+  rcv.pending.forEach((v, id) => { const r = state.db.requests.find((x) => x.id === id); if (r) r.received_at = v; });
+  rvCache.db = null;
+}
+function redrawReceived(id) {
+  rvCache.db = null;
+  lastSnapshot = JSON.stringify(state.db);
+  if (currentRoute() === 'requests') redrawRequests?.();
+  const r = state.db.requests.find((x) => x.id === id);
+  $$(`.rcv-detail[data-rcv-box="${id}"]`).forEach((box) => { box.outerHTML = r ? rcvDetail(r) : ''; });
+}
+function setReceived(id, on) {
+  const r = state.db.requests.find((x) => x.id === id);
+  if (!r) return;
+  if (state.noRcv) { toast('Apps Script ยังเป็นเวอร์ชันเก่า: วาง AllInOne.gs ล่าสุด แล้ว Deploy → New version ก่อน', true); return; }
+  const prev = r.received_at;
+  r.received_at = on ? nowStamp() : '';
+  rcv.pending.set(id, r.received_at);
+  redrawReceived(id);
+  if (on) navigator.vibrate?.(12);
+  rcv.chain = rcv.chain.then(async () => {
+    const mine = rcv.pending.get(id);
+    try {
+      await store.act('markReceived', { id, received: on }, { quiet: true });
+      if (rcv.pending.get(id) === mine) rcv.pending.delete(id);
+    } catch (e) {
+      rcv.pending.delete(id);
+      const x = state.db.requests.find((q) => q.id === id);
+      if (x) x.received_at = prev;
+      toast(`บันทึกเครื่องหมายไม่สำเร็จ: ${e.message}`, true);
+    }
+    applyPendingReceived();
+    redrawReceived(id);
+  });
+}
+// ช่องสถานะในหน้ารายละเอียดใบเบิก
+function rcvDetail(r) {
+  return `<div class="rcv-detail${r.received_at ? ' on' : ''}" data-rcv-box="${r.id}">${rcvButton(r, true)}
+    <div><b>${r.received_at ? 'รับของ/เซ็นเอกสารแล้ว' : 'ยังไม่ได้ทำเครื่องหมายว่ารับของ'}</b>
+      <span class="muted small">${r.received_at ? fmtDateTime(r.received_at) + ' · กดอีกครั้งเพื่อยกเลิก' : 'กดเมื่อผู้เบิกรับของและเซ็นใบเบิกแล้ว'}</span></div></div>`;
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-rcv]');
+  if (!b) return;
+  e.preventDefault();
+  const id = Number(b.dataset.rcv);
+  const r = state.db.requests.find((x) => x.id === id);
+  if (r) setReceived(id, !r.received_at);
+});
+
 function renderRequests(page) {
   const params = hashParams();
   const thisMonth = today().slice(0, 7);
@@ -2100,6 +2168,9 @@ function renderRequests(page) {
         ${months.map((m) => `<option value="${m}">${esc(PdfDoc.monthName(m))} (${fmtNum(counts[m] || 0)} ใบ)</option>`).join('')}
       </select></label>
       <div class="search">${ICON.search}<input type="search" id="r-q" placeholder="ค้นหาเลขที่ ชื่อ แผนก หรือพัสดุ"></div>
+      <div class="segmented" id="r-rcv" role="group" aria-label="สถานะรับของ">
+        <button type="button" data-v="">ทั้งหมด</button><button type="button" data-v="no">ยังไม่รับ<span class="seg-count" id="r-rcv-no"></span></button><button type="button" data-v="yes">รับแล้ว</button>
+      </div>
       <button class="btn" id="r-export">ส่งออก CSV</button>
       <button class="btn primary" data-monthly id="r-monthly">${ICON.doc} สรุปรายงาน (PDF)</button>
     </div>
@@ -2107,14 +2178,21 @@ function renderRequests(page) {
     <section class="card"><ul class="rows" id="req-body"></ul></section>`);
   $('#r-month').value = when;
 
+  let rcvf = ['no', 'yes'].includes(params.get('rcv')) ? params.get('rcv') : '';
   const match = (r) => !when || r.created_at.startsWith(when === 'today' ? today() : when);
-  const filtered = () => {
+  const filtered = (useRcv = true) => {
     const q = $('#r-q').value.trim().toLowerCase();
-    return requestsView().filter((r) => match(r) &&
+    return requestsView().filter((r) => match(r) && (!useRcv || !rcvf || (rcvf === 'yes') === !!r.received_at) &&
       (!q || [r.request_no, r.borrower_name, r.department, r.item_summary].some((s) => s.toLowerCase().includes(q))));
   };
   const draw = () => {
-    history.replaceState(null, '', `#/requests${when === 'today' ? '?tab=today' : when ? '?m=' + when : ''}`);
+    const qs = new URLSearchParams();
+    if (when === 'today') qs.set('tab', 'today'); else if (when) qs.set('m', when);
+    if (rcvf) qs.set('rcv', rcvf);
+    history.replaceState(null, '', `#/requests${qs.toString() ? '?' + qs : ''}`);
+    $$('#r-rcv button').forEach((b) => b.classList.toggle('active', b.dataset.v === rcvf));
+    const waiting = filtered(false).filter((r) => !r.received_at).length;
+    $('#r-rcv-no').textContent = waiting ? ` ${fmtNum(waiting)}` : '';
     // สรุปรายเดือนเปิดที่เดือนที่เลือกไว้
     $('#r-monthly').dataset.month = /^\d{4}-\d{2}$/.test(when) ? when : when === 'today' ? thisMonth : '';
     const rows = filtered();
@@ -2123,11 +2201,12 @@ function renderRequests(page) {
     $('#r-sum').textContent = `${fmtNum(rows.length)} ใบ · ${fmtNum(qty)} หน่วย${money ? ` · รวม ${fmtMoney(money)} บาท` : ''}`;
     const shown = rows.slice(0, limit);
     $('#req-body').innerHTML = shown.map((r) => `
-      <li><div class="row" data-request="${r.id}">
-        <span class="pick-icon">${ICON.withdraw}</span>
+      <li><div class="row${r.received_at ? ' rcv-on' : ''}" data-request="${r.id}">
+        ${rcvButton(r)}
         <div class="row-body">
           <div class="row-title">${esc(r.borrower_name)} <span class="muted small" style="font-weight:400">· ${esc(r.department)}</span></div>
           <div class="row-sub">${esc(r.request_no)}<span class="when-m"> · ${fmtDateTime(r.created_at)}</span></div>
+          ${r.received_at ? `<div class="rcv-note">✓ รับของ/เซ็นแล้ว ${fmtDateTime(r.received_at)}</div>` : ''}
           ${itemLines(r.items)}
         </div>
         <div class="row-end"><span class="when">${fmtDateTime(r.created_at)}</span>${r.total ? `<span class="row-money">${fmtMoney(r.total)} บาท</span>` : ''}</div>
@@ -2138,14 +2217,16 @@ function renderRequests(page) {
     $('#r-more')?.addEventListener('click', () => { limit += PAGE; draw(); });
     bindRowClicks($('#req-body'));
   };
+  redrawRequests = draw;
+  $('#r-rcv').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b) { rcvf = b.dataset.v; limit = PAGE; draw(); } });
   const PAGE = 200;
   let limit = PAGE;
   $('#r-month').addEventListener('change', (e) => { when = e.target.value; limit = PAGE; draw(); });
   let qFrame = 0;
   $('#r-q').addEventListener('input', () => { limit = PAGE; cancelAnimationFrame(qFrame); qFrame = requestAnimationFrame(draw); });
   $('#r-export').addEventListener('click', () => downloadCsv('requests' + (when ? '-' + when : ''),
-    ['เลขที่', 'วันเวลาที่เบิก', 'ผู้เบิก', 'แผนก', 'หมายเหตุ', 'รหัสพัสดุ', 'พัสดุ', 'จำนวน', 'หน่วย', 'ราคาต่อหน่วย', 'รวมเงิน (บาท)'],
-    filtered().flatMap((r) => r.items.map((l) => [r.request_no, r.created_at, r.borrower_name, r.department, r.note, l.code, l.name, l.qty, l.unit, l.price, l.value]))));
+    ['เลขที่', 'วันเวลาที่เบิก', 'ผู้เบิก', 'แผนก', 'หมายเหตุ', 'รหัสพัสดุ', 'พัสดุ', 'จำนวน', 'หน่วย', 'ราคาต่อหน่วย', 'รวมเงิน (บาท)', 'รับของ/เซ็นแล้ว'],
+    filtered().flatMap((r) => r.items.map((l) => [r.request_no, r.created_at, r.borrower_name, r.department, r.note, l.code, l.name, l.qty, l.unit, l.price, l.value, r.received_at]))));
   draw();
 }
 
@@ -2163,6 +2244,7 @@ function showRequest(id) {
       ${r.edited_at ? `<dt>แก้ไขล่าสุด</dt><dd>${fmtDateTime(r.edited_at)}</dd>` : ''}
       ${isAdmin() ? requestBudgetLine(raw) : ''}
     </dl>
+    ${isAdmin() ? rcvDetail(raw) : ''}
     <div class="sub-card table-wrap"><table class="slip-table">
       <thead><tr><th>พัสดุ</th><th class="num">จำนวน</th><th class="num">ราคา/หน่วย</th><th class="num">รวม (บาท)</th></tr></thead>
       <tbody>${r.items.map((l) => `<tr>

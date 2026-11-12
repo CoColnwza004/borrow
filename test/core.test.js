@@ -1207,3 +1207,26 @@ test('core: LINE daily summary lists expiring lots and low stock, and is empty w
   assert.match(t, /ภายใน 8 เดือน\): 1 ล็อต\n• ถุงมือ M ~10 กล่อง · 1\/3\/2570/);
   assert.match(t, /ใกล้หมดสต็อก: 1 รายการ\n• ผ้าก๊อซ เหลือ 0 ห่อ \(ขั้นต่ำ 1\)/);
 });
+
+test('core: staff tick "received/signed" on a request, shown in the sheet, cleared on untick', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const a = Core.run(db, 'createRequest', { ...person, items: [{ item_id: 1, qty: 1 }] }, user);
+  const b = Core.run(db, 'createRequest', { ...person, items: [{ item_id: 2, qty: 1 }] }, user);
+  assert.equal(db.requests[0].received_at, '');
+  assert.throws(() => Core.run(db, 'markReceived', { id: a }, user), /PIN/);
+  Core.run(db, 'markReceived', { id: a }, { ...admin, now: new Date('2026-11-12T10:20:30') });
+  assert.equal(db.requests.find((r) => r.id === a).received_at, '2026-11-12 10:20:30');
+  // ติ๊กซ้ำไม่เปลี่ยนเวลาเดิม · ติ๊กหลายใบพร้อมกันได้
+  assert.equal(Core.run(db, 'markReceived', { ids: [a, b] }, { ...admin, now: new Date('2026-11-12T11:00:00') }), 2);
+  assert.deepEqual(db.requests.map((r) => r.received_at), ['2026-11-12 10:20:30', '2026-11-12 11:00:00']);
+  const sheet = Core.sheetData(db).requests;
+  const col = sheet.header.indexOf('รับของ/เซ็นแล้ว');
+  assert.ok(col > 0 && sheet.header.includes('received_at'));
+  assert.equal(sheet.rows.find((r) => r[0] === 'WD69-001')[col], '✓ 12/11/2569 10:20:30');
+  Core.run(db, 'markReceived', { id: a, received: false }, admin);
+  assert.equal(db.requests.find((r) => r.id === a).received_at, '');
+  assert.throws(() => Core.run(db, 'markReceived', { id: 999 }, admin), /ไม่พบใบเบิก/);
+  // ชีตเดิมที่ยังไม่มีคอลัมน์นี้อ่านได้ (ว่าง = ยังไม่รับ)
+  const back = Core.normalize(JSON.parse(JSON.stringify({ ...db, requests: db.requests.map(({ received_at, ...r }) => r) })));
+  assert.equal(back.requests[0].received_at, '');
+});
