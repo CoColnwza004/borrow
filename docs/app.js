@@ -1444,6 +1444,8 @@ function lineCard() {
       <li>เพิ่ม LINE OA เป็นเพื่อน หรือเชิญเข้ากลุ่ม LINE ของเจ้าหน้าที่ แล้วพิมพ์ <code>เชื่อมต่อ รหัสPIN</code></li>
       <li>ใน Apps Script เลือกฟังก์ชัน <code>setupLine</code> แล้วกด เรียกใช้ (ตั้งเวลาสรุปทุกเช้า) · ทดสอบด้วย <code>testLine</code></li>
     </ol>
+    <p class="small"><b>ค้นหาในแชต LINE</b> (ตอบกลับฟรี): <code>เมนู</code> · <code>เช็ค ถุงมือ</code> · <code>สรุป</code> · <code>ใกล้หมดอายุ</code> ·
+      <code>ใกล้หมด</code> · <code>เบิกวันนี้</code> · <code>ยังไม่รับ</code></p>
     <p class="muted small">LINE OA แบบฟรีส่งได้ราว 300 ข้อความ/เดือน นับ 1 ข้อความต่อผู้รับ 1 คน (ส่งเข้ากลุ่มนับตามจำนวนสมาชิก) ·
       เบิกเยอะ ตั้ง <code>LINE_NOTIFY_REQUESTS</code> = <code>hourly</code> เพื่อสรุปรวมทุกชั่วโมง</p>
   </section>`;

@@ -1208,6 +1208,56 @@ test('core: LINE daily summary lists expiring lots and low stock, and is empty w
   assert.match(t, /ใกล้หมดสต็อก: 1 รายการ\n• ผ้าก๊อซ เหลือ 0 ห่อ \(ขั้นต่ำ 1\)/);
 });
 
+test('core: LINE chat commands — menu, search stock, expiring, low stock, today, not received; other text = no reply', () => {
+  const db = Core.seed(new Date('2026-10-01T08:00:00'), FIXTURE);
+  const q = (t) => Core.lineQueryText(db, t, '2026-11-07', 8);
+  assert.equal(q('สวัสดีครับ'), '');
+  assert.match(q('เมนู'), /เช็ค <ชื่อหรือรหัส>/);
+  assert.equal(q('help'), q('เมนู'));
+  assert.match(q('สรุป'), /ไม่มีของใกล้หมดอายุ/);
+  assert.match(q('ใกล้หมดอายุ'), /ไม่มีล็อต/);
+  assert.match(q('ยังไม่รับ'), /ทุกใบเบิก/);
+  assert.match(q('เบิกวันนี้'), /ยังไม่มีผู้เบิก/);
+  const at = { ...admin, now: new Date('2026-11-01T09:00:00') };
+  Core.run(db, 'stock', { item_id: 1, type: 'receive', qty: 10, expiry_date: '2026-11-20' }, at);
+  const rid = Core.run(db, 'createRequest', { ...person, items: [{ item_id: 3, qty: 3 }] }, { now: new Date('2026-11-07T09:15:00') });
+  assert.match(q('ใกล้หมดอายุ'), /1 ล็อต\n⛔ กระดาษ A4 ~10 รีม · 20\/11\/2569 \(อีก 13 วัน\)/);
+  assert.match(q('ใกล้หมด'), /ใกล้หมดสต็อก: 1 รายการ\n• ผ้าก๊อซ เหลือ 0 ห่อ/);
+  assert.match(q('เบิกวันนี้'), /วันนี้ 7\/11\/2569 เบิกแล้ว 1 ใบ\n• WD69-001 สมชาย ใจดี[\s\S]*รับของ\/เซ็นแล้ว 0 ใบ/);
+  assert.match(q('ยังไม่รับ'), /1 ใบ[\s\S]*WD69-001 สมชาย ใจดี \(งานธุรการ\) · 7\/11\/2569 09:15 น\./);
+  Core.run(db, 'markReceived', { id: rid }, admin);
+  assert.match(q('ยังไม่รับ'), /ทุกใบเบิก/);
+  // ค้นหา: ชื่อบางส่วน รหัส หลายคำ · บอกยอด ขั้นต่ำ ล็อตใกล้หมดอายุ
+  assert.match(q('เช็ค กระดาษ'), /1 รายการ\n\n• กระดาษ A4 \[OF-001\]\n {2}คงเหลือ [\d,]+ รีม[\s\S]*⏳ ล็อตใกล้หมดอายุ 20\/11\/2569 \(อีก 13 วัน\)/);
+  assert.match(q('เช็ก  of-001'), /กระดาษ A4/);
+  assert.match(q('ค้นหา ผ้า ก๊อซ'), /ผ้าก๊อซ[\s\S]*⛔ หมด 0 ห่อ/);
+  assert.match(q('เช็ค ไม่มีของนี้'), /ไม่พบพัสดุ/);
+  assert.match(q('เช็ค'), /พิมพ์ชื่อหรือรหัส/);
+  assert.ok(Core.LINE_MENU.every((t) => t.length <= 20 && q(t)), 'ปุ่มลัดทุกปุ่มเป็นคำสั่งที่ตอบได้');
+});
+
+test('Apps Script: LINE search commands answer only linked chats, with quick-reply buttons', () => {
+  const { ctx, props, fetched } = mockAppsScript();
+  for (const f of ['core.js', 'apps-script/Code.gs', 'apps-script/Line.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
+  ctx.setup();
+  props.set('LINE_TOKEN', 'tok');
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  const hook = (text, userId = 'U1') => {
+    const n = fetched.length;
+    post({ destination: 'U0', events: [{ type: 'message', replyToken: 'R', source: { type: 'user', userId }, message: { type: 'text', text } }] });
+    return fetched.length > n ? fetched.at(-1).body.messages[0] : null;
+  };
+  assert.match(hook('เมนู').text, /ยังไม่ได้เชื่อมต่อ/);
+  assert.equal(hook('เช็ค ถุงมือ'), null, 'ยังไม่เชื่อมต่อ: ไม่เปิดเผยข้อมูล');
+  assert.match(hook('เชื่อมต่อ 1234').text, /พิมพ์ "เมนู"/);
+  const r = hook('เช็ค ถุงมือ');
+  assert.equal(fetched.at(-1).url.endsWith('reply'), true);
+  assert.match(r.text, /ผลค้นหา "ถุงมือ"/);
+  assert.deepEqual(r.quickReply.items.map((i) => i.action.text), ['เมนู', 'สรุป', 'ใกล้หมดอายุ', 'ใกล้หมด', 'เบิกวันนี้', 'ยังไม่รับ']);
+  assert.match(hook('เมนู').text, /คำสั่งที่พิมพ์ได้/);
+  assert.equal(hook('ขอบคุณครับ'), null, 'คุยเล่นในกลุ่ม: ไม่ตอบ');
+});
+
 test('core: staff tick "received/signed" on a request, shown in the sheet, cleared on untick', () => {
   const db = Core.seed(new Date(), FIXTURE);
   const a = Core.run(db, 'createRequest', { ...person, items: [{ item_id: 1, qty: 1 }] }, user);
