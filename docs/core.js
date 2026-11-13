@@ -1008,6 +1008,77 @@ var BorrowCore = (function () {
     return out.join('\n');
   }
 
+  // คำสั่งค้นหาในแชต LINE (ตอบกลับฟรี ไม่นับโควตา) · ไม่ใช่คำสั่ง = '' (ไม่ตอบ)
+  var LINE_MENU = ['เมนู', 'สรุป', 'ใกล้หมดอายุ', 'ใกล้หมด', 'เบิกวันนี้', 'ยังไม่รับ'];
+  function lineMenuText() {
+    return ['📋 คำสั่งที่พิมพ์ได้', '• เช็ค <ชื่อหรือรหัส> — ดูยอดคงเหลือ เช่น "เช็ค ถุงมือ"', '• สรุป — ใกล้หมดอายุ + ใกล้หมดสต็อก',
+      '• ใกล้หมดอายุ — ล็อตที่หมดอายุภายในช่วงที่ตั้งไว้', '• ใกล้หมด — ของที่ถึงจุดสั่งซื้อหรือยอดติดลบ', '• เบิกวันนี้ — ใบเบิกของวันนี้',
+      '• ยังไม่รับ — ใบเบิกที่ยังไม่ติ๊กรับของ/เซ็น', '• สถานะ — การตั้งค่าแจ้งเตือน', '• ยกเลิกแจ้งเตือน — หยุดรับที่แชตนี้', '', 'หรือกดปุ่มด้านล่างได้เลย'].join('\n');
+  }
+  function lineQueryText(db, text, today, months) {
+    text = str(text).replace(/\s+/g, ' ');
+    var more = function (out, n, shown, unit) { if (n > shown) out.push('และอีก ' + commas(n - shown) + ' ' + unit + ' (ดูทั้งหมดในเว็บ)'); };
+    if (/^(เมนู|ช่วย|ช่วยเหลือ|คำสั่ง|help|menu|\?)$/i.test(text)) return lineMenuText();
+    if (/^(สรุป|สรุปวันนี้)$/.test(text)) return lineDailyText(db, today, months) || '✅ ไม่มีของใกล้หมดอายุหรือใกล้หมดสต็อก';
+    if (/^(ใกล้หมดอายุ|หมดอายุ|วันหมดอายุ)$/.test(text)) {
+      var exp = expiryAlerts(db, today, months);
+      if (!exp.length) return '✅ ไม่มีล็อตที่จะหมดอายุภายใน ' + months + ' เดือน';
+      var o1 = ['⏳ ล็อตหมดอายุ/ใกล้หมดอายุ (ภายใน ' + months + ' เดือน): ' + exp.length + ' ล็อต'];
+      exp.slice(0, 30).forEach(function (x) {
+        var when = x.expired ? 'หมดอายุแล้ว' : x.days === 0 ? 'หมดอายุวันนี้' : 'อีก ' + commas(x.days) + ' วัน';
+        o1.push((x.days <= 30 ? '⛔ ' : '• ') + x.name + ' ~' + commas(x.qty) + ' ' + x.unit + ' · ' + thDay(x.expiry_date) + ' (' + when + ')');
+      });
+      more(o1, exp.length, 30, 'ล็อต');
+      return o1.join('\n');
+    }
+    if (/^(ใกล้หมด|ใกล้หมดสต็อก|ของใกล้หมด|ของหมด|หมดสต็อก)$/.test(text)) {
+      var low = db.items.filter(function (i) { return i.active && (i.available_qty < 0 || (i.min_qty > 0 && i.available_qty <= i.min_qty)); })
+        .sort(function (a, b) { return a.available_qty - b.available_qty || a.code.localeCompare(b.code); });
+      if (!low.length) return '✅ ไม่มีของที่ถึงจุดสั่งซื้อ (เฉพาะรายการที่ตั้งขั้นต่ำไว้)';
+      var o2 = ['📉 ใกล้หมดสต็อก: ' + low.length + ' รายการ'];
+      low.slice(0, 30).forEach(function (i) {
+        o2.push('• ' + i.name + ' เหลือ ' + commas(i.available_qty) + ' ' + i.unit + (i.min_qty ? ' (ขั้นต่ำ ' + commas(i.min_qty) + ')' : ''));
+      });
+      more(o2, low.length, 30, 'รายการ');
+      return o2.join('\n');
+    }
+    if (/^(เบิกวันนี้|วันนี้|ใบเบิกวันนี้)$/.test(text)) {
+      var rs = db.requests.filter(function (r) { return r.created_at.slice(0, 10) === today; });
+      if (!rs.length) return 'วันนี้ (' + thDay(today) + ') ยังไม่มีผู้เบิก';
+      return lineRequestsDigest(db, rs.map(function (r) { return r.id; })).replace(/^📦 มีผู้เบิกพัสดุ/, '📦 วันนี้ ' + thDay(today) + ' เบิกแล้ว') +
+        '\n✓ รับของ/เซ็นแล้ว ' + rs.filter(function (r) { return r.received_at; }).length + ' ใบ';
+    }
+    if (/^(ยังไม่รับ|ยังไม่เซ็น|ค้างรับ)$/.test(text)) {
+      var wait = db.requests.filter(function (r) { return !r.received_at; }).sort(function (a, b) { return b.created_at.localeCompare(a.created_at); });
+      if (!wait.length) return '✅ ทุกใบเบิกติ๊กรับของ/เซ็นแล้ว';
+      var o3 = ['📝 ยังไม่ติ๊กรับของ/เซ็น: ' + wait.length + ' ใบ (ล่าสุดก่อน)'];
+      wait.slice(0, 20).forEach(function (r) { o3.push('• ' + r.request_no + ' ' + r.borrower_name + ' (' + r.department + ') · ' + thaiStamp(r.created_at).slice(0, -3) + ' น.'); });
+      more(o3, wait.length, 20, 'ใบ');
+      return o3.join('\n');
+    }
+    var m = /^(เช็ค|เช็ก|เชค|ค้นหา|หา|สต็อก|สต๊อก|ยอด|stock|check)\s*(.*)$/i.exec(text);
+    if (!m) return '';
+    var q = m[2].toLowerCase();
+    if (!q) return 'พิมพ์ชื่อหรือรหัสพัสดุต่อท้าย เช่น "เช็ค ถุงมือ" หรือ "เช็ค MD-005"';
+    var words = q.split(' ');
+    var hit = db.items.filter(function (i) {
+      var hay = (i.code + ' ' + i.name + ' ' + i.category).toLowerCase();
+      return i.active && words.every(function (w) { return hay.indexOf(w) >= 0; });
+    }).sort(function (a, b) { return (b.code.toLowerCase() === q) - (a.code.toLowerCase() === q) || a.name.length - b.name.length || a.code.localeCompare(b.code); });
+    if (!hit.length) return 'ไม่พบพัสดุ "' + m[2] + '" ลองพิมพ์คำสั้นลง เช่น ชื่อบางส่วน หรือรหัสพัสดุ';
+    var exps = expiryAlerts(db, today, months);
+    var o4 = ['🔎 ผลค้นหา "' + m[2] + '": ' + hit.length + ' รายการ'];
+    hit.slice(0, 10).forEach(function (i) {
+      var flag = i.available_qty < 0 ? '⚠️ ติดลบ ' : i.available_qty === 0 ? '⛔ หมด ' : (i.min_qty > 0 && i.available_qty <= i.min_qty) ? '📉 ใกล้หมด ' : '';
+      o4.push('', '• ' + i.name + ' [' + i.code + ']', '  คงเหลือ ' + flag + commas(i.available_qty) + ' ' + i.unit + packNote(i, i.available_qty) +
+        (i.min_qty ? ' · ขั้นต่ำ ' + commas(i.min_qty) : '') + (i.location ? ' · ที่เก็บ ' + i.location : ''));
+      var e = exps.filter(function (x) { return x.item_id === i.id; })[0];
+      if (e) o4.push('  ⏳ ล็อตใกล้หมดอายุ ' + thDay(e.expiry_date) + (e.expired ? ' (หมดอายุแล้ว)' : ' (อีก ' + commas(e.days) + ' วัน)'));
+    });
+    more(o4, hit.length, 10, 'รายการ — พิมพ์คำให้ละเอียดขึ้น');
+    return o4.join('\n');
+  }
+
   // ข้อมูลบริษัทผู้จำหน่าย: การส่งของ (รับเข้าที่ระบุบริษัท ไม่นับยอดยกมา) มูลค่ารวม มูลค่าในปี year พัสดุที่ส่ง และประวัติแยกตามใบส่งของ
   function supplierSummary(db, year) {
     year = str(year);
@@ -1174,7 +1245,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { lineRequestText: lineRequestText, lineDailyText: lineDailyText, lineRequestsDigest: lineRequestsDigest, guessPack: guessPack, budgetSummary: budgetSummary, fiscalYear: fiscalYear, fiscalRange: fiscalRange, ledgerSummary: ledgerSummary, applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { lineQueryText: lineQueryText, LINE_MENU: LINE_MENU, lineRequestText: lineRequestText, lineDailyText: lineDailyText, lineRequestsDigest: lineRequestsDigest, guessPack: guessPack, budgetSummary: budgetSummary, fiscalYear: fiscalYear, fiscalRange: fiscalRange, ledgerSummary: ledgerSummary, applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;

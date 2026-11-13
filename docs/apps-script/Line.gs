@@ -52,8 +52,17 @@ function linePush_(text) {
   return sent;
 }
 
+// ปุ่มลัดใต้ข้อความตอบกลับ (กดแล้วส่งคำสั่งให้เอง)
+function lineQuickReply_() {
+  return { items: BorrowCore.LINE_MENU.map(function (t) { return { type: 'action', action: { type: 'message', label: t, text: t } }; }) };
+}
+function lineToday_() {
+  return Utilities.formatDate(new Date(), SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone(), 'yyyy-MM-dd');
+}
+
 // Webhook จาก LINE: พิมพ์ "เชื่อมต่อ <PIN>" = รับแจ้งเตือน · "ยกเลิกแจ้งเตือน" · "สถานะ"
-// (Apps Script อ่าน header X-Line-Signature ไม่ได้ จึงใช้ PIN เป็นตัวยืนยันก่อนเพิ่มผู้รับ)
+// แชตที่เชื่อมต่อแล้วพิมพ์ค้นหาได้: เมนู · เช็ค <ชื่อ> · สรุป · ใกล้หมดอายุ · ใกล้หมด · เบิกวันนี้ · ยังไม่รับ
+// (Apps Script อ่าน header X-Line-Signature ไม่ได้ จึงใช้ PIN เป็นตัวยืนยันก่อนเพิ่มผู้รับ · แชตที่ยังไม่เชื่อมต่อค้นหาข้อมูลไม่ได้)
 function lineWebhook_(body) {
   (body.events || []).forEach(function (ev) {
     if (ev.type !== 'message' || !ev.message || ev.message.type !== 'text') return;
@@ -64,13 +73,16 @@ function lineWebhook_(body) {
     var list = lineTargets_();
     var has = list.some(function (t) { return t.id === id; });
     var reply = '';
+    var quick = false;
     var m = /^(เชื่อมต่อ|connect)\s*(\S+)$/i.exec(text);
     if (m) {
       if (m[2] !== adminPin_()) reply = 'รหัสไม่ถูกต้อง';
       else {
         if (!has) list.push({ id: id, type: src.type || 'user', name: src.type === 'group' ? 'กลุ่ม' : src.type === 'room' ? 'ห้องแชต' : 'ผู้ใช้', at: new Date().toISOString() });
         lineSaveTargets_(list);
-        reply = 'เชื่อมต่อแล้ว ✅ จะได้รับแจ้งเตือนเมื่อมีผู้เบิกพัสดุ และสรุปของใกล้หมดอายุ/ใกล้หมดสต็อกทุกเช้า\nพิมพ์ "ยกเลิกแจ้งเตือน" เพื่อหยุดรับ';
+        reply = 'เชื่อมต่อแล้ว ✅ จะได้รับแจ้งเตือนเมื่อมีผู้เบิกพัสดุ และสรุปของใกล้หมดอายุ/ใกล้หมดสต็อกทุกเช้า\n' +
+          'พิมพ์ "เมนู" เพื่อดูคำสั่งค้นหา เช่น "เช็ค ถุงมือ" · พิมพ์ "ยกเลิกแจ้งเตือน" เพื่อหยุดรับ';
+        quick = true;
       }
     } else if (/^ยกเลิกแจ้งเตือน$/.test(text) && has) {
       lineSaveTargets_(list.filter(function (t) { return t.id !== id; }));
@@ -78,10 +90,22 @@ function lineWebhook_(body) {
     } else if (/^สถานะ$/.test(text) && has) {
       var s = lineStatus_();
       reply = 'รับแจ้งเตือนอยู่ · ผู้รับทั้งหมด ' + s.targets + ' · ใบเบิก: ' + ({ instant: 'แจ้งทันที', hourly: 'สรุปทุกชั่วโมง', off: 'ปิด' }[s.mode] || s.mode) +
-        ' · สรุปประจำวัน: ' + (s.daily_on ? 'ราว ' + s.daily_hour + ':00 น.' : 'ยังไม่ได้ตั้ง (เรียกใช้ setupLine)');
+        ' · สรุปประจำวัน: ' + (s.daily_on ? 'ราว ' + s.daily_hour + ':00 น.' : 'ยังไม่ได้ตั้ง (เรียกใช้ setupLine)') + '\nพิมพ์ "เมนู" เพื่อดูคำสั่งค้นหา';
+      quick = true;
+    } else if (has) {
+      try {
+        reply = BorrowCore.lineQueryText(loadDb_(), text, lineToday_(), Number(lineProps_().getProperty('LINE_EXPIRY_MONTHS') || 8));
+      } catch (e) { reply = 'ค้นหาไม่สำเร็จ: ' + e.message; }
+      quick = !!reply;
+    } else if (/^(เมนู|ช่วย|help|menu)$/i.test(text)) {
+      reply = 'แชตนี้ยังไม่ได้เชื่อมต่อ พิมพ์ "เชื่อมต่อ <รหัส PIN เจ้าหน้าที่>" ก่อน แล้วจึงค้นหาพัสดุได้';
     }
     // ตอบกลับ (reply) ไม่นับโควตาข้อความ
-    if (reply && ev.replyToken) lineCall_('reply', { replyToken: ev.replyToken, messages: [{ type: 'text', text: reply }] });
+    if (reply && ev.replyToken) {
+      var msg = { type: 'text', text: reply.slice(0, 4900) };
+      if (quick) msg.quickReply = lineQuickReply_();
+      lineCall_('reply', { replyToken: ev.replyToken, messages: [msg] });
+    }
   });
   return json_({ ok: true });
 }
