@@ -1446,6 +1446,8 @@ function lineCard() {
     </ol>
     <p class="small"><b>ค้นหาในแชต LINE</b> (ตอบกลับฟรี): <code>เมนู</code> · <code>เช็ค ถุงมือ</code> · <code>สรุป</code> · <code>ใกล้หมดอายุ</code> ·
       <code>ใกล้หมด</code> · <code>เบิกวันนี้</code> · <code>ยังไม่รับ</code></p>
+    <p class="small"><b>เมนูปุ่มใหญ่ด้านล่างแชต (Rich menu)</b>: ใน Apps Script เรียกใช้ <code>setupRichMenu</code> ครั้งเดียว ·
+      ข้อความส่งเป็นการ์ดอ่านง่าย (ตั้ง <code>LINE_STYLE</code> = <code>text</code> ถ้าต้องการข้อความล้วน)</p>
     <p class="muted small">LINE OA แบบฟรีส่งได้ราว 300 ข้อความ/เดือน นับ 1 ข้อความต่อผู้รับ 1 คน (ส่งเข้ากลุ่มนับตามจำนวนสมาชิก) ·
       เบิกเยอะ ตั้ง <code>LINE_NOTIFY_REQUESTS</code> = <code>hourly</code> เพื่อสรุปรวมทุกชั่วโมง</p>
   </section>`;

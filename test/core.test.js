@@ -211,6 +211,8 @@ function mockAppsScript() {
   const cache = new Map();
   const props = new Map();
   const fetched = [];
+  // LINE API จำลอง: fail(url, body) คืน true = ตอบ 400 · สร้าง rich menu ได้ id RM1 · list มีเมนูเก่า 1 อัน + เมนูอื่น 1 อัน
+  const line = { fail: null };
   const ScriptApp = {
     getProjectTriggers: () => triggers.slice(),
     deleteTrigger: (t) => triggers.splice(triggers.indexOf(t), 1),
@@ -232,13 +234,22 @@ function mockAppsScript() {
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     ScriptApp,
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: (s) => ({ body: s, setMimeType() { return this; } }) },
-    Utilities: { formatDate: (d) => d.toISOString().slice(0, 10) },
+    Utilities: { formatDate: (d) => d.toISOString().slice(0, 10), base64Decode: (s) => [...Buffer.from(s, 'base64')] },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props.get(k) ?? null, setProperty: (k, v) => { props.set(k, String(v)); } }) },
-    UrlFetchApp: { fetch: (url, opt) => { fetched.push({ url, opt, body: JSON.parse(opt.payload) }); return { getResponseCode: () => 200, getContentText: () => '{}' }; } },
+    UrlFetchApp: {
+      fetch: (url, opt) => {
+        const body = typeof opt.payload === 'string' ? JSON.parse(opt.payload) : opt.payload;
+        fetched.push({ url, opt, body });
+        const bad = line.fail && line.fail(url, body);
+        const text = bad ? '{"message":"invalid"}' : url.endsWith('/richmenu') ? '{"richMenuId":"RM1"}'
+          : url.endsWith('/richmenu/list') ? '{"richmenus":[{"richMenuId":"OLD","name":"เมนูพัสดุ"},{"richMenuId":"KEEP","name":"เมนูอื่น"}]}' : '{}';
+        return { getResponseCode: () => (bad ? 400 : 200), getContentText: () => text };
+      },
+    },
     Logger: { log: (m) => { logs.push(m); } },
     CacheService: { getScriptCache: () => ({ get: (k) => cache.get(k) ?? null, put: (k, v) => { cache.set(k, v); }, remove: (k) => { cache.delete(k); } }) },
   });
-  return { sheets, ctx, triggers, order, logs, cache, props, fetched };
+  return { sheets, ctx, triggers, order, logs, cache, props, fetched, line };
 }
 
 test('Apps Script: only changed tabs are rewritten, shrinking tabs leave no stale rows', () => {
@@ -1173,7 +1184,9 @@ test('core + Apps Script: LINE OA — link with PIN, push on each withdrawal, da
   assert.equal(post({ action: 'createRequest', payload: { borrower_name: 'สมหญิง', department: 'ICU', items: [{ item_id: 3, qty: 2 }] } }).ok, true);
   const pushes = fetched.slice(n);
   assert.deepEqual(pushes.map((f) => [f.url.endsWith('push'), f.body.to]), [[true, 'G1'], [true, 'U9']]);
-  assert.match(pushes[0].body.messages[0].text, /มีผู้เบิกพัสดุ WD69-002[\s\S]*สมหญิง[\s\S]*×2/);
+  assert.equal(pushes[0].body.messages[0].type, 'flex', 'ค่าตั้งต้นส่งแบบการ์ด');
+  assert.match(pushes[0].body.messages[0].altText, /มีผู้เบิกพัสดุ WD69-002[\s\S]*สมหญิง[\s\S]*×2/);
+  checkFlex(pushes[0].body.messages[0]);
   assert.equal(pushes[0].opt.headers.Authorization, 'Bearer tok');
   // โหมดสรุปทุกชั่วโมง: เก็บไว้ก่อน แล้วส่งรวมข้อความเดียว
   props.set('LINE_NOTIFY_REQUESTS', 'hourly');
@@ -1181,7 +1194,8 @@ test('core + Apps Script: LINE OA — link with PIN, push on each withdrawal, da
   post({ action: 'createRequest', payload: { borrower_name: 'ข', department: 'ICU', items: [{ item_id: 4, qty: 1 }] } });
   assert.equal(fetched.length, m);
   ctx.lineHourly();
-  assert.match(fetched.at(-1).body.messages[0].text, /มีผู้เบิกพัสดุ 1 ใบ[\s\S]*WD69-003/);
+  assert.match(fetched.at(-1).body.messages[0].altText, /มีผู้เบิกพัสดุ 1 ใบ[\s\S]*WD69-003/);
+  checkFlex(fetched.at(-1).body.messages[0]);
   ctx.lineHourly();
   assert.equal(fetched.length, m + 2, 'ไม่มีใบใหม่ ไม่ส่งซ้ำ');
   // ยกเลิกแจ้งเตือน · ตั้งเวลาสรุปทุกเช้า
@@ -1252,10 +1266,132 @@ test('Apps Script: LINE search commands answer only linked chats, with quick-rep
   assert.match(hook('เชื่อมต่อ 1234').text, /พิมพ์ "เมนู"/);
   const r = hook('เช็ค ถุงมือ');
   assert.equal(fetched.at(-1).url.endsWith('reply'), true);
-  assert.match(r.text, /ผลค้นหา "ถุงมือ"/);
+  assert.match(r.altText, /ผลค้นหา "ถุงมือ"/);
+  checkFlex(r);
   assert.deepEqual(r.quickReply.items.map((i) => i.action.text), ['เมนู', 'สรุป', 'ใกล้หมดอายุ', 'ใกล้หมด', 'เบิกวันนี้', 'ยังไม่รับ']);
-  assert.match(hook('เมนู').text, /คำสั่งที่พิมพ์ได้/);
+  assert.match(hook('เมนู').altText, /คำสั่งที่พิมพ์ได้/);
   assert.equal(hook('ขอบคุณครับ'), null, 'คุยเล่นในกลุ่ม: ไม่ตอบ');
+  assert.match(hook('เช็ค ไม่มีของนี้').text, /ไม่พบพัสดุ/, 'ตอบสั้น ๆ เป็นข้อความล้วน');
+  // ตั้ง LINE_STYLE = text: กลับไปใช้ข้อความล้วน
+  props.set('LINE_STYLE', 'text');
+  assert.match(hook('เช็ค ถุงมือ').text, /ผลค้นหา "ถุงมือ"/);
+});
+
+// ตรวจโครงสร้าง Flex Message ตามข้อกำหนดของ LINE (ค่าที่ใช้ได้ ข้อความห้ามว่าง ขนาดไม่เกินกำหนด)
+function checkFlex(msg) {
+  assert.equal(msg.type, 'flex');
+  assert.ok(msg.altText && msg.altText.length <= 400, 'altText 1–400 ตัวอักษร');
+  const SIZE = ['xxs', 'xs', 'sm', 'md', 'lg', 'xl', 'xxl', '3xl', '4xl', '5xl'];
+  const SPACE = ['none', 'xs', 'sm', 'md', 'lg', 'xl', 'xxl'];
+  const color = (c) => c === undefined || /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(c);
+  const walk = (n) => {
+    assert.ok(color(n.color) && color(n.backgroundColor), 'สี ' + n.color + ' ' + n.backgroundColor);
+    if (n.margin !== undefined) assert.ok(SPACE.includes(n.margin), 'margin ' + n.margin);
+    if (n.type === 'box') {
+      assert.ok(['vertical', 'horizontal', 'baseline'].includes(n.layout));
+      if (n.spacing !== undefined) assert.ok(SPACE.includes(n.spacing), 'spacing ' + n.spacing);
+      assert.ok(Array.isArray(n.contents));
+      n.contents.forEach(walk);
+    } else if (n.type === 'text') {
+      assert.ok(typeof n.text === 'string' && n.text.length > 0, 'ข้อความห้ามว่าง');
+      if (n.size !== undefined) assert.ok(SIZE.includes(n.size), 'size ' + n.size);
+      if (n.align !== undefined) assert.ok(['start', 'end', 'center'].includes(n.align));
+    } else if (n.type === 'button') {
+      assert.ok(n.action.label.length <= 20 && n.action.text);
+    } else assert.equal(n.type, 'separator');
+  };
+  const bubble = (b) => {
+    assert.equal(b.type, 'bubble');
+    assert.ok(JSON.stringify(b).length < 30000, 'bubble ไม่เกิน 30KB');
+    ['header', 'body', 'footer'].forEach((k) => b[k] && walk(b[k]));
+  };
+  const c = msg.contents;
+  if (c.type === 'carousel') {
+    assert.ok(c.contents.length >= 1 && c.contents.length <= 12, 'carousel 1–12 การ์ด');
+    assert.ok(JSON.stringify(c).length < 50000, 'carousel ไม่เกิน 50KB');
+    c.contents.forEach(bubble);
+  } else bubble(c);
+}
+
+test('core: LINE Flex cards — search, alerts, today, pending, new request; text fallback kept as altText', () => {
+  const db = Core.seed(new Date('2026-10-01T08:00:00'), FIXTURE);
+  const q = (t) => Core.lineQuery(db, t, '2026-11-07', 8);
+  assert.equal(q('สวัสดี'), null);
+  assert.equal(q('สรุป').flex, null, 'ไม่มีอะไรต้องแจ้ง = ข้อความสั้น');
+  assert.equal(Core.lineDailyFlex(db, '2026-11-07', 8), null);
+  const at = { ...admin, now: new Date('2026-11-01T09:00:00') };
+  Core.run(db, 'stock', { item_id: 1, type: 'receive', qty: 10, expiry_date: '2026-11-20' }, at);
+  Core.run(db, 'stock', { item_id: 2, type: 'receive', qty: 10, expiry_date: '2027-03-01' }, at);
+  const rid = Core.run(db, 'createRequest', { ...person, note: 'ด่วน', items: [{ item_id: 3, qty: 3 }, { item_id: 1, qty: 2 }] }, { now: new Date('2026-11-07T09:15:00') });
+  const all = JSON.stringify;
+  for (const t of ['เมนู', 'สรุป', 'ใกล้หมดอายุ', 'ใกล้หมด', 'เบิกวันนี้', 'ยังไม่รับ', 'เช็ค กระดาษ', 'เช็ค ผ้า']) {
+    const r = q(t);
+    assert.equal(r.text, Core.lineQueryText(db, t, '2026-11-07', 8));
+    assert.ok(r.flex, t);
+    assert.equal(r.flex.altText, r.text.slice(0, 400));
+    checkFlex(r.flex);
+  }
+  assert.match(all(q('ใกล้หมดอายุ').flex), /กระดาษ A4[\s\S]*อีก 13 วัน[\s\S]*ถุงมือ M/);
+  assert.match(all(q('ใกล้หมด').flex), /ผ้าก๊อซ[\s\S]*เหลือ 0 ห่อ/);
+  assert.match(all(q('เบิกวันนี้').flex), /WD69-001 สมชาย ใจดี/);
+  assert.match(all(q('เมนู').flex), /"text":"ใกล้หมดอายุ"/);
+  const one = q('เช็ค ผ้า').flex.contents;
+  assert.equal(one.type, 'bubble', 'พบรายการเดียว = การ์ดเดียว');
+  assert.match(all(one), /⛔ หมด/);
+  const many = q('เช็ค ทั่วไป').flex.contents;
+  assert.deepEqual([many.type, many.contents.length], ['carousel', 3], 'หลายรายการ = เลื่อนดูได้');
+  assert.equal(q('เช็ค ไม่มีของนี้').flex, null);
+  const nr = Core.lineRequestFlex(db, rid);
+  checkFlex(nr);
+  assert.match(all(nr), /WD69-001[\s\S]*สมชาย ใจดี[\s\S]*×3[\s\S]*ด่วน/);
+  assert.match(nr.altText, /มีผู้เบิกพัสดุ WD69-001/);
+  checkFlex(Core.lineDigestFlex(db, [rid]));
+  checkFlex(Core.lineDailyFlex(db, '2026-11-07', 8));
+  // ข้อมูลยาวมาก: ยังไม่เกินขนาดที่ LINE รับ
+  for (let i = 0; i < 40; i++) Core.run(db, 'createRequest', { ...person, items: [{ item_id: 2, qty: 1 }] }, { now: new Date('2026-11-07T10:00:00') });
+  checkFlex(q('เบิกวันนี้').flex);
+  checkFlex(q('ยังไม่รับ').flex);
+});
+
+test('Apps Script: LINE Flex falls back to plain text when rejected; rich menu setup replaces the old menu', () => {
+  const { ctx, props, fetched, line, logs } = mockAppsScript();
+  for (const f of ['core.js', 'apps-script/Code.gs', 'apps-script/Line.gs', 'seed-data.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', f), 'utf8'), ctx);
+  ctx.setup();
+  props.set('LINE_TOKEN', 'tok');
+  props.set('LINE_TARGETS', JSON.stringify([{ id: 'G1', name: 'กลุ่ม' }]));
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).body);
+  line.fail = (url, body) => body && body.messages && body.messages[0].type === 'flex';
+  const n = fetched.length;
+  post({ action: 'createRequest', payload: { borrower_name: 'สมหญิง', department: 'ICU', items: [{ item_id: 3, qty: 2 }] } });
+  assert.deepEqual(fetched.slice(n).map((f) => f.body.messages[0].type), ['flex', 'text'], 'การ์ดไม่ผ่าน → ส่งข้อความล้วนแทน');
+  assert.match(fetched.at(-1).body.messages[0].text, /มีผู้เบิกพัสดุ/);
+  assert.ok(logs.some((l) => /ส่งแบบการ์ดไม่สำเร็จ/.test(l)));
+  line.fail = null;
+  // rich menu: ยังไม่มีรูป = แจ้งให้วาง AllInOne.gs ทั้งไฟล์
+  assert.throws(() => ctx.setupRichMenu(), /AllInOne\.gs/);
+  vm.runInContext("var LINE_RICHMENU_JPG = ['/9j/', '4AAQ'];", ctx);
+  const m = fetched.length;
+  ctx.setupRichMenu();
+  const calls = fetched.slice(m).map((f) => f.opt.method + ' ' + f.url.replace(/^https:\/\/api(-data)?\.line\.me\/v2\/bot\//, ''));
+  assert.deepEqual(calls, ['get richmenu/list', 'delete richmenu/OLD', 'post richmenu', 'post richmenu/RM1/content', 'post user/all/richmenu/RM1']);
+  const menu = fetched[m + 2].body;
+  assert.deepEqual([menu.size, menu.areas.length, menu.chatBarText], [{ width: 2500, height: 1686 }, 6, 'เมนูพัสดุ']);
+  assert.ok(menu.areas.every((a) => Core.lineQueryText(Core.seed(new Date(), FIXTURE), a.action.text, '2026-11-07', 8)), 'ทุกปุ่มเป็นคำสั่งที่ตอบได้');
+  assert.equal(menu.areas.reduce((s, a) => s + a.bounds.width * a.bounds.height, 0), 2500 * 1686, 'ปุ่มเต็มพื้นที่รูป');
+  assert.equal(fetched[m + 3].opt.contentType, 'image/jpeg');
+  assert.deepEqual(fetched[m + 3].body, [...Buffer.from('/9j/4AAQ', 'base64')]);
+  assert.ok(logs.at(-1).includes('ใส่เมนูพัสดุแล้ว'));
+  ctx.removeRichMenu();
+  assert.ok(logs.at(-1).includes('ลบเมนูพัสดุแล้ว 1'));
+});
+
+test('build: AllInOne.gs embeds the rich menu image (JPEG within LINE limit 1 MB)', () => {
+  const jpg = fs.readFileSync(path.join(__dirname, '../docs/apps-script/richmenu.jpg'));
+  assert.ok(jpg.length < 1024 * 1024);
+  assert.deepEqual([...jpg.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+  const ctx = vm.createContext({});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/apps-script/AllInOne.gs'), 'utf8').split('// ==================== RichMenuImage')[1].replace(/^[^\n]*\n/, ''), ctx);
+  assert.ok(Buffer.from(vm.runInContext('LINE_RICHMENU_JPG.join("")', ctx), 'base64').equals(jpg));
 });
 
 test('core: staff tick "received/signed" on a request, shown in the sheet, cleared on untick', () => {
