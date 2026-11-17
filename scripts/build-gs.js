@@ -13,6 +13,14 @@ const parts = [
   ['Report2569 (ราคาตามรายงานบัญชีวัสดุ 2569 + รายชื่อบริษัท) — จาก docs/apps-script/report-2569.js', 'docs/apps-script/report-2569.js'],
 ];
 
+// รูป Rich menu (scripts/build-richmenu.js) ฝังเป็น base64 แบ่งบรรทัดละ 1,000 ตัวอักษร ให้ตัวแก้ไขของ Apps Script เปิดไม่หน่วง
+function richMenuPart() {
+  const b64 = fs.readFileSync(path.join(root, 'docs/apps-script/richmenu.jpg')).toString('base64');
+  const rows = b64.match(/.{1,1000}/g).map((r) => `  '${r}',`).join('\n');
+  return `\n// ==================== RichMenuImage (รูปเมนู LINE OA สำหรับ setupRichMenu) — จาก docs/apps-script/richmenu.jpg ====================\n\n` +
+    `var LINE_RICHMENU_JPG = [\n${rows}\n];\n`;
+}
+
 function build() {
   const header = `/**
  * ระบบเบิก-ยืมพัสดุ — ไฟล์รวมสำหรับ Google Apps Script (ไฟล์เดียวจบ)
@@ -24,7 +32,7 @@ function build() {
 `;
   const body = parts.map(([title, file]) =>
     `\n// ==================== ${title} ====================\n\n` + fs.readFileSync(path.join(root, file), 'utf8').trimEnd() + '\n').join('');
-  return header + body;
+  return header + body + richMenuPart();
 }
 
 if (require.main === module) {
