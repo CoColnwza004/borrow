@@ -1168,7 +1168,7 @@ test('core + Apps Script: LINE OA — link with PIN, push on each withdrawal, da
   assert.equal(fetched.length, 0);
   props.set('LINE_TOKEN', 'tok');
   assert.equal(hook('เชื่อมต่อ 0000').ok, true);
-  assert.match(fetched.at(-1).body.messages[0].text, /รหัสไม่ถูกต้อง/);
+  assert.match(fetched.at(-1).body.messages[0].altText, /PIN ไม่ถูกต้อง/);
   assert.equal(JSON.parse(props.get('LINE_TARGETS') || '[]').length, 0);
   hook('เชื่อมต่อ 1234');
   assert.deepEqual(JSON.parse(props.get('LINE_TARGETS')).map((t) => t.id), ['G1']);
@@ -1261,9 +1261,9 @@ test('Apps Script: LINE search commands answer only linked chats, with quick-rep
     post({ destination: 'U0', events: [{ type: 'message', replyToken: 'R', source: { type: 'user', userId }, message: { type: 'text', text } }] });
     return fetched.length > n ? fetched.at(-1).body.messages[0] : null;
   };
-  assert.match(hook('เมนู').text, /ยังไม่ได้เชื่อมต่อ/);
+  assert.match(hook('เมนู').altText, /ยังไม่ได้เชื่อมต่อ/);
   assert.equal(hook('เช็ค ถุงมือ'), null, 'ยังไม่เชื่อมต่อ: ไม่เปิดเผยข้อมูล');
-  assert.match(hook('เชื่อมต่อ 1234').text, /พิมพ์ "เมนู"/);
+  assert.match(hook('เชื่อมต่อ 1234').altText, /เชื่อมต่อแล้ว[\s\S]*พิมพ์ "เมนู"/);
   const r = hook('เช็ค ถุงมือ');
   assert.equal(fetched.at(-1).url.endsWith('reply'), true);
   assert.match(r.altText, /ผลค้นหา "ถุงมือ"/);
@@ -1271,7 +1271,10 @@ test('Apps Script: LINE search commands answer only linked chats, with quick-rep
   assert.deepEqual(r.quickReply.items.map((i) => i.action.text), ['เมนู', 'สรุป', 'ใกล้หมดอายุ', 'ใกล้หมด', 'เบิกวันนี้', 'ยังไม่รับ']);
   assert.match(hook('เมนู').altText, /คำสั่งที่พิมพ์ได้/);
   assert.equal(hook('ขอบคุณครับ'), null, 'คุยเล่นในกลุ่ม: ไม่ตอบ');
-  assert.match(hook('เช็ค ไม่มีของนี้').text, /ไม่พบพัสดุ/, 'ตอบสั้น ๆ เป็นข้อความล้วน');
+  const nf = hook('เช็ค ไม่มีของนี้');
+  assert.match(nf.altText, /ไม่พบพัสดุ/, 'ตอบสั้น ๆ ก็เป็นการ์ด');
+  checkFlex(nf);
+  checkFlex(hook('สถานะ'));
   // ตั้ง LINE_STYLE = text: กลับไปใช้ข้อความล้วน
   props.set('LINE_STYLE', 'text');
   assert.match(hook('เช็ค ถุงมือ').text, /ผลค้นหา "ถุงมือ"/);
@@ -1317,7 +1320,8 @@ test('core: LINE Flex cards — search, alerts, today, pending, new request; tex
   const db = Core.seed(new Date('2026-10-01T08:00:00'), FIXTURE);
   const q = (t) => Core.lineQuery(db, t, '2026-11-07', 8);
   assert.equal(q('สวัสดี'), null);
-  assert.equal(q('สรุป').flex, null, 'ไม่มีอะไรต้องแจ้ง = ข้อความสั้น');
+  assert.match(q('สรุป').flex.altText, /ไม่มีของใกล้หมดอายุ/, 'ไม่มีอะไรต้องแจ้ง = การ์ดข้อความสั้น');
+  checkFlex(q('สรุป').flex);
   assert.equal(Core.lineDailyFlex(db, '2026-11-07', 8), null);
   const at = { ...admin, now: new Date('2026-11-01T09:00:00') };
   Core.run(db, 'stock', { item_id: 1, type: 'receive', qty: 10, expiry_date: '2026-11-20' }, at);
@@ -1340,7 +1344,8 @@ test('core: LINE Flex cards — search, alerts, today, pending, new request; tex
   assert.match(all(one), /⛔ หมด/);
   const many = q('เช็ค ทั่วไป').flex.contents;
   assert.deepEqual([many.type, many.contents.length], ['carousel', 3], 'หลายรายการ = เลื่อนดูได้');
-  assert.equal(q('เช็ค ไม่มีของนี้').flex, null);
+  checkFlex(q('เช็ค ไม่มีของนี้').flex);
+  checkFlex(q('เช็ค').flex);
   const nr = Core.lineRequestFlex(db, rid);
   checkFlex(nr);
   assert.match(all(nr), /WD69-001[\s\S]*สมชาย ใจดี[\s\S]*×3[\s\S]*ด่วน/);

@@ -1107,13 +1107,13 @@ var BorrowCore = (function () {
   // คืน { type: 'flex', altText, contents } · altText = ข้อความที่เห็นในการแจ้งเตือนบนมือถือ (ไม่เกิน 400 ตัวอักษร)
   var FX = { blue: '#0071e3', teal: '#0f766e', red: '#d92d20', amber: '#b54708', orange: '#c4320a', green: '#067647', gray: '#667085', ink: '#1d2939', line: '#eaecf0' };
   function fxExt(x, o) { for (var k in o || {}) if (o[k] !== undefined) x[k] = o[k]; return x; }
-  function fxText(t, o) { return fxExt({ type: 'text', text: str(t) || '-', wrap: true, size: 'sm', color: FX.ink }, o); }
+  function fxText(t, o) { return fxExt({ type: 'text', text: str(t) || '-', wrap: true, size: 'md', color: FX.ink }, o); }
   function fxBox(layout, contents, o) { return fxExt({ type: 'box', layout: layout, contents: contents }, o); }
   function fxSep(margin) { return { type: 'separator', margin: margin || 'md', color: FX.line }; }
   // แถว: ชื่อ (ตัวหนา) + บรรทัดรอง (สีเทา) ด้านซ้าย · ค่าเด่นชิดขวา
   function fxRow(left, sub, right, color) {
     var l = [fxText(left, { weight: 'bold' })];
-    if (sub) l.push(fxText(sub, { size: 'xs', color: FX.gray }));
+    if (sub) l.push(fxText(sub, { size: 'sm', color: FX.gray }));
     return fxBox('horizontal', [fxBox('vertical', l, { flex: 7 }),
       fxText(right, { flex: 4, align: 'end', gravity: 'center', weight: 'bold', color: color || FX.ink })], { spacing: 'md', margin: 'md' });
   }
@@ -1121,18 +1121,23 @@ var BorrowCore = (function () {
     return fxBox('horizontal', [fxText(k, { flex: 3, color: FX.gray }), fxText(v, { flex: 7, color: color || FX.ink })], { spacing: 'md' });
   }
   function fxHead(t, color) { return fxText(t, { weight: 'bold', color: color, margin: 'xl' }); }
-  function fxMore(n, shown, unit) { return n > shown ? [fxText('และอีก ' + commas(n - shown) + ' ' + unit + ' (ดูทั้งหมดในเว็บ)', { size: 'xs', color: FX.gray, margin: 'md' })] : []; }
+  function fxMore(n, shown, unit) { return n > shown ? [fxText('และอีก ' + commas(n - shown) + ' ' + unit + ' (ดูทั้งหมดในเว็บ)', { size: 'sm', color: FX.gray, margin: 'md' })] : []; }
   function fxStat(n, label, color) {
-    return fxBox('vertical', [fxText(commas(n), { size: 'xl', weight: 'bold', color: color, align: 'center' }), fxText(label, { size: 'xxs', color: FX.gray, align: 'center' })],
+    return fxBox('vertical', [fxText(commas(n), { size: 'xxl', weight: 'bold', color: color, align: 'center' }), fxText(label, { size: 'xs', color: FX.gray, align: 'center' })],
       { flex: 1, backgroundColor: color + '14', cornerRadius: 'md', paddingAll: '8px' });
   }
   function fxBubble(title, sub, color, body, foot, size) {
-    var head = [fxText(title, { color: '#ffffff', weight: 'bold', size: 'md' })];
-    if (sub) head.push(fxText(sub, { color: '#ffffffd9', size: 'xs' }));
-    var b = { type: 'bubble', size: size || 'mega', header: fxBox('vertical', head, { backgroundColor: color, paddingAll: '16px', spacing: 'xs' }),
-      body: fxBox('vertical', body, { paddingAll: '16px' }) };
-    if (foot) b.footer = fxBox('vertical', [fxText(foot, { size: 'xxs', color: FX.gray, align: 'center' })], { paddingAll: '10px' });
+    var head = [fxText(title, { color: '#ffffff', weight: 'bold', size: 'xl' })];
+    if (sub) head.push(fxText(sub, { color: '#ffffffd9', size: 'sm' }));
+    var b = { type: 'bubble', size: size || 'giga', header: fxBox('vertical', head, { backgroundColor: color, paddingAll: '18px', spacing: 'xs' }),
+      body: fxBox('vertical', body, { paddingAll: '18px' }) };
+    if (foot) b.footer = fxBox('vertical', [fxText(foot, { size: 'xs', color: FX.gray, align: 'center' })], { paddingAll: '12px' });
     return b;
+  }
+  // การ์ดข้อความสั้น: tone = ok (เขียว) | warn (ส้ม) | bad (แดง) | info (ฟ้า) | off (เทา)
+  function lineNote(title, text, tone) {
+    var color = { ok: FX.green, warn: FX.amber, bad: FX.red, off: FX.gray }[tone] || FX.blue;
+    return fxMsg(title + '\n' + text, fxBubble(title, null, color, [fxText(text, { size: 'lg' })]));
   }
   function fxMsg(alt, contents) { return { type: 'flex', altText: str(alt).slice(0, 400) || 'แจ้งเตือนพัสดุ', contents: contents }; }
 
@@ -1179,26 +1184,26 @@ var BorrowCore = (function () {
     var f = stockFlag(i);
     var color = { neg: FX.red, out: FX.red, low: FX.amber, ok: FX.green }[f];
     var label = { neg: '⚠️ ยอดติดลบ', out: '⛔ หมด', low: '📉 ใกล้หมด', ok: '✅ พร้อมเบิก' }[f];
-    var body = [fxText('คงเหลือ', { size: 'xs', color: FX.gray }),
-      fxText(commas(i.available_qty) + ' ' + i.unit, { size: 'xxl', weight: 'bold', color: color }),
-      fxText(label + (i.pack_qty > 0 ? ' · ' + packNote(i, i.available_qty).replace(/^ \(|\)$/g, '') : ''), { size: 'xs', color: color }),
+    var body = [fxText('คงเหลือ', { size: 'sm', color: FX.gray }),
+      fxText(commas(i.available_qty) + ' ' + i.unit, { size: '4xl', weight: 'bold', color: color }),
+      fxText(label + (i.pack_qty > 0 ? ' · ' + packNote(i, i.available_qty).replace(/^ \(|\)$/g, '') : ''), { size: 'md', weight: 'bold', color: color }),
       fxSep('lg'), fxBox('vertical', [fxKV('ขั้นต่ำ', i.min_qty ? commas(i.min_qty) + ' ' + i.unit : 'ไม่ได้ตั้ง'), fxKV('ที่เก็บ', i.location || '-'), fxKV('หมวด', i.category || '-')],
         { spacing: 'sm', margin: 'lg' })];
     var e = exps.filter(function (x) { return x.item_id === i.id; })[0];
     if (e) body.push(fxBox('vertical', [fxKV('หมดอายุ', thDay(e.expiry_date) + ' (' + expiryWhen(e) + ')', e.days <= 30 ? FX.red : FX.amber)], { margin: 'sm' }));
-    return fxBubble(i.name, i.code, color, body, null, 'kilo');
+    return fxBubble(i.name, i.code, color, body);
   }
   function fxMenu() {
     var btn = function (t, i) {
-      var b = { type: 'button', style: i ? 'secondary' : 'primary', height: 'sm', action: { type: 'message', label: t, text: t } };
+      var b = { type: 'button', style: i ? 'secondary' : 'primary', height: 'md', action: { type: 'message', label: t, text: t } };
       if (!i) b.color = FX.blue;
       return b;
     };
-    var body = [fxText('🔎 ค้นหาพัสดุ: พิมพ์ "เช็ค" ตามด้วยชื่อหรือรหัส', { weight: 'bold' }), fxText('เช่น เช็ค ถุงมือ · เช็ค MD-005', { size: 'xs', color: FX.gray }),
+    var body = [fxText('🔎 ค้นหาพัสดุ: พิมพ์ "เช็ค" ตามด้วยชื่อหรือรหัส', { weight: 'bold' }), fxText('เช่น เช็ค ถุงมือ · เช็ค MD-005', { size: 'sm', color: FX.gray }),
       fxBox('vertical', ['สรุป', 'ใกล้หมดอายุ', 'ใกล้หมด', 'เบิกวันนี้', 'ยังไม่รับ', 'สถานะ'].map(btn), { spacing: 'sm', margin: 'lg' })];
     return fxBubble('📋 เมนูค้นหาพัสดุ', 'กดปุ่ม หรือพิมพ์คำสั่งในแชตนี้', FX.blue, body, 'หยุดรับแจ้งเตือน: พิมพ์ "ยกเลิกแจ้งเตือน"');
   }
-  // ผลคำสั่งค้นหา: { text, flex } · ไม่ใช่คำสั่ง = null · flex = null เมื่อตอบเป็นข้อความสั้นก็พอ (เช่น ไม่พบ)
+  // ผลคำสั่งค้นหา: { text, flex } · ไม่ใช่คำสั่ง = null · ทุกคำตอบเป็นการ์ด (ข้อความสั้น เช่น ไม่พบ = การ์ดข้อความ)
   function lineQuery(db, text, today, months) {
     var t = lineQueryText(db, text, today, months);
     if (!t) return null;
@@ -1223,11 +1228,15 @@ var BorrowCore = (function () {
       if (hit.length) {
         var exps = expiryAlerts(db, today, months);
         var cards = hit.slice(0, 10).map(function (i) { return fxItem(db, i, exps); });
-        if (hit.length > 10) cards.push(fxBubble('และอีก ' + commas(hit.length - 10) + ' รายการ', null, FX.gray, [fxText('พิมพ์คำค้นให้ละเอียดขึ้น เช่น ใส่ขนาดหรือรหัสพัสดุ')], null, 'kilo'));
+        if (hit.length > 10) cards.push(fxBubble('และอีก ' + commas(hit.length - 10) + ' รายการ', null, FX.gray, [fxText('พิมพ์คำค้นให้ละเอียดขึ้น เช่น ใส่ขนาดหรือรหัสพัสดุ')]));
         x = cards.length === 1 ? cards[0] : { type: 'carousel', contents: cards };
       }
     }
-    return { text: t, flex: x ? fxMsg(t, x) : null };
+    if (!x) {
+      var title = { daily: '🔔 สรุปพัสดุ', expiry: '⏳ ใกล้หมดอายุ', low: '📉 ใกล้หมดสต็อก', today: '📦 ใบเบิกวันนี้', pending: '📝 ยังไม่รับของ', search: '🔎 ค้นหาพัสดุ' }[c.cmd];
+      return { text: t, flex: lineNote(title, t.replace(/^✅ /, ''), /^✅/.test(t) ? 'ok' : /^ไม่พบ/.test(t) ? 'warn' : 'info') };
+    }
+    return { text: t, flex: fxMsg(t, x) };
   }
   // การ์ดแจ้งเตือน (push): ใบเบิกใหม่ · สรุปหลายใบ · สรุปประจำวัน — ไม่มีข้อมูล = null
   function lineRequestFlex(db, requestId) {
@@ -1246,7 +1255,7 @@ var BorrowCore = (function () {
     var short = ls.map(function (l) { return byId(db.items, l.item_id); }).filter(function (i) { return i && i.available_qty < 0; });
     if (short.length) {
       body.push(fxBox('vertical', [fxText('⚠️ ของไม่พอ (ยอดติดลบ)', { weight: 'bold', color: FX.red })].concat(short.map(function (i) {
-        return fxText(i.name + ' ' + commas(i.available_qty) + ' ' + i.unit, { size: 'xs', color: FX.red });
+        return fxText(i.name + ' ' + commas(i.available_qty) + ' ' + i.unit, { size: 'sm', color: FX.red });
       })), { backgroundColor: FX.red + '14', cornerRadius: 'md', paddingAll: '10px', margin: 'lg' }));
     }
     if (r.note) body.push(fxBox('vertical', [fxKV('หมายเหตุ', r.note)], { margin: 'lg' }));
@@ -1427,7 +1436,7 @@ var BorrowCore = (function () {
     return before;
   }
 
-  return { lineQuery: lineQuery, lineRequestFlex: lineRequestFlex, lineDigestFlex: lineDigestFlex, lineDailyFlex: lineDailyFlex, lineQueryText: lineQueryText, LINE_MENU: LINE_MENU, lineRequestText: lineRequestText, lineDailyText: lineDailyText, lineRequestsDigest: lineRequestsDigest, guessPack: guessPack, budgetSummary: budgetSummary, fiscalYear: fiscalYear, fiscalRange: fiscalRange, ledgerSummary: ledgerSummary, applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
+  return { lineNote: lineNote, lineQuery: lineQuery, lineRequestFlex: lineRequestFlex, lineDigestFlex: lineDigestFlex, lineDailyFlex: lineDailyFlex, lineQueryText: lineQueryText, LINE_MENU: LINE_MENU, lineRequestText: lineRequestText, lineDailyText: lineDailyText, lineRequestsDigest: lineRequestsDigest, guessPack: guessPack, budgetSummary: budgetSummary, fiscalYear: fiscalYear, fiscalRange: fiscalRange, ledgerSummary: ledgerSummary, applyReport: applyReport, supplierSummary: supplierSummary, expiryAlerts: expiryAlerts, byId: byId, lines: lines, flowSummary: flowSummary, movePrice: movePrice, OPENING: OPENING, stockSummary: stockSummary, linePrice: linePrice, requestValue: requestValue, nextItemCode: nextItemCode, replaceStock: replaceStock, resetForLaunch: resetForLaunch, TABLES: TABLES, STATUS: STATUS, MOVE: MOVE, publicView: publicView, monthlySummary: monthlySummary, sheetData: sheetData, thaiStamp: thaiStamp, run: run, seed: seed, normalize: normalize, fieldOf: fieldOf, emptyDb: emptyDb, ymd: ymd };
 })();
 
 if (typeof module !== 'undefined') module.exports = BorrowCore;
