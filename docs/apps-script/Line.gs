@@ -103,21 +103,24 @@ function lineWebhook_(body) {
     var quick = false;
     var m = /^(เชื่อมต่อ|connect)\s*(\S+)$/i.exec(text);
     if (m) {
-      if (m[2] !== adminPin_()) reply = 'รหัสไม่ถูกต้อง';
+      if (m[2] !== adminPin_()) { reply = 'รหัสไม่ถูกต้อง'; flex = BorrowCore.lineNote('❌ เชื่อมต่อไม่สำเร็จ', 'รหัส PIN ไม่ถูกต้อง ลองพิมพ์ใหม่: เชื่อมต่อ <รหัส PIN>', 'bad'); }
       else {
         if (!has) list.push({ id: id, type: src.type || 'user', name: src.type === 'group' ? 'กลุ่ม' : src.type === 'room' ? 'ห้องแชต' : 'ผู้ใช้', at: new Date().toISOString() });
         lineSaveTargets_(list);
         reply = 'เชื่อมต่อแล้ว ✅ จะได้รับแจ้งเตือนเมื่อมีผู้เบิกพัสดุ และสรุปของใกล้หมดอายุ/ใกล้หมดสต็อกทุกเช้า\n' +
           'พิมพ์ "เมนู" เพื่อดูคำสั่งค้นหา เช่น "เช็ค ถุงมือ" · พิมพ์ "ยกเลิกแจ้งเตือน" เพื่อหยุดรับ';
+        flex = BorrowCore.lineNote('✅ เชื่อมต่อแล้ว', reply.replace(/^เชื่อมต่อแล้ว ✅ /, ''), 'ok');
         quick = true;
       }
     } else if (/^ยกเลิกแจ้งเตือน$/.test(text) && has) {
       lineSaveTargets_(list.filter(function (t) { return t.id !== id; }));
       reply = 'หยุดส่งแจ้งเตือนมาที่นี่แล้ว';
+      flex = BorrowCore.lineNote('🔕 ยกเลิกแจ้งเตือนแล้ว', 'หยุดส่งแจ้งเตือนมาที่แชตนี้แล้ว · รับใหม่ได้ด้วย เชื่อมต่อ <รหัส PIN>', 'off');
     } else if (/^สถานะ$/.test(text) && has) {
       var s = lineStatus_();
       reply = 'รับแจ้งเตือนอยู่ · ผู้รับทั้งหมด ' + s.targets + ' · ใบเบิก: ' + ({ instant: 'แจ้งทันที', hourly: 'สรุปทุกชั่วโมง', off: 'ปิด' }[s.mode] || s.mode) +
         ' · สรุปประจำวัน: ' + (s.daily_on ? 'ราว ' + s.daily_hour + ':00 น.' : 'ยังไม่ได้ตั้ง (เรียกใช้ setupLine)') + '\nพิมพ์ "เมนู" เพื่อดูคำสั่งค้นหา';
+      flex = BorrowCore.lineNote('🔔 สถานะแจ้งเตือน', reply.replace(/ · /g, '\n'), 'info');
       quick = true;
     } else if (has) {
       try {
@@ -127,6 +130,7 @@ function lineWebhook_(body) {
       quick = !!reply;
     } else if (/^(เมนู|ช่วย|help|menu)$/i.test(text)) {
       reply = 'แชตนี้ยังไม่ได้เชื่อมต่อ พิมพ์ "เชื่อมต่อ <รหัส PIN เจ้าหน้าที่>" ก่อน แล้วจึงค้นหาพัสดุได้';
+      flex = BorrowCore.lineNote('🔒 ยังไม่ได้เชื่อมต่อ', 'พิมพ์ "เชื่อมต่อ <รหัส PIN เจ้าหน้าที่>" ก่อน แล้วจึงค้นหาพัสดุได้', 'warn');
     }
     // ตอบกลับ (reply) ไม่นับโควตาข้อความ
     if (reply && ev.replyToken) lineSend_('reply', { replyToken: ev.replyToken }, reply, flex, quick);
@@ -184,7 +188,7 @@ function setupLine() {
 
 // ทดสอบส่งข้อความ + สรุปประจำวันตอนนี้
 function testLine() {
-  var n = linePush_('ทดสอบแจ้งเตือนจากระบบเบิกพัสดุ ✅');
+  var n = linePush_('ทดสอบแจ้งเตือนจากระบบเบิกพัสดุ ✅', BorrowCore.lineNote('✅ ทดสอบแจ้งเตือน', 'ระบบเบิกพัสดุส่งข้อความถึงแชตนี้ได้แล้ว', 'ok'));
   Logger.log('ส่งถึง ' + n + ' จาก ' + lineTargets_().length + ' ผู้รับ');
   lineDailySummary();
 }
