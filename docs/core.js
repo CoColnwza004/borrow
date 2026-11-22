@@ -16,7 +16,9 @@ var BorrowCore = (function () {
     items: ['id', 'code', 'name', 'category', 'unit', 'available_qty', 'min_qty', 'location', 'active', 'price', 'pack_qty', 'pack_unit'],
     // edited_at = แก้ไขใบเบิกล่าสุดเมื่อ (ว่าง = ไม่เคยแก้)
     // received_at = เจ้าหน้าที่ติ๊กว่าผู้เบิกรับของ/เซ็นเอกสารแล้วเมื่อ (ว่าง = ยังไม่รับ)
-    requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'status', 'created_at', 'note', 'edited_at', 'received_at'],
+    // head_name = ชื่อหัวหน้าแผนก (พิมพ์เป็น "ผู้เบิก" ในใบเบิก PDF ส่วน borrower_name = คนที่มาเบิก/รับของ)
+    // merged_from = เลขที่ใบเบิกเดิมที่ถูกรวมเข้าใบนี้ (คั่นด้วย , ) เลขเหล่านี้ว่างแล้ว ใบเบิกใหม่ได้เลขนี้ก่อนเลขถัดไป
+    requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'status', 'created_at', 'note', 'edited_at', 'received_at', 'head_name', 'merged_from'],
     // price = ราคาต่อหน่วย ณ วันที่เบิก (ราคาพัสดุเปลี่ยนภายหลัง ใบเบิกเดิมไม่เปลี่ยน)
     request_items: ['request_id', 'item_id', 'qty', 'price'],
     // รับเข้า: บริษัทผู้จำหน่าย วันหมดอายุ (YYYY-MM-DD) และเลขใบส่งของ ของล็อตนั้น
@@ -35,7 +37,7 @@ var BorrowCore = (function () {
   // หน่วยนับตั้งต้น (แท็บหน่วยนับยังว่าง) + หน่วยที่พัสดุใช้อยู่แล้ว
   var DEFAULT_UNITS = ['ชิ้น', 'กล่อง', 'ขวด', 'ม้วน', 'โหล'];
   // หัวคอลัมน์ภาษาไทยในแท็บประวัติการเบิก ที่เป็นข้อมูลจริง (อ่านกลับเข้าระบบ) · ชื่อหัวเดิมยังอ่านได้
-  var LABELS = { requests: { request_no: 'เลขที่', borrower_name: 'ผู้เบิก', department: 'แผนก', note: 'หมายเหตุ' } };
+  var LABELS = { requests: { request_no: 'เลขที่', borrower_name: 'ผู้เบิก', head_name: 'หัวหน้าแผนก', department: 'แผนก', note: 'หมายเหตุ' } };
   var OLD_LABELS = { requests: { borrower_name: ['ผู้เบิก/ผู้ยืม'] } };
   function fieldOf(table, header) {
     var m = LABELS[table];
@@ -246,7 +248,7 @@ var BorrowCore = (function () {
   }
 
   var MASTERS = { departments: 1, categories: 1, suppliers: 1, units: 1, locations: 1 };
-  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest', 'addBudget', 'setBudgets', 'removeBudget', 'receiveBatch', 'editReceipt', 'setPacks', 'convertToPieces', 'markReceived'];
+  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest', 'addBudget', 'setBudgets', 'removeBudget', 'receiveBatch', 'editReceipt', 'setPacks', 'convertToPieces', 'markReceived', 'mergeRequests'];
 
   // ข้อมูลล็อตที่รับเข้า (ไม่บังคับ): บริษัท วันหมดอายุ เลขใบส่งของ
   function lot(p) {
@@ -261,12 +263,51 @@ var BorrowCore = (function () {
     return MASTERS[t] ? t : fail('ไม่รู้จักรายการ ' + t);
   }
 
+  // ชื่อ-นามสกุลภาษาไทย (เว้นวรรค จุด ขีด วงเล็บได้ เช่น นพ. สมชาย ณ อยุธยา)
+  function thaiName(v, label) {
+    var s = req(v, label).replace(/\s+/g, ' ');
+    if (!/[\u0E01-\u0E2E]/.test(s) || !/^[\u0E00-\u0E7F .\-()]+$/.test(s)) fail(label + ' ต้องเป็นภาษาไทย');
+    return s;
+  }
+  // ผู้เบิก: เว็บใหม่ส่งชื่อ/นามสกุลแยกช่อง (ต้องเป็นภาษาไทย) · เว็บเวอร์ชันก่อนส่ง borrower_name ช่องเดียว
+  function borrowerName(p) {
+    if (p.first_name === undefined && p.last_name === undefined) return req(p.borrower_name, 'ชื่อผู้เบิก');
+    return thaiName(p.first_name, 'ชื่อผู้เบิก') + ' ' + thaiName(p.last_name, 'นามสกุลผู้เบิก');
+  }
+  function headName(p, need) {
+    if (str(p.head_name) === '') return need ? fail('กรุณากรอกชื่อหัวหน้าแผนก') : '';
+    return thaiName(p.head_name, 'ชื่อหัวหน้าแผนก');
+  }
+  function splitNos(v) { return str(v).split(/[,\s]+/).filter(Boolean); }
+  // เลขที่ใบเบิกถัดไป เช่น WD69-001 = WD + ปี พ.ศ. 2 หลัก + ลำดับในปีนั้น (เกิน 999 เป็น 4 หลักอัตโนมัติ)
+  // 1) ใช้เลขที่ว่างจากการรวมใบเบิกก่อน (เลขน้อยสุดก่อน) 2) หมดแล้วจึงรันเลขถัดจากเลขสูงสุด
+  // เลขของใบที่ถูกลบยังอยู่ในประวัติสต็อก จึงไม่ถูกนำกลับมาใช้ (เลขบน PDF ที่ออกไปแล้วไม่ชนกัน)
+  function nextRequestNo(db, now) {
+    var prefix = 'WD' + String(now.getFullYear() + 543).slice(2) + '-';
+    var used = {}, seq = 0;
+    db.requests.concat(db.movements).forEach(function (r) {
+      var no = str(r.request_no);
+      if (no.indexOf(prefix) !== 0) return;
+      used[no] = true;
+      seq = Math.max(seq, Number(no.slice(prefix.length)) || 0);
+    });
+    var free = [];
+    db.requests.forEach(function (r) {
+      splitNos(r.merged_from).forEach(function (no) {
+        if (no.indexOf(prefix) === 0 && !used[no] && Number(no.slice(prefix.length)) > 0) free.push(Number(no.slice(prefix.length)));
+      });
+    });
+    var n = free.length ? Math.min.apply(null, free) : seq + 1;
+    return prefix + (n < 1000 ? ('00' + n).slice(-3) : String(n));
+  }
+
   var actions = {
     checkPin: function () { return true; },
 
     // ส่งใบเบิก: ตัดสต็อกทันที ไม่ต้องรออนุมัติ เบิกได้แม้ของหมด (ยอดติดลบ)
     createRequest: function (db, p, ctx) {
-      var name = req(p.borrower_name, 'ชื่อผู้เบิก');
+      var name = borrowerName(p);
+      var head = headName(p, p.first_name !== undefined);
       var dept = req(p.department, 'แผนก');
       if (!find(db.departments, function (d) { return d.name === dept; })) fail('กรุณาเลือกแผนกจากรายการ');
       if (!p.items || !p.items.length) fail('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
@@ -279,18 +320,10 @@ var BorrowCore = (function () {
         var item = byId(db.items, id);
         if (!item || !item.active) fail('มีพัสดุที่ไม่พบหรือถูกปิดใช้งาน');
       });
-      // เลขที่เอกสาร เช่น WD69-001 = WD + ปี พ.ศ. 2 หลัก + ลำดับในปีนั้น (เกิน 999 เป็น 4 หลักอัตโนมัติ)
-      var be = String(ctx.now.getFullYear() + 543).slice(2);
-      var prefix = 'WD' + be + '-';
-      var seq = 0;
-      // นับจากประวัติสต็อกด้วย: ใบที่ถูกลบไปแล้วจะไม่ถูกนำเลขกลับมาใช้ซ้ำ (เลขบน PDF ที่ออกไปแล้วไม่ชนกัน)
-      db.requests.concat(db.movements).forEach(function (r) {
-        var no = str(r.request_no);
-        if (no.indexOf(prefix) === 0) seq = Math.max(seq, Number(no.slice(prefix.length)) || 0);
-      });
       var r = {
-        id: nextId(db.requests), request_no: prefix + (seq + 1 < 1000 ? ('00' + (seq + 1)).slice(-3) : String(seq + 1)), borrower_name: name, phone: str(p.phone),
+        id: nextId(db.requests), request_no: nextRequestNo(db, ctx.now), borrower_name: name, phone: str(p.phone),
         department: dept, purpose: str(p.purpose), status: 'issued', created_at: stamp(ctx.now), note: str(p.note), edited_at: '', received_at: '',
+        head_name: head, merged_from: '',
       };
       db.requests.push(r);
       Object.keys(merged).forEach(function (id) {
@@ -450,7 +483,8 @@ var BorrowCore = (function () {
     // เพิ่มจำนวน = ตัดสต็อกเพิ่ม · ลดจำนวน/ลบรายการ = คืนเข้าสต็อก · รายการเดิมคงราคา ณ วันที่เบิก รายการใหม่ใช้ราคาปัจจุบัน
     editRequest: function (db, p, ctx) {
       var r = byId(db.requests, p.id) || fail('ไม่พบใบเบิกนี้ (อาจถูกลบไปแล้ว)');
-      var name = req(p.borrower_name, 'ชื่อผู้เบิก');
+      var name = borrowerName(p);
+      var head = p.head_name === undefined ? r.head_name : headName(p, false);
       var dept = req(p.department, 'แผนก');
       if (dept !== r.department && !find(db.departments, function (d) { return d.name === dept; })) fail('กรุณาเลือกแผนกจากรายการ');
       if (!p.items || !p.items.length) fail('ใบเบิกต้องมีพัสดุอย่างน้อย 1 รายการ (ถ้าต้องการยกเลิกทั้งใบ ให้ลบใบเบิก)');
@@ -481,8 +515,57 @@ var BorrowCore = (function () {
         else db.request_items.push({ request_id: r.id, item_id: Number(id), qty: want[id], price: byId(db.items, id).price || 0 });
       });
       r.borrower_name = name;
+      r.head_name = head;
       r.department = dept;
       r.note = str(p.note);
+      r.edited_at = stamp(ctx.now);
+      return r.id;
+    },
+
+    // รวมใบเบิก (เจ้าหน้าที่): ย้ายรายการของใบ ids มารวมในใบหลัก id (คงเลขที่และวันที่ของใบหลัก) แล้วลบใบเดิมออก
+    // สต็อกไม่เปลี่ยน (ตัดไปแล้วตอนเบิก) · ประวัติสต็อกของใบเดิมเปลี่ยนเป็นเลขที่ใบหลัก (หมายเหตุบอกเลขเดิม)
+    // เลขที่ของใบเดิมว่างลง (เก็บไว้ใน merged_from) ใบเบิกใหม่ได้เลขเหล่านี้ก่อนรันเลขถัดไป
+    // รวมได้เฉพาะแผนกเดียวกันและปีงบประมาณเดียวกัน (งบแผนกไม่เปลี่ยน) · พัสดุเดียวกันรวมจำนวน ราคาเฉลี่ยตามจำนวน
+    mergeRequests: function (db, p, ctx) {
+      var r = byId(db.requests, p.id) || fail('ไม่พบใบเบิกหลัก (อาจถูกลบไปแล้ว)');
+      var seen = {};
+      seen[r.id] = true;
+      var src = (p.ids || []).map(Number).filter(function (id) { if (seen[id]) return false; seen[id] = true; return true; })
+        .map(function (id) { return byId(db.requests, id) || fail('ไม่พบใบเบิกที่จะรวม (อาจถูกลบไปแล้ว)'); });
+      if (!src.length) fail('กรุณาเลือกใบเบิกที่จะรวมอย่างน้อย 1 ใบ');
+      src.forEach(function (x) {
+        if (x.department !== r.department) fail('รวมได้เฉพาะใบเบิกของแผนกเดียวกัน (' + x.request_no + ' เป็นของแผนก ' + x.department + ')');
+        if (fiscalYear(x.created_at) !== fiscalYear(r.created_at)) fail('รวมได้เฉพาะใบเบิกในปีงบประมาณเดียวกัน (' + x.request_no + ')');
+      });
+      var mine = {};
+      lines(db, r.id).forEach(function (l) { mine[l.item_id] = l; });
+      var gone = {}, nos = splitNos(r.merged_from), map = {};
+      src.forEach(function (x) {
+        gone[x.id] = true;
+        map[x.request_no] = true;
+        nos = nos.concat([x.request_no], splitNos(x.merged_from));
+        lines(db, x.id).forEach(function (l) {
+          var t = mine[l.item_id];
+          if (!t) { mine[l.item_id] = { request_id: r.id, item_id: l.item_id, qty: l.qty, price: l.price }; db.request_items.push(mine[l.item_id]); return; }
+          var value = t.qty * (t.price || 0) + l.qty * (l.price || 0);
+          t.qty += l.qty;
+          t.price = t.price === l.price ? t.price : Math.round(value / t.qty * 100) / 100;
+        });
+        if (!r.head_name && x.head_name) r.head_name = x.head_name;
+      });
+      db.request_items = db.request_items.filter(function (l) { return !gone[l.request_id]; });
+      db.requests = db.requests.filter(function (x) { return !gone[x.id]; });
+      db.movements.forEach(function (m) {
+        if (!map[m.request_no]) return;
+        m.note = (m.note ? m.note + ' · ' : '') + 'รวมเข้าใบ ' + r.request_no + ' (เดิม ' + m.request_no + ')';
+        m.request_no = r.request_no;
+      });
+      var notes = [r.note].concat(src.map(function (x) { return x.note; })).filter(Boolean);
+      r.note = notes.filter(function (n, i) { return notes.indexOf(n) === i; }).join(' / ');
+      var all = [r].concat(src);
+      r.received_at = all.every(function (x) { return x.received_at; }) ? all.map(function (x) { return x.received_at; }).sort().pop() : '';
+      var uniq = {};
+      r.merged_from = nos.filter(function (n) { if (uniq[n] || n === r.request_no) return false; uniq[n] = true; return true; }).sort().join(', ');
       r.edited_at = stamp(ctx.now);
       return r.id;
     },
@@ -714,6 +797,7 @@ var BorrowCore = (function () {
       ['เลขที่', function (r) { return r.request_no; }],
       ['วันที่เวลาที่เบิก', function (r) { return thaiStamp(r.created_at); }],
       [LABELS.requests.borrower_name, function (r) { return r.borrower_name; }],
+      [LABELS.requests.head_name, function (r) { return r.head_name; }],
       ['แผนก', function (r) { return r.department; }],
       ['รายการพัสดุ', function (r) {
         return lines(db, r.id).map(function (l) { var it = itemOf(l.item_id); return it.name + ' ×' + l.qty + ' ' + it.unit; }).join('\n');
@@ -726,7 +810,7 @@ var BorrowCore = (function () {
     var reqSys = TABLES.requests.filter(function (c) { return !LABELS.requests[c]; });
     out.requests = {
       header: reqFront.map(function (e) { return e[0]; }).concat(reqSys),
-      front: reqFront.length, sys: reqSys.length, wide: 5,
+      front: reqFront.length, sys: reqSys.length, wide: 6,
       rows: db.requests.slice().sort(function (a, b) { return b.id - a.id; }).map(function (r) {
         return reqFront.map(function (e) { var v = e[1](r); return v === undefined ? '' : v; })
           .concat(reqSys.map(function (c) { return r[c] === undefined ? '' : r[c]; }));
@@ -947,6 +1031,7 @@ var BorrowCore = (function () {
     var ls = lines(db, r.id);
     var out = ['📦 มีผู้เบิกพัสดุ ' + r.request_no, 'ผู้เบิก: ' + r.borrower_name + ' · ' + (dept && dept.full_name ? dept.full_name + ' (' + r.department + ')' : r.department),
       'เวลา: ' + thaiStamp(r.created_at) + ' น.'];
+    if (r.head_name) out.splice(2, 0, 'หัวหน้าแผนก: ' + r.head_name);
     ls.slice(0, 15).forEach(function (l) {
       var it = byId(db.items, l.item_id) || { name: '(ลบแล้ว)', unit: '' };
       out.push('• ' + it.name + ' ×' + commas(l.qty) + ' ' + it.unit + packNote(it, l.qty));
@@ -1244,8 +1329,8 @@ var BorrowCore = (function () {
     if (!r) return null;
     var dept = find(db.departments, function (d) { return d.name === r.department; });
     var ls = lines(db, r.id);
-    var body = [fxBox('vertical', [fxKV('ผู้เบิก', r.borrower_name), fxKV('แผนก', dept && dept.full_name ? dept.full_name + ' (' + r.department + ')' : r.department),
-      fxKV('เวลา', thaiStamp(r.created_at) + ' น.')], { spacing: 'sm' }), fxHead('รายการ (' + ls.length + ')', FX.teal)];
+    var body = [fxBox('vertical', [fxKV('ผู้เบิก', r.borrower_name)].concat(r.head_name ? [fxKV('หัวหน้า', r.head_name)] : [], [fxKV('แผนก', dept && dept.full_name ? dept.full_name + ' (' + r.department + ')' : r.department),
+      fxKV('เวลา', thaiStamp(r.created_at) + ' น.')]), { spacing: 'sm' }), fxHead('รายการ (' + ls.length + ')', FX.teal)];
     ls.slice(0, 15).forEach(function (l) {
       var it = byId(db.items, l.item_id) || { name: '(ลบแล้ว)', unit: '' };
       body.push(fxRow(it.name, packNote(it, l.qty).replace(/^ \(|\)$/g, ''), '×' + commas(l.qty) + ' ' + it.unit));

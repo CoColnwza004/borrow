@@ -1819,6 +1819,15 @@ body.board-mode .page { max-width: none; padding: 0; margin: 0; }
 .er-removed { flex-basis: 100%; font-size: 13px; color: var(--red); }
 @media (max-width: 600px) { .er-lines li { flex-wrap: wrap; } .er-name { flex-basis: 100%; } .er-lines .stepper { margin-left: auto; } }
 .pdf-edited { margin-top: 2px; font-size: 13px; font-weight: 700; }
+.name-warn { margin: -4px 0 0; padding: 8px 12px; border-radius: var(--r-md); background: var(--orange-soft); color: var(--orange); font-size: 14px; line-height: 1.45; }
+.name-warn b { font-weight: 700; }
+.name-sub { margin: -6px 0 0; }
+.mg-lead { line-height: 1.5; margin: 0 0 12px; }
+.mg-list { list-style: none; margin: 12px 0; padding: 0; max-height: min(52vh, 460px); overflow: auto; border: 1px solid var(--separator); border-radius: var(--r-md); }
+.mg-list li { padding: 10px 14px; border-bottom: 1px solid var(--separator); }
+.mg-list li:last-child { border-bottom: 0; }
+.mg-list .check > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mg-items { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
 /* ============ แท็บย่อยของหน้าที่รวมกัน (ประวัติ / ตั้งค่า) ============ */
 .subtabs { display: flex; gap: 4px; padding: 4px; border-radius: 980px; background: var(--fill); align-self: flex-start; max-width: 100%; overflow-x: auto; scrollbar-width: none; }

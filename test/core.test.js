@@ -864,7 +864,7 @@ test('core: sheet tables add readable Thai columns (withdraw only, time to the s
   assert.deepEqual(Object.keys(d).sort(), ['budgets', 'categories', 'departments', 'items', 'locations', 'log', 'movements', 'request_items', 'requests', 'suppliers', 'units']);
   const col = (t, name) => d[t].header.indexOf(name);
   // แท็บประวัติการเบิก: คอลัมน์อ่านง่ายอยู่หน้า ครบทุกช่องของระบบ (หัวไทยแปลงกลับได้) ล่าสุดอยู่บน
-  assert.deepEqual(d.requests.header.slice(0, 8), ['เลขที่', 'วันที่เวลาที่เบิก', 'ผู้เบิก', 'แผนก', 'รายการพัสดุ', 'จำนวนรวม', 'รวมเงิน (บาท)', 'หมายเหตุ']);
+  assert.deepEqual(d.requests.header.slice(0, 9), ['เลขที่', 'วันที่เวลาที่เบิก', 'ผู้เบิก', 'หัวหน้าแผนก', 'แผนก', 'รายการพัสดุ', 'จำนวนรวม', 'รวมเงิน (บาท)', 'หมายเหตุ']);
   assert.equal(d.requests.header[d.requests.wide - 1], 'รายการพัสดุ');
   assert.deepEqual(Core.TABLES.requests.filter((c) => !d.requests.header.map((h) => Core.fieldOf('requests', h)).includes(c)), []);
   const req = d.requests.rows[0];
@@ -1420,4 +1420,94 @@ test('core: staff tick "received/signed" on a request, shown in the sheet, clear
   // ชีตเดิมที่ยังไม่มีคอลัมน์นี้อ่านได้ (ว่าง = ยังไม่รับ)
   const back = Core.normalize(JSON.parse(JSON.stringify({ ...db, requests: db.requests.map(({ received_at, ...r }) => r) })));
   assert.equal(back.requests[0].received_at, '');
+});
+
+test('core: separate Thai first/last name and department head', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const w = { department: 'งานธุรการ', items: [{ item_id: paper.id, qty: 1 }] };
+  const id = Core.run(db, 'createRequest', { ...w, first_name: ' สมชาย ', last_name: 'ใจดี', head_name: 'นางสาวสมหญิง รักดี' }, user);
+  const r = db.requests.find((x) => x.id === id);
+  assert.equal(r.borrower_name, 'สมชาย ใจดี');
+  assert.equal(r.head_name, 'นางสาวสมหญิง รักดี');
+  assert.throws(() => Core.run(db, 'createRequest', { ...w, first_name: 'Somchai', last_name: 'ใจดี', head_name: 'สมหญิง รักดี' }, user), /ชื่อผู้เบิก ต้องเป็นภาษาไทย/);
+  assert.throws(() => Core.run(db, 'createRequest', { ...w, first_name: 'สมชาย', last_name: '', head_name: 'สมหญิง รักดี' }, user), /นามสกุลผู้เบิก/);
+  assert.throws(() => Core.run(db, 'createRequest', { ...w, first_name: 'สมชาย', last_name: 'ใจดี' }, user), /หัวหน้าแผนก/);
+  // เว็บเวอร์ชันก่อน (ชื่อช่องเดียว ไม่มีหัวหน้า) ยังเบิกได้
+  const old = Core.run(db, 'createRequest', { ...person, items: w.items }, user);
+  assert.equal(db.requests.find((x) => x.id === old).head_name, '');
+  // แก้ใบเบิก: แก้ชื่อหัวหน้าได้ · ไม่ส่งมา = คงเดิม
+  Core.run(db, 'editRequest', { id, first_name: 'สมชาย', last_name: 'ใจงาม', head_name: 'นายสมศักดิ์ ดีมาก', department: 'งานธุรการ', items: w.items }, admin);
+  assert.deepEqual([r.borrower_name, r.head_name], ['สมชาย ใจงาม', 'นายสมศักดิ์ ดีมาก']);
+  Core.run(db, 'editRequest', { id, borrower_name: 'สมชาย ใจงาม', department: 'งานธุรการ', items: w.items }, admin);
+  assert.equal(r.head_name, 'นายสมศักดิ์ ดีมาก');
+  // ชีตมีคอลัมน์หัวหน้าแผนก อ่านกลับเข้าระบบได้
+  const sheet = Core.sheetData(db).requests;
+  assert.equal(sheet.header[3], 'หัวหน้าแผนก');
+  assert.equal(Core.fieldOf('requests', 'หัวหน้าแผนก'), 'head_name');
+  assert.match(Core.lineRequestText(db, id), /หัวหน้าแผนก: นายสมศักดิ์ ดีมาก/);
+});
+
+test('core: merge requests, then new requests reuse the freed numbers first', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const gloves = db.items.find((i) => i.code === 'MD-005');
+  const now = { isAdmin: false, now: new Date('2026-11-01T09:00:00') };
+  const mk = (items, extra = {}) => Core.run(db, 'createRequest', { ...person, items, ...extra }, now);
+  const a = mk([{ item_id: paper.id, qty: 2 }], { note: 'ก' });
+  const b = mk([{ item_id: paper.id, qty: 3 }, { item_id: gloves.id, qty: 1 }], { note: 'ข' });
+  const c = mk([{ item_id: gloves.id, qty: 1 }]);
+  const d = mk([{ item_id: paper.id, qty: 1 }]);
+  const icu = Core.run(db, 'createRequest', { ...person, department: 'ICU', items: [{ item_id: paper.id, qty: 1 }] }, now);
+  const no = (id) => db.requests.find((x) => x.id === id).request_no;
+  assert.deepEqual([a, b, c, d, icu].map(no), ['WD69-001', 'WD69-002', 'WD69-003', 'WD69-004', 'WD69-005']);
+  const stock = [paper.available_qty, gloves.available_qty];
+  assert.throws(() => Core.run(db, 'mergeRequests', { id: a, ids: [b] }, user), /PIN|สิทธิ์|เจ้าหน้าที่/);
+  assert.throws(() => Core.run(db, 'mergeRequests', { id: a, ids: [icu] }, admin), /แผนกเดียวกัน/);
+  assert.throws(() => Core.run(db, 'mergeRequests', { id: a, ids: [] }, admin), /อย่างน้อย 1/);
+
+  Core.run(db, 'mergeRequests', { id: a, ids: [b, d] }, { ...admin, now: new Date('2026-11-02T10:00:00') });
+  const r = db.requests.find((x) => x.id === a);
+  assert.equal(r.request_no, 'WD69-001');
+  assert.equal(r.merged_from, 'WD69-002, WD69-004');
+  assert.equal(r.note, 'ก / ข');
+  assert.equal(r.edited_at, '2026-11-02 10:00:00');
+  assert.deepEqual(Core.lines(db, a).map((l) => [l.item_id, l.qty]).sort(), [[paper.id, 6], [gloves.id, 1]].sort());
+  assert.equal(db.requests.length, 3);
+  assert.ok(!db.request_items.some((l) => l.request_id === b || l.request_id === d));
+  assert.deepEqual([paper.available_qty, gloves.available_qty], stock); // สต็อกไม่เปลี่ยน
+  assert.ok(!db.movements.some((m) => m.request_no === 'WD69-002' || m.request_no === 'WD69-004'));
+  assert.ok(db.movements.some((m) => m.request_no === 'WD69-001' && /เดิม WD69-002/.test(m.note)));
+
+  // ใบใหม่: ใช้เลขที่ว่างจากการรวมก่อน (น้อยสุดก่อน) หมดแล้วจึงรันต่อจากเลขสูงสุด
+  assert.deepEqual([mk([{ item_id: paper.id, qty: 1 }]), mk([{ item_id: paper.id, qty: 1 }]), mk([{ item_id: paper.id, qty: 1 }])].map(no),
+    ['WD69-002', 'WD69-004', 'WD69-006']);
+  // ใบที่ได้เลขซ้ำแล้วถูกรวมอีก เลขนั้นว่างอีกครั้ง · เลขเดิมของใบที่ถูกรวมสะสมต่อในใบหลัก
+  const re2 = db.requests.find((x) => x.request_no === 'WD69-002').id;
+  Core.run(db, 'mergeRequests', { id: c, ids: [re2, a] }, admin);
+  const cc = db.requests.find((x) => x.id === c);
+  assert.equal(cc.merged_from, 'WD69-001, WD69-002, WD69-004');
+  assert.equal(no(mk([{ item_id: paper.id, qty: 1 }])), 'WD69-001');
+  assert.equal(no(mk([{ item_id: paper.id, qty: 1 }])), 'WD69-002');
+  assert.equal(no(mk([{ item_id: paper.id, qty: 1 }])), 'WD69-007'); // WD69-004 ยังใช้อยู่ (ใบใหม่ที่ได้เลขนี้)
+  // ใบที่ถูกลบ: เลขไม่ถูกนำกลับมาใช้
+  Core.run(db, 'deleteRequest', { id: db.requests.find((x) => x.request_no === 'WD69-007').id, restock: true }, admin);
+  assert.equal(no(mk([{ item_id: paper.id, qty: 1 }])), 'WD69-008');
+});
+
+test('core: merge averages the price of the same item and keeps budget value', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  Core.run(db, 'saveItem', { ...paper, price: 100 }, admin);
+  const a = Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 1 }] }, user);
+  Core.run(db, 'saveItem', { ...paper, price: 130 }, admin);
+  const b = Core.run(db, 'createRequest', { ...person, items: [{ item_id: paper.id, qty: 2 }] }, user);
+  Core.run(db, 'markReceived', { id: a }, admin);
+  Core.run(db, 'mergeRequests', { id: b, ids: [a] }, admin);
+  const r = db.requests.find((x) => x.id === b);
+  assert.equal(Core.requestValue(db, b), 360);
+  assert.deepEqual(Core.lines(db, b).map((l) => [l.qty, l.price]), [[3, 120]]);
+  assert.equal(r.received_at, ''); // ใบหลักยังไม่รับของ = ยังไม่รับ
+  assert.equal(db.requests.length, 1);
+  assert.match(r.merged_from, /^WD\d\d-001$/);
 });
