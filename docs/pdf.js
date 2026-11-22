@@ -70,6 +70,9 @@ const PdfDoc = (() => {
       <td class="r">${l.price > 0 ? money(l.price) : '-'}</td><td class="r">${l.price > 0 ? money(l.value) : '-'}</td></tr>`);
     for (let i = rows.length; i < MIN_ROWS; i++) rows.push('<tr class="blank"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>');
     const total = r.total || 0;
+    // ใบที่กรอกชื่อหัวหน้าแผนก: หัวหน้าแผนกเป็น "ผู้เบิก" · คนที่มาเบิกลงชื่อเป็น "ผู้รับพัสดุ" (ใบเก่าไม่มีหัวหน้า = ผู้เบิกตามเดิม)
+    const requester = r.head_name || r.borrower_name;
+    const receiver = r.head_name ? r.borrower_name : '';
     const dept = esc(r.department_full || r.department);
     const statement = `ข้าพเจ้าขอเบิกพัสดุตามรายการต่อไปนี้ เพื่อใช้ใน${dept}`;
     // วันที่ใต้ช่องลงชื่อ = วันที่เบิก เช่น 24 / 10 / 2569 (ช่องผู้รับพัสดุเว้นว่างให้กรอกเองตอนรับของ)
@@ -88,7 +91,7 @@ const PdfDoc = (() => {
           ${r.edited_at ? `<div class="pdf-edited">ฉบับแก้ไข ${esc(thaiDateTime(r.edited_at))} น.</div>` : ''}</div>
       </div>
       <table class="pdf-info">
-        <tr><th>ชื่อผู้เบิก</th><td>${esc(r.borrower_name)}</td><th>แผนก</th><td>${dept}</td></tr>
+        <tr><th>ชื่อผู้เบิก</th><td>${esc(requester)}</td><th>แผนก</th><td>${dept}</td></tr>
         <tr><th>วันเวลาที่เบิก</th><td colspan="3">${esc(thaiDateTime(r.created_at))} น.</td></tr>
         ${r.note || r.purpose ? `<tr><th>หมายเหตุ</th><td colspan="3">${esc([r.purpose, r.note].filter(Boolean).join(' · '))}</td></tr>` : ''}
       </table>
@@ -99,7 +102,7 @@ const PdfDoc = (() => {
         <tbody>${rows.join('')}</tbody>
         <tfoot><tr class="pdf-total"><td colspan="5" class="c">( ${bahtText(total)} )</td><th>รวมเป็นเงิน</th><td class="r"><b>${money(total)}</b></td></tr></tfoot>
       </table>
-      <div class="pdf-sign">${sign('ผู้เบิก', r.borrower_name)}${sign('ผู้อนุมัติ', staff)}${sign('เจ้าหน้าที่พัสดุ', staff)}${sign('ผู้รับพัสดุ', '', blankDate)}</div>
+      <div class="pdf-sign">${sign('ผู้เบิก', requester)}${sign('ผู้อนุมัติ', staff)}${sign('เจ้าหน้าที่พัสดุ', staff)}${sign('ผู้รับพัสดุ', receiver, blankDate)}</div>
       <div class="pdf-foot">ออกโดยระบบเบิกพัสดุ · บันทึกเมื่อ ${esc(thaiDateTime(r.created_at))}${r.edited_at ? ` · แก้ไขล่าสุด ${esc(thaiDateTime(r.edited_at))}` : ''}</div>
     </div>`;
   }

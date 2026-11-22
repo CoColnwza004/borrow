@@ -220,6 +220,7 @@ const ACT_TEXT = {
   addMaster: ['กำลังเพิ่มรายการ', 'กำลังบันทึกลง Google Sheet…', 'เพิ่มเรียบร้อย', ''],
   removeMaster: ['กำลังลบรายการ', 'กำลังบันทึกลง Google Sheet…', 'ลบเรียบร้อย', ''],
   deleteRequest: ['กำลังลบใบเบิก', 'กำลังบันทึกลง Google Sheet…', 'ลบใบเบิกเรียบร้อย', ''],
+  mergeRequests: ['กำลังรวมใบเบิก', 'กำลังบันทึกลง Google Sheet…', 'รวมใบเบิกเรียบร้อย', ''],
   default: ['กำลังดำเนินการ', 'กรุณารอสักครู่…', 'ดำเนินการสำเร็จ', ''],
 };
 
@@ -364,6 +365,34 @@ function flag(inp) {
   inp.addEventListener('change', clear, { once: true });
 }
 const formData = (form) => Object.fromEntries(new FormData(form).entries());
+// ชื่อ-นามสกุลภาษาไทย (ตรงกับ BorrowCore: เว้นวรรค จุด ขีด วงเล็บได้)
+const isThaiName = (v) => /[\u0E01-\u0E2E]/.test(v) && /^[\u0E00-\u0E7F .\-()]+$/.test(v);
+function checkThai(form, name, label) {
+  const inp = form[name];
+  const v = inp.value.trim().replace(/\s+/g, ' ');
+  if (!v) { flag(inp); throw new Error(`กรุณากรอก${label}`); }
+  if (!isThaiName(v)) { flag(inp); throw new Error(`${label}ต้องเป็นภาษาไทย (ชื่อจริง ไม่ใช่ชื่อเล่น/ภาษาอังกฤษ)`); }
+  return v;
+}
+// แยกชื่อเต็มเป็น ชื่อ / นามสกุล (ใบเบิกเก่าเก็บชื่อช่องเดียว)
+function splitName(full) {
+  const s = String(full || '').trim().replace(/\s+/g, ' ');
+  const i = s.indexOf(' ');
+  return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i + 1)];
+}
+// ช่องชื่อผู้เบิก (ชื่อ / นามสกุล แยกกัน) + ชื่อหัวหน้าแผนก ใช้ในหน้าเบิกและหน้าแก้ไขใบเบิก
+function nameFields(first, last, head, dept) {
+  return `<label class="field">ชื่อจริง <span class="req">*</span>
+      <input name="first_name" required autocomplete="given-name" lang="th" placeholder="เช่น สมชาย" value="${esc(first)}"></label>
+    <label class="field">นามสกุล <span class="req">*</span>
+      <input name="last_name" required autocomplete="family-name" lang="th" placeholder="เช่น ใจดี" value="${esc(last)}"></label>
+    <p class="name-warn full">⚠️ กรอก<b>ชื่อจริง-นามสกุลจริง เป็นภาษาไทย</b>เท่านั้น (ไม่ใช้ชื่อเล่น / ภาษาอังกฤษ)</p>
+    <label class="field">แผนก <span class="req">*</span>
+      <select name="department" required>${deptOptions(dept)}</select></label>
+    <label class="field">ชื่อ-นามสกุลหัวหน้าแผนก <span class="req">*</span>
+      <input name="head_name" required lang="th" placeholder="เช่น นางสาวสมหญิง รักดี" value="${esc(head)}"></label>
+    <p class="muted small full name-sub">ใบเบิกที่พิมพ์ออกมาจะใส่ชื่อหัวหน้าแผนกเป็น "ผู้เบิก" และชื่อผู้กรอกเป็น "ผู้รับพัสดุ"</p>`;
+}
 
 // ชื่อเต็มของแผนก เช่น "งานการพยาบาลผู้ป่วยหนัก (ICU)" ใช้ในเอกสาร PDF
 function deptFull(name) {
@@ -1052,10 +1081,8 @@ function renderRequestForm(page) {
           <div><h2>ใบเบิกพัสดุ</h2><p class="slip-sub">ข้อมูลผู้เบิก</p></div>
         </div>
         <div class="fields">
-          <label class="field">ชื่อ-นามสกุล <span class="req">*</span>
-            <input name="borrower_name" required autocomplete="name" placeholder="เช่น สมชาย ใจดี" value="${esc(lsGet('last-name'))}"></label>
-          <label class="field">แผนก <span class="req">*</span>
-            <select name="department" required>${deptOptions(lsGet('last-dept'))}</select></label>
+          ${nameFields(lsGet('last-first') || splitName(lsGet('last-name'))[0], lsGet('last-first') ? lsGet('last-last') : splitName(lsGet('last-name'))[1],
+            lsGet('head:' + lsGet('last-dept')), lsGet('last-dept'))}
           <label class="field full" id="rf-note">หมายเหตุ <span class="hint">(ไม่บังคับ)</span>
             <input name="note" placeholder="เช่น ใช้ทดแทนชั่วคราวระหว่างรอของ"></label>
         </div>
@@ -1085,6 +1112,12 @@ function renderRequestForm(page) {
     </form>`);
 
   const form = $('#rf');
+  // เปลี่ยนแผนก → ใส่ชื่อหัวหน้าแผนกที่เคยกรอกไว้ของแผนกนั้นให้ (ยังแก้ได้)
+  let autoHead = form.head_name.value;
+  form.department.addEventListener('change', () => {
+    if (form.head_name.value.trim() && form.head_name.value !== autoHead) return;
+    form.head_name.value = autoHead = lsGet('head:' + form.department.value);
+  });
   const navH = () => $('#nav-bar').offsetHeight;
   const tools = $('.pick-tools');
   let spy = null;
@@ -1298,8 +1331,11 @@ function renderRequestForm(page) {
   form.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
     const data = formData(form);
-    if (!data.borrower_name.trim()) { flag(form.borrower_name); throw new Error('กรุณากรอกชื่อ-นามสกุล'); }
+    data.first_name = checkThai(form, 'first_name', 'ชื่อจริง');
+    data.last_name = checkThai(form, 'last_name', 'นามสกุล');
+    data.borrower_name = `${data.first_name} ${data.last_name}`;
     if (!data.department) { flag(form.department); throw new Error('กรุณาเลือกแผนก'); }
+    data.head_name = checkThai(form, 'head_name', 'ชื่อหัวหน้าแผนก');
     const items = Object.entries(state.picks).map(([item_id, qty]) => ({ item_id: Number(item_id), qty }));
     if (!items.length) throw new Error('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
     primeSound();
@@ -1322,8 +1358,10 @@ function renderRequestForm(page) {
         }
         throw err;
       }
-      lsSet('last-name', data.borrower_name.trim());
+      lsSet('last-first', data.first_name);
+      lsSet('last-last', data.last_name);
       lsSet('last-dept', data.department);
+      lsSet('head:' + data.department, data.head_name);
       state.picks = {};
       lastSnapshot = JSON.stringify(state.db);
       form.note.value = '';
@@ -1362,7 +1400,7 @@ function confirmWithdraw(data, items, onOk) {
     cls: 'wd-confirm',
     cancel: 'กลับไปแก้ไข',
     ok: 'ยืนยันเบิก',
-    html: `<p class="wd-who"><b>${esc(data.borrower_name.trim())}</b> · ${esc(deptFull(data.department))}</p>
+    html: `<p class="wd-who"><b>${esc(data.borrower_name.trim())}</b> · ${esc(deptFull(data.department))}${data.head_name ? `<br><span class="muted small">หัวหน้าแผนก (ผู้เบิกในใบเบิก): ${esc(data.head_name)}</span>` : ''}</p>
       <div class="wd-lines"><table>
         <thead><tr><th>พัสดุ</th><th class="num">จำนวน</th><th class="num">รวม (บาท)</th></tr></thead>
         <tbody>${lines.map((l) => `<tr><td>${esc(l.name)}<div class="muted small">${esc(l.code)}${l.price ? ` · ${fmtMoney(l.price)} บาท / ${esc(l.unit)}` : ''}${l.neg ? ' · <em class="neg">ยอดจะติดลบ</em>' : ''}</div></td>
@@ -1455,12 +1493,13 @@ function lineCard() {
 
 // ===================== Success + PDF =====================
 // สร้าง PDF รอไว้ก่อน กดบันทึกแล้วถามว่าต้องการคำแนะนำไหม → (ภาพสาธิต) → บันทึก → ป๊อปอัปกลางจอเมื่อบันทึกแล้ว
-function showSuccess(id, { edited = false } = {}) {
+function showSuccess(id, { edited = false, merged = false } = {}) {
+  if (merged) edited = true;
   const r = requestView(state.db.requests.find((x) => x.id === id));
   const body = openModal('', `
     <div class="success">
       <span class="done" aria-hidden="true"><svg class="check-anim" viewBox="0 0 76 76"><circle cx="38" cy="38" r="34"/><path d="M23 39.5 33.5 50 54 28"/></svg></span>
-      <h2>${edited ? 'แก้ไขใบเบิกเรียบร้อย' : 'เบิกพัสดุเรียบร้อย'}</h2>
+      <h2>${merged ? 'รวมใบเบิกเรียบร้อย' : edited ? 'แก้ไขใบเบิกเรียบร้อย' : 'เบิกพัสดุเรียบร้อย'}</h2>
       <p class="doc-no"><span class="doc-label">เลขที่เอกสาร</span><b class="doc-id">${esc(r.request_no)}</b><span>${r.items.length} รายการ · ${edited ? 'แก้ไข ' + esc(fmtDateTime(r.edited_at)) : esc(fmtDateTime(r.created_at))}</span></p>
       <div class="permission">
         <span class="file-icon">PDF</span>
@@ -2241,7 +2280,9 @@ function showRequest(id) {
   const body = openModal(`ใบเบิก ${r.request_no}`, `
     <dl class="info">
       <dt>ผู้เบิก</dt><dd>${esc(r.borrower_name)} ${r.phone ? `(โทร ${esc(r.phone)})` : ''}</dd>
+      ${r.head_name ? `<dt>หัวหน้าแผนก</dt><dd>${esc(r.head_name)} <span class="muted small">(พิมพ์เป็นผู้เบิกในใบเบิก)</span></dd>` : ''}
       <dt>แผนก</dt><dd>${esc(r.department_full)}</dd>
+      ${r.merged_from ? `<dt>รวมจากใบเดิม</dt><dd>${esc(r.merged_from)} <span class="muted small">(เลขเดิมของใบที่ถูกรวม · ระบบนำเลขเหล่านี้ไปใช้กับใบเบิกใหม่)</span></dd>` : ''}
       <dt>วันเวลาที่เบิก</dt><dd>${fmtDateTime(r.created_at)}</dd>
       ${r.purpose ? `<dt>วัตถุประสงค์</dt><dd>${esc(r.purpose)}</dd>` : ''}
       ${r.note ? `<dt>หมายเหตุ</dt><dd>${esc(r.note)}</dd>` : ''}
@@ -2260,13 +2301,60 @@ function showRequest(id) {
       <tfoot><tr><th colspan="3">รวมเป็นเงิน</th><td class="num"><b>${fmtMoney(r.total)}</b></td></tr></tfoot>
     </table></div>
     <div class="actions">
-      ${isAdmin() ? `<button class="btn danger-soft" id="rq-delete">${IC.trash} ลบใบเบิก</button><button class="btn" id="rq-edit">แก้ไขใบเบิก</button>` : ''}
+      ${isAdmin() ? `<button class="btn danger-soft" id="rq-delete">${IC.trash} ลบใบเบิก</button><button class="btn" id="rq-edit">แก้ไขใบเบิก</button><button class="btn" id="rq-merge">รวมใบเบิก</button>` : ''}
       <span class="spacer"></span>
       <button class="btn primary" id="rq-pdf">${ICON.doc} ดาวน์โหลด PDF</button>
     </div>`);
   $('#rq-pdf', body).addEventListener('click', safe(() => downloadPdf(r, $('#rq-pdf', body))), { once: true });
   $('#rq-delete', body)?.addEventListener('click', () => confirmDeleteRequest(r));
   $('#rq-edit', body)?.addEventListener('click', () => editRequestForm(r));
+  $('#rq-merge', body)?.addEventListener('click', () => mergeRequestsForm(r));
+}
+
+// รวมใบเบิก (เจ้าหน้าที่): เลือกใบอื่นของแผนกเดียวกัน (ปีงบเดียวกัน) มารวมในใบนี้ → ใบนี้คงเลขที่เดิม ใบที่ถูกรวมหายไป
+// เลขที่ของใบที่ถูกรวมว่างลง ใบเบิกใหม่ได้เลขเหล่านั้นก่อน (เลขน้อยสุดก่อน) หมดแล้วจึงรันเลขถัดไป · สต็อกไม่เปลี่ยน
+function mergeRequestsForm(r) {
+  const fy = BorrowCore.fiscalYear(r.created_at);
+  const cands = requestsView().filter((x) => x.id !== r.id && x.department === r.department && BorrowCore.fiscalYear(x.created_at) === fy);
+  const body = openModal(`รวมใบเบิกเข้า ${r.request_no}`, `
+    <form id="mg-form">
+      <p class="muted small mg-lead">เลือกใบเบิกของแผนก <b>${esc(r.department)}</b> (ปีงบประมาณ ${esc(fy)}) ที่จะรวมเข้าใบ <b>${esc(r.request_no)}</b>
+        · ใบนี้คงเลขที่และวันที่เดิม ใบที่เลือกจะถูกรวมแล้วหายไป · สต็อกไม่เปลี่ยน
+        · <b>เลขที่ของใบที่ถูกรวมจะถูกนำไปใช้กับใบเบิกใหม่ก่อน</b> แล้วจึงรันเลขถัดไป</p>
+      ${cands.length ? `<div class="search">${ICON.search}<input type="search" id="mg-q" placeholder="ค้นหาเลขที่ ชื่อ หรือพัสดุ" autocomplete="off"></div>
+      <ul class="mg-list" id="mg-list">${cands.map((x) => `<li data-q="${esc([x.request_no, x.borrower_name, x.item_summary].join(' ').toLowerCase())}">
+        <label class="check wrap"><input type="checkbox" name="ids" value="${x.id}">
+          <span><span><b>${esc(x.request_no)}</b> · ${esc(x.borrower_name)} <span class="muted small">· ${fmtDateTime(x.created_at)}${x.total ? ` · ${fmtMoney(x.total)} บาท` : ''}</span></span>
+          <span class="muted small mg-items">${esc(x.item_summary)}</span></span></label></li>`).join('')}</ul>`
+    : '<p class="empty">ไม่มีใบเบิกอื่นของแผนกนี้ในปีงบประมาณเดียวกัน</p>'}
+      <div class="er-sum" id="mg-sum"></div>
+      <div class="actions"><button type="button" class="btn" data-close>ยกเลิก</button><span class="spacer"></span>
+        <button class="btn primary lg" id="mg-save" ${cands.length ? '' : 'disabled'}>รวมใบเบิก</button></div>
+    </form>`, { wide: true });
+  const form = $('#mg-form', body);
+  const picked = () => [...form.querySelectorAll('[name=ids]:checked')].map((c) => Number(c.value));
+  const sum = () => {
+    const ids = picked();
+    const xs = cands.filter((x) => ids.includes(x.id));
+    $('#mg-sum', body).innerHTML = xs.length
+      ? `<span>รวม ${fmtNum(xs.length + 1)} ใบ → ${esc(r.request_no)}</span><span>ราคารวม <b>${fmtMoney(round2(xs.reduce((n, x) => n + x.total, r.total)))}</b> บาท</span><span class="er-removed">เลขที่ว่าง: ${xs.map((x) => esc(x.request_no)).join(', ')}</span>`
+      : '<span class="muted">ยังไม่ได้เลือกใบเบิก</span>';
+  };
+  form.addEventListener('change', sum);
+  $('#mg-q', body)?.addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    form.querySelectorAll('#mg-list li').forEach((li) => { li.hidden = !!q && !li.dataset.q.includes(q); });
+  });
+  $('[data-close]', body).addEventListener('click', closeModal);
+  form.addEventListener('submit', safe(async (e) => {
+    e.preventDefault();
+    const ids = picked();
+    if (!ids.length) throw new Error('กรุณาเลือกใบเบิกที่จะรวมอย่างน้อย 1 ใบ');
+    const id = await store.act('mergeRequests', { id: r.id, ids }, { busy: ['กำลังรวมใบเบิก', 'กำลังบันทึกลง Google Sheet…'], done: false });
+    refresh();
+    showSuccess(id, { merged: true });
+  }));
+  sum();
 }
 
 // แก้ใบเบิก (เจ้าหน้าที่): เพิ่ม/ลดจำนวน เพิ่ม/ลบรายการ แก้ชื่อ แผนก หมายเหตุ → สต็อกปรับตาม แล้วได้ PDF ฉบับแก้ไข
@@ -2276,8 +2364,7 @@ function editRequestForm(r) {
   const lines = new Map(r.items.map((l) => [l.item_id, { qty: l.qty, price: l.price }]));
   const body = openModal(`แก้ไขใบเบิก ${r.request_no}`, `
     <form id="er-form" class="fields">
-      <label class="field">ชื่อผู้เบิก <span class="req">*</span><input name="borrower_name" required value="${esc(r.borrower_name)}"></label>
-      <label class="field">แผนก <span class="req">*</span><select name="department" required>${deptOptions(r.department)}</select></label>
+      ${nameFields(...splitName(r.borrower_name), r.head_name || '', r.department)}
       <label class="field full">หมายเหตุ<input name="note" value="${esc(r.note)}"></label>
       <div class="full">
         <h4 class="er-h">รายการในใบเบิก</h4>
@@ -2355,10 +2442,13 @@ function editRequestForm(r) {
   form.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
     const data = formData(form);
-    if (!data.borrower_name.trim()) { flag(form.borrower_name); throw new Error('กรุณากรอกชื่อผู้เบิก'); }
+    data.first_name = checkThai(form, 'first_name', 'ชื่อจริง');
+    data.last_name = checkThai(form, 'last_name', 'นามสกุล');
+    data.head_name = checkThai(form, 'head_name', 'ชื่อหัวหน้าแผนก');
     if (!lines.size) throw new Error('ใบเบิกต้องมีพัสดุอย่างน้อย 1 รายการ (ถ้าต้องการยกเลิกทั้งใบ ให้ลบใบเบิก)');
     const id = await store.act('editRequest', {
-      id: r.id, borrower_name: data.borrower_name, department: data.department, note: data.note,
+      id: r.id, borrower_name: `${data.first_name} ${data.last_name}`, first_name: data.first_name, last_name: data.last_name, head_name: data.head_name,
+      department: data.department, note: data.note,
       items: [...lines].map(([item_id, l]) => ({ item_id, qty: l.qty })),
     }, { busy: ['กำลังบันทึกการแก้ไข', 'กำลังปรับสต็อกและบันทึกลง Google Sheet…'], done: false });
     refresh();
@@ -2374,7 +2464,7 @@ function confirmDeleteRequest(r) {
     title: `ลบใบเบิก ${r.request_no} ใช่ไหม?`,
     html: `<p>${esc(r.borrower_name)} · ${esc(r.department)} · ${fmtDateTime(r.created_at)}<br>${fmtNum(r.items.length)} รายการ รวม ${fmtNum(qty)} หน่วย</p>
       <label class="check confirm-check"><input type="checkbox" name="restock" checked> คืนจำนวนพัสดุในใบนี้เข้าสต็อก</label>
-      <p class="muted small">ลบแล้วย้อนกลับไม่ได้ · เลขที่ ${esc(r.request_no)} จะไม่ถูกนำมาใช้ซ้ำ</p>`,
+      <p class="muted small">ลบแล้วย้อนกลับไม่ได้ · เลขที่ ${esc(r.request_no)} จะไม่ถูกนำมาใช้ซ้ำ (ถ้าจะรวมกับใบอื่น ให้ใช้ปุ่ม "รวมใบเบิก" แทน)</p>`,
     ok: 'ลบใบเบิก',
     onOk: async (d) => {
       const restock = $('[name=restock]', d).checked;
