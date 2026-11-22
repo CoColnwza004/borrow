@@ -380,18 +380,31 @@ function splitName(full) {
   const i = s.indexOf(' ');
   return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i + 1)];
 }
-// ช่องชื่อผู้เบิก (ชื่อ / นามสกุล แยกกัน) + ชื่อหัวหน้าแผนก ใช้ในหน้าเบิกและหน้าแก้ไขใบเบิก
+// ชื่อหัวหน้าแผนกที่เจ้าหน้าที่ตั้งไว้ (หน้าตั้งค่า → แผนก)
+const deptHead = (name) => state.db.departments.find((d) => d.name === name)?.head_name || '';
+// แถบแสดงชื่อหัวหน้าแผนกในหน้าเบิก (ระบบใส่ให้อัตโนมัติ ผู้เบิกไม่ต้องกรอก)
+function headNote(dept) {
+  const h = deptHead(dept);
+  if (!dept) return '<span class="muted">เลือกแผนกแล้ว ระบบจะใส่ชื่อหัวหน้าแผนกให้อัตโนมัติ</span>';
+  return h ? `<span>หัวหน้าแผนก: <b>${esc(h)}</b></span><span class="muted small">ใบเบิกที่พิมพ์ใส่ชื่อนี้เป็น "ผู้เบิก" และชื่อคุณเป็น "ผู้รับพัสดุ"</span>`
+    : '<span class="muted">แผนกนี้ยังไม่ได้ตั้งชื่อหัวหน้าแผนก (ใบเบิกจะใช้ชื่อคุณเป็นผู้เบิก)</span>';
+}
+// ช่องชื่อผู้เบิก (ชื่อ / นามสกุล แยกกัน) + แผนก · head = null: หน้าเบิก (หัวหน้าแผนกระบบใส่ให้) · ข้อความ: หน้าแก้ไขใบเบิก (เจ้าหน้าที่แก้ได้)
 function nameFields(first, last, head, dept) {
+  if (head === null) {
+    return nameFieldsBase(first, last, dept) + `<p class="head-auto full" id="rf-head">${headNote(dept)}</p>`;
+  }
+  return nameFieldsBase(first, last, dept) + `<label class="field">ชื่อ-นามสกุลหัวหน้าแผนก <span class="hint">(ผู้เบิกในใบเบิก)</span>
+      <input name="head_name" lang="th" placeholder="เช่น นางสาวสมหญิง รักดี" value="${esc(head)}"></label>`;
+}
+function nameFieldsBase(first, last, dept) {
   return `<label class="field">ชื่อจริง <span class="req">*</span>
       <input name="first_name" required autocomplete="given-name" lang="th" placeholder="เช่น สมชาย" value="${esc(first)}"></label>
     <label class="field">นามสกุล <span class="req">*</span>
       <input name="last_name" required autocomplete="family-name" lang="th" placeholder="เช่น ใจดี" value="${esc(last)}"></label>
     <p class="name-warn full">⚠️ กรอก<b>ชื่อจริง-นามสกุลจริง เป็นภาษาไทย</b>เท่านั้น (ไม่ใช้ชื่อเล่น / ภาษาอังกฤษ)</p>
     <label class="field">แผนก <span class="req">*</span>
-      <select name="department" required>${deptOptions(dept)}</select></label>
-    <label class="field">ชื่อ-นามสกุลหัวหน้าแผนก <span class="req">*</span>
-      <input name="head_name" required lang="th" placeholder="เช่น นางสาวสมหญิง รักดี" value="${esc(head)}"></label>
-    <p class="muted small full name-sub">ใบเบิกที่พิมพ์ออกมาจะใส่ชื่อหัวหน้าแผนกเป็น "ผู้เบิก" และชื่อผู้กรอกเป็น "ผู้รับพัสดุ"</p>`;
+      <select name="department" required>${deptOptions(dept)}</select></label>`;
 }
 
 // ชื่อเต็มของแผนก เช่น "งานการพยาบาลผู้ป่วยหนัก (ICU)" ใช้ในเอกสาร PDF
@@ -668,7 +681,8 @@ const ROUTES = {
   request: { title: 'เบิกพัสดุ', render: renderRequestForm },
   items: { title: 'พัสดุคงเหลือ', render: renderItems },
   requests: { title: 'ประวัติเบิก', render: renderRequests, admin: true, group: 'history' },
-  dashboard: { title: 'ภาพรวม', render: renderDashboard, admin: true },
+  dashboard: { title: 'ภาพรวม', render: renderDashboard, admin: true, group: 'dashboard' },
+  users: { title: 'สถิติผู้ใช้งาน', render: renderUsers, admin: true, group: 'dashboard' },
   movements: { title: 'ประวัติสต็อก', render: renderMovements, admin: true, group: 'history' },
   reports: { title: 'รายงาน', render: renderReports, admin: true, group: 'reports' },
   budget: { title: 'งบประมาณแผนก', render: renderBudget, admin: true, group: 'reports' },
@@ -688,7 +702,7 @@ const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
 function renderNav() {
   // เมนูเจ้าหน้าที่จัดกลุ่ม: ประวัติ (ใบเบิก + สต็อก) · ตั้งค่า (รายการตัวเลือก + Google Sheet) มีแท็บย่อยในหน้า · บริษัทเป็นเมนูหลัก
   const pub = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['help', 'วิธีใช้งาน']];
-  const staff = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['dashboard', 'ภาพรวม'], ['requests', 'ประวัติ', 'history'], ['reports', 'รายงาน', 'reports'], ['suppliers', 'บริษัท'], ['settings', 'ตั้งค่า', 'settings']];
+  const staff = [['home', 'หน้าแรก'], ['request', 'เบิกพัสดุ'], ['items', 'พัสดุคงเหลือ'], ['dashboard', 'ภาพรวม', 'dashboard'], ['requests', 'ประวัติ', 'history'], ['reports', 'รายงาน', 'reports'], ['suppliers', 'บริษัท'], ['settings', 'ตั้งค่า', 'settings']];
   const cur = currentRoute();
   const group = ROUTES[cur].group;
   const a = ([k, label, g]) => `<a href="#/${k === 'home' ? '' : k}" class="${k === cur || (g && g === group) ? 'active' : ''}">${label}</a>`;
@@ -857,6 +871,7 @@ function countUp(root) {
 
 // แท็บย่อยของหน้าที่รวมกัน
 const SUBTABS = {
+  dashboard: [['dashboard', 'ภาพรวม'], ['users', 'สถิติผู้ใช้งาน']],
   history: [['requests', 'ใบเบิก'], ['movements', 'ความเคลื่อนไหวสต็อก']],
   settings: [['settings', 'รายการตัวเลือก'], ['sheet', 'Google Sheet']],
   reports: [['reports', 'รายงาน'], ['budget', 'งบประมาณแผนก']],
@@ -1082,7 +1097,7 @@ function renderRequestForm(page) {
         </div>
         <div class="fields">
           ${nameFields(lsGet('last-first') || splitName(lsGet('last-name'))[0], lsGet('last-first') ? lsGet('last-last') : splitName(lsGet('last-name'))[1],
-            lsGet('head:' + lsGet('last-dept')), lsGet('last-dept'))}
+            null, lsGet('last-dept'))}
           <label class="field full" id="rf-note">หมายเหตุ <span class="hint">(ไม่บังคับ)</span>
             <input name="note" placeholder="เช่น ใช้ทดแทนชั่วคราวระหว่างรอของ"></label>
         </div>
@@ -1112,12 +1127,8 @@ function renderRequestForm(page) {
     </form>`);
 
   const form = $('#rf');
-  // เปลี่ยนแผนก → ใส่ชื่อหัวหน้าแผนกที่เคยกรอกไว้ของแผนกนั้นให้ (ยังแก้ได้)
-  let autoHead = form.head_name.value;
-  form.department.addEventListener('change', () => {
-    if (form.head_name.value.trim() && form.head_name.value !== autoHead) return;
-    form.head_name.value = autoHead = lsGet('head:' + form.department.value);
-  });
+  // เปลี่ยนแผนก → แสดงชื่อหัวหน้าแผนกนั้น (ระบบใส่ให้ตอนบันทึก)
+  form.department.addEventListener('change', () => { $('#rf-head').innerHTML = headNote(form.department.value); });
   const navH = () => $('#nav-bar').offsetHeight;
   const tools = $('.pick-tools');
   let spy = null;
@@ -1335,7 +1346,7 @@ function renderRequestForm(page) {
     data.last_name = checkThai(form, 'last_name', 'นามสกุล');
     data.borrower_name = `${data.first_name} ${data.last_name}`;
     if (!data.department) { flag(form.department); throw new Error('กรุณาเลือกแผนก'); }
-    data.head_name = checkThai(form, 'head_name', 'ชื่อหัวหน้าแผนก');
+    data.head_name = deptHead(data.department);
     const items = Object.entries(state.picks).map(([item_id, qty]) => ({ item_id: Number(item_id), qty }));
     if (!items.length) throw new Error('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
     primeSound();
@@ -1361,7 +1372,6 @@ function renderRequestForm(page) {
       lsSet('last-first', data.first_name);
       lsSet('last-last', data.last_name);
       lsSet('last-dept', data.department);
-      lsSet('head:' + data.department, data.head_name);
       state.picks = {};
       lastSnapshot = JSON.stringify(state.db);
       form.note.value = '';
@@ -2220,6 +2230,7 @@ function renderRequests(page) {
     <p class="muted small" id="r-sum"></p>
     <section class="card"><ul class="rows" id="req-body"></ul></section>`);
   $('#r-month').value = when;
+  if (params.get('q')) $('#r-q').value = params.get('q');
 
   let rcvf = ['no', 'yes'].includes(params.get('rcv')) ? params.get('rcv') : '';
   const match = (r) => !when || r.created_at.startsWith(when === 'today' ? today() : when);
@@ -2319,7 +2330,7 @@ function mergeRequestsForm(r) {
   const body = openModal(`รวมใบเบิกเข้า ${r.request_no}`, `
     <form id="mg-form">
       <p class="muted small mg-lead">เลือกใบเบิกของแผนก <b>${esc(r.department)}</b> (ปีงบประมาณ ${esc(fy)}) ที่จะรวมเข้าใบ <b>${esc(r.request_no)}</b>
-        · ใบนี้คงเลขที่และวันที่เดิม ใบที่เลือกจะถูกรวมแล้วหายไป · สต็อกไม่เปลี่ยน
+        · ใบนี้คงเลขที่และวันที่เดิม ใบที่เลือกจะถูกรวมแล้วหายไป · พัสดุที่ซ้ำกันเลือกใช้จำนวนจากใบเดียว
         · <b>เลขที่ของใบที่ถูกรวมจะถูกนำไปใช้กับใบเบิกใหม่ก่อน</b> แล้วจึงรันเลขถัดไป</p>
       ${cands.length ? `<div class="search">${ICON.search}<input type="search" id="mg-q" placeholder="ค้นหาเลขที่ ชื่อ หรือพัสดุ" autocomplete="off"></div>
       <ul class="mg-list" id="mg-list">${cands.map((x) => `<li data-q="${esc([x.request_no, x.borrower_name, x.item_summary].join(' ').toLowerCase())}">
@@ -2327,20 +2338,50 @@ function mergeRequestsForm(r) {
           <span><span><b>${esc(x.request_no)}</b> · ${esc(x.borrower_name)} <span class="muted small">· ${fmtDateTime(x.created_at)}${x.total ? ` · ${fmtMoney(x.total)} บาท` : ''}</span></span>
           <span class="muted small mg-items">${esc(x.item_summary)}</span></span></label></li>`).join('')}</ul>`
     : '<p class="empty">ไม่มีใบเบิกอื่นของแผนกนี้ในปีงบประมาณเดียวกัน</p>'}
+      <div id="mg-dup"></div>
       <div class="er-sum" id="mg-sum"></div>
       <div class="actions"><button type="button" class="btn" data-close>ยกเลิก</button><span class="spacer"></span>
         <button class="btn primary lg" id="mg-save" ${cands.length ? '' : 'disabled'}>รวมใบเบิก</button></div>
     </form>`, { wide: true });
   const form = $('#mg-form', body);
   const picked = () => [...form.querySelectorAll('[name=ids]:checked')].map((c) => Number(c.value));
+  // พัสดุซ้ำหลายใบ: เลือกใช้จำนวนจากใบเดียว (ค่าเริ่มต้น = ใบหลัก / ใบแรกที่มี) จำนวนในใบอื่นคืนเข้าสต็อก
+  const keep = new Map();
+  const slipsOf = () => [r, ...cands.filter((x) => picked().includes(x.id))];
+  const groups = () => {
+    const have = new Map();
+    slipsOf().forEach((x) => x.items.forEach((l) => {
+      if (!have.has(l.item_id)) have.set(l.item_id, []);
+      have.get(l.item_id).push({ slip: x, line: l });
+    }));
+    have.forEach((list, id) => { if (!list.some((c) => c.slip.id === keep.get(id))) keep.set(id, list[0].slip.id); });
+    return have;
+  };
+  const drawDup = () => {
+    const dups = [...groups()].filter(([, list]) => list.length > 1);
+    $('#mg-dup', body).innerHTML = dups.length ? `<div class="mg-dup">
+      <h4>พัสดุซ้ำ ${fmtNum(dups.length)} รายการ — เลือกใช้จำนวนจากใบเดียว</h4>
+      <p class="muted small">จำนวนของพัสดุนั้นในใบอื่นจะไม่นับ และคืนเข้าสต็อกให้อัตโนมัติ (บันทึกในประวัติสต็อก)</p>
+      ${dups.map(([id, list]) => `<fieldset><legend>${esc(list[0].line.name)} <span class="muted small">${esc(list[0].line.code)}</span></legend>
+        ${list.map((c) => `<label class="mg-opt"><input type="radio" name="keep-${id}" value="${c.slip.id}" ${keep.get(id) === c.slip.id ? 'checked' : ''}>
+          <span><b>${fmtNum(c.line.qty)} ${esc(c.line.unit)}</b> <span class="muted small">จากใบ ${esc(c.slip.request_no)}${c.slip.id === r.id ? ' (ใบหลัก)' : ''}</span></span></label>`).join('')}
+      </fieldset>`).join('')}</div>` : '';
+  };
   const sum = () => {
-    const ids = picked();
-    const xs = cands.filter((x) => ids.includes(x.id));
+    const xs = slipsOf().slice(1);
+    let total = 0, back = 0;
+    groups().forEach((list, id) => list.forEach((c) => {
+      if (c.slip.id === keep.get(id)) total += c.line.value; else back += c.line.qty;
+    }));
     $('#mg-sum', body).innerHTML = xs.length
-      ? `<span>รวม ${fmtNum(xs.length + 1)} ใบ → ${esc(r.request_no)}</span><span>ราคารวม <b>${fmtMoney(round2(xs.reduce((n, x) => n + x.total, r.total)))}</b> บาท</span><span class="er-removed">เลขที่ว่าง: ${xs.map((x) => esc(x.request_no)).join(', ')}</span>`
+      ? `<span>รวม ${fmtNum(xs.length + 1)} ใบ → ${esc(r.request_no)}</span><span>ราคารวม <b>${fmtMoney(round2(total))}</b> บาท</span><span class="er-removed">เลขที่ว่าง: ${xs.map((x) => esc(x.request_no)).join(', ')}${back ? ` · พัสดุซ้ำคืนเข้าสต็อก ${fmtNum(back)} หน่วย` : ''}</span>`
       : '<span class="muted">ยังไม่ได้เลือกใบเบิก</span>';
   };
-  form.addEventListener('change', sum);
+  form.addEventListener('change', (e) => {
+    const k = /^keep-(\d+)$/.exec(e.target.name || '');
+    if (k) keep.set(Number(k[1]), Number(e.target.value)); else drawDup();
+    sum();
+  });
   $('#mg-q', body)?.addEventListener('input', (e) => {
     const q = e.target.value.trim().toLowerCase();
     form.querySelectorAll('#mg-list li').forEach((li) => { li.hidden = !!q && !li.dataset.q.includes(q); });
@@ -2350,7 +2391,8 @@ function mergeRequestsForm(r) {
     e.preventDefault();
     const ids = picked();
     if (!ids.length) throw new Error('กรุณาเลือกใบเบิกที่จะรวมอย่างน้อย 1 ใบ');
-    const id = await store.act('mergeRequests', { id: r.id, ids }, { busy: ['กำลังรวมใบเบิก', 'กำลังบันทึกลง Google Sheet…'], done: false });
+    const dup = Object.fromEntries([...groups()].filter(([, list]) => list.length > 1).map(([item]) => [item, keep.get(item)]));
+    const id = await store.act('mergeRequests', { id: r.id, ids, keep: dup }, { busy: ['กำลังรวมใบเบิก', 'กำลังบันทึกลง Google Sheet…'], done: false });
     refresh();
     showSuccess(id, { merged: true });
   }));
@@ -2364,7 +2406,7 @@ function editRequestForm(r) {
   const lines = new Map(r.items.map((l) => [l.item_id, { qty: l.qty, price: l.price }]));
   const body = openModal(`แก้ไขใบเบิก ${r.request_no}`, `
     <form id="er-form" class="fields">
-      ${nameFields(...splitName(r.borrower_name), r.head_name || '', r.department)}
+      ${nameFields(...splitName(r.borrower_name), r.head_name || deptHead(r.department), r.department)}
       <label class="field full">หมายเหตุ<input name="note" value="${esc(r.note)}"></label>
       <div class="full">
         <h4 class="er-h">รายการในใบเบิก</h4>
@@ -2444,7 +2486,7 @@ function editRequestForm(r) {
     const data = formData(form);
     data.first_name = checkThai(form, 'first_name', 'ชื่อจริง');
     data.last_name = checkThai(form, 'last_name', 'นามสกุล');
-    data.head_name = checkThai(form, 'head_name', 'ชื่อหัวหน้าแผนก');
+    data.head_name = form.head_name.value.trim() ? checkThai(form, 'head_name', 'ชื่อหัวหน้าแผนก') : '';
     if (!lines.size) throw new Error('ใบเบิกต้องมีพัสดุอย่างน้อย 1 รายการ (ถ้าต้องการยกเลิกทั้งใบ ให้ลบใบเบิก)');
     const id = await store.act('editRequest', {
       id: r.id, borrower_name: `${data.first_name} ${data.last_name}`, first_name: data.first_name, last_name: data.last_name, head_name: data.head_name,
@@ -3001,6 +3043,7 @@ function renderDashboard(page) {
     <div class="shortcuts">
       <a class="card shortcut" href="#/board"><span class="sc-ic tv">${ICON.tv}</span><span><b>Live board</b><small>เปิดบนจอทีวีห้องพัสดุ</small></span></a>
       <a class="card shortcut" href="#/reports"><span class="sc-ic">${ICON.doc}</span><span><b>รายงาน</b><small>สรุปการเบิก · คงเหลือ · รับเข้า–จ่ายออก</small></span></a>
+      <a class="card shortcut" href="#/users"><span class="sc-ic">${ICON.withdraw}</span><span><b>สถิติผู้ใช้งาน</b><small>ใครเบิกบ่อย · แผนก · ช่วงเวลา</small></span></a>
       <button type="button" class="card shortcut" id="dash-alerts"><span class="sc-ic bell">${ICON.bell}</span><span><b>การแจ้งเตือน</b><small id="dash-alerts-sub"></small></span></button>
     </div>
     <div class="stats">
@@ -3044,6 +3087,193 @@ function renderDashboard(page) {
   $('#dash-alerts').addEventListener('click', () => showAlerts());
   bindRowClicks(page);
 }
+
+// ===================== สถิติผู้ใช้งาน (เจ้าหน้าที่) =====================
+// คิดจากใบเบิก: ผู้ใช้งาน = ชื่อผู้เบิก (ชื่อ-นามสกุล) ไม่ซ้ำกัน · เลือกช่วงเวลาและแผนกได้
+const TH_MON = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+const monLabel = (ym) => `${TH_MON[Number(ym.slice(5, 7)) - 1]} ${String(Number(ym.slice(0, 4)) + 543).slice(2)}`;
+const monShort = (ym) => TH_MON[Number(ym.slice(5, 7)) - 1];
+const personKey = (name) => String(name || '').trim().replace(/\s+/g, ' ');
+const WEEKDAYS = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
+// คอลัมน์แท่ง 1 ชุดข้อมูล (สีเดียว) · rows = [{ label, value, tip }]
+function columnChart(rows, unit) {
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  return `<div class="uc-cols" role="img" aria-label="${esc(rows.map((r) => `${r.label} ${r.value} ${unit}`).join(', '))}">
+    <span class="uc-max">${fmtNum(max)}</span>
+    ${rows.map((r) => `<div class="uc-col" data-tip="${esc(r.tip || `${r.label}: ${fmtNum(r.value)} ${unit}`)}">
+      <span class="uc-bar" style="height:${r.value ? Math.max(2, (r.value / max) * 100) : 0}%"></span>
+      <span class="uc-x">${esc(r.label)}</span></div>`).join('')}
+  </div>`;
+}
+function renderUsers(page) {
+  const params = hashParams();
+  const fy = BorrowCore.fiscalYear(today());
+  const ranges = { 30: '30 วัน', 90: '3 เดือน', fy: `ปีงบ ${fy}`, all: 'ทั้งหมด' };
+  let range = ranges[params.get('r')] ? params.get('r') : '90';
+  let dept = params.get('d') || '';
+  const depts = [...new Set(state.db.requests.map((r) => r.department))].filter(Boolean).sort();
+  page.insertAdjacentHTML('beforeend', `
+    <div class="page-head"><h1>สถิติผู้ใช้งาน</h1><p class="lead">ใครเบิกบ่อย แผนกไหนใช้งานมาก และช่วงเวลาที่มีคนเบิก (คิดจากใบเบิก · ผู้ใช้ 1 คน = ชื่อ-นามสกุลผู้เบิก)</p></div>
+    <div class="toolbar">
+      <div class="segmented" id="u-range" role="group" aria-label="ช่วงเวลา">${Object.entries(ranges).map(([k, v]) => `<button type="button" data-v="${k}">${v}</button>`).join('')}</div>
+      <select id="u-dept" aria-label="แผนก" style="width:auto"><option value="">ทุกแผนก</option>${depts.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join('')}</select>
+      <span class="spacer"></span>
+      <button class="btn" id="u-export">ส่งออก CSV</button>
+    </div>
+    <div class="stats" id="u-stats"></div>
+    <div class="grid-2">
+      <section class="card"><div class="card-head"><h3>ใบเบิกรายเดือน</h3><span class="muted small u-span"></span></div><div class="uc-wrap" id="u-docs"></div></section>
+      <section class="card"><div class="card-head"><h3>ผู้ใช้งานรายเดือน</h3><span class="muted small u-span"></span></div><div class="uc-wrap" id="u-people"></div></section>
+    </div>
+    <section class="card"><div class="card-head"><h3>ช่วงเวลาที่มีคนเบิก</h3><span class="muted small" id="u-heat-sub"></span></div><div class="uc-wrap" id="u-heat"></div></section>
+    <section class="card">
+      <div class="card-head"><h3>ผู้ใช้งาน</h3><div class="search u-search">${ICON.search}<input type="search" id="u-q" placeholder="ค้นหาชื่อหรือแผนก"></div></div>
+      <div class="table-wrap"><table class="u-table">
+        <thead><tr><th class="num">#</th><th>ผู้เบิก</th><th>แผนก</th><th>ใบเบิก</th><th class="num">รายการ</th><th class="num">มูลค่า (บาท)</th><th>ใช้ล่าสุด</th></tr></thead>
+        <tbody id="u-body"></tbody></table></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h3>แผนก</h3></div>
+      <div class="table-wrap"><table class="u-table">
+        <thead><tr><th>แผนก</th><th class="num">ผู้ใช้ (คน)</th><th>ใบเบิก</th><th class="num">มูลค่า (บาท)</th></tr></thead>
+        <tbody id="u-dept-body"></tbody></table></div>
+    </section>`);
+
+  const inDept = (r) => !dept || r.department === dept;
+  const since = () => {
+    if (range === 'all') return '';
+    if (range === 'fy') return BorrowCore.fiscalRange(fy).start;
+    const d = new Date();
+    d.setDate(d.getDate() - Number(range) + 1);
+    return BorrowCore.ymd(d);
+  };
+  let people = [];
+  const draw = () => {
+    const qs = new URLSearchParams();
+    if (range !== '90') qs.set('r', range);
+    if (dept) qs.set('d', dept);
+    history.replaceState(null, '', `#/users${qs.toString() ? '?' + qs : ''}`);
+    $$('#u-range button').forEach((b) => b.classList.toggle('active', b.dataset.v === range));
+    const from = since();
+    const all = requestsView().filter(inDept);
+    const reqs = all.filter((r) => !from || r.created_at.slice(0, 10) >= from);
+    // ใช้ครั้งแรกเมื่อไร (ทุกช่วงเวลา) → นับผู้ใช้ใหม่ในช่วงที่เลือก
+    const first = new Map();
+    all.forEach((r) => { const k = personKey(r.borrower_name); if (!first.has(k) || r.created_at < first.get(k)) first.set(k, r.created_at); });
+    const map = new Map();
+    reqs.forEach((r) => {
+      const k = personKey(r.borrower_name);
+      const p = map.get(k) || { name: k, depts: new Map(), docs: 0, lines: 0, value: 0, last: '' };
+      p.docs += 1;
+      p.lines += r.items.length;
+      p.value += r.total;
+      p.depts.set(r.department, (p.depts.get(r.department) || 0) + 1);
+      if (r.created_at > p.last) p.last = r.created_at;
+      map.set(k, p);
+    });
+    people = [...map.values()].sort((a, b) => b.docs - a.docs || b.value - a.value || a.name.localeCompare(b.name, 'th'));
+    const fresh = people.filter((p) => (first.get(p.name) || '').slice(0, 10) >= (from || '0000')).length;
+    const activeDepts = new Set(reqs.map((r) => r.department)).size;
+    const tile = (label, value, sub) => `<div class="card stat"><span class="label">${label}</span><span class="value">${value}</span><span class="sub">${sub}</span></div>`;
+    $('#u-stats').innerHTML = tile('ผู้ใช้งาน', fmtNum(people.length), 'คน') + tile('ใบเบิก', fmtNum(reqs.length), 'ใบ') +
+      tile('เฉลี่ยต่อคน', people.length ? (reqs.length / people.length).toLocaleString('th-TH', { maximumFractionDigits: 1 }) : '0', 'ใบ / คน') +
+      tile('ผู้ใช้ใหม่', fmtNum(range === 'all' ? people.length : fresh), range === 'all' ? 'คน (ทั้งหมด)' : 'คน (เบิกครั้งแรกในช่วงนี้)') +
+      (dept ? '' : tile('แผนกที่ใช้งาน', fmtNum(activeDepts), 'แผนก'));
+
+    // 12 เดือนล่าสุด (ตามแผนกที่เลือก ไม่ขึ้นกับช่วงเวลา)
+    const months = [];
+    const d = new Date();
+    d.setDate(1);
+    for (let i = 11; i >= 0; i--) { const x = new Date(d.getFullYear(), d.getMonth() - i, 1); months.push(`${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`); }
+    const byMonth = months.map((m) => {
+      const rs = all.filter((r) => r.created_at.startsWith(m));
+      return { m, docs: rs.length, people: new Set(rs.map((r) => personKey(r.borrower_name))).size };
+    });
+    page.querySelectorAll('.u-span').forEach((el) => { el.textContent = `${monLabel(months[0])} – ${monLabel(months[11])}`; });
+    $('#u-docs').innerHTML = columnChart(byMonth.map((x) => ({ label: monShort(x.m), value: x.docs, tip: `${PdfDoc.monthName(x.m)}: ${fmtNum(x.docs)} ใบ` })), 'ใบ');
+    $('#u-people').innerHTML = columnChart(byMonth.map((x) => ({ label: monShort(x.m), value: x.people, tip: `${PdfDoc.monthName(x.m)}: ${fmtNum(x.people)} คน` })), 'คน');
+
+    // ตารางความร้อน วัน × ชั่วโมง (สีเดียว เข้มขึ้นตามจำนวน)
+    const grid = WEEKDAYS.map(() => Array(24).fill(0));
+    reqs.forEach((r) => {
+      const t = new Date(r.created_at.replace(' ', 'T'));
+      if (!isNaN(t)) grid[(t.getDay() + 6) % 7][t.getHours()] += 1;
+    });
+    const hmax = Math.max(1, ...grid.flat());
+    const used = grid.flat().filter(Boolean).length;
+    let peak = null;
+    grid.forEach((row, w) => row.forEach((n, h) => { if (n && (!peak || n > peak.n)) peak = { n, w, h }; }));
+    $('#u-heat-sub').textContent = peak ? `เบิกมากที่สุด: วัน${['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์', 'อาทิตย์'][peak.w]} ${String(peak.h).padStart(2, '0')}:00–${String(peak.h + 1).padStart(2, '0')}:00 น. (${fmtNum(peak.n)} ใบ)` : '';
+    const step = (n) => (n ? Math.min(5, Math.ceil((n / hmax) * 5)) : 0);
+    $('#u-heat').innerHTML = used ? `<div class="uh" role="img" aria-label="จำนวนใบเบิกแยกตามวันและชั่วโมง">
+      <span></span>${Array.from({ length: 24 }, (_, h) => `<span class="uh-h">${h % 3 ? '' : String(h).padStart(2, '0')}</span>`).join('')}
+      ${grid.map((row, w) => `<span class="uh-d">${WEEKDAYS[w]}</span>${row.map((n, h) => `<span class="uh-c s${step(n)}" data-tip="${WEEKDAYS[w]} ${String(h).padStart(2, '0')}:00–${String(h + 1).padStart(2, '0')}:00 น. · ${fmtNum(n)} ใบ"></span>`).join('')}`).join('')}
+    </div>
+    <div class="uh-legend"><span>น้อย</span>${[1, 2, 3, 4, 5].map((s) => `<i class="uh-c s${s}"></i>`).join('')}<span>มาก</span></div>` : '<p class="empty">ยังไม่มีใบเบิกในช่วงนี้</p>';
+
+    drawPeople();
+
+    const dmap = new Map();
+    reqs.forEach((r) => {
+      const x = dmap.get(r.department) || { name: r.department, people: new Set(), docs: 0, value: 0 };
+      x.people.add(personKey(r.borrower_name));
+      x.docs += 1;
+      x.value += r.total;
+      dmap.set(r.department, x);
+    });
+    const drows = [...dmap.values()].sort((a, b) => b.docs - a.docs);
+    const dmax = Math.max(1, ...drows.map((x) => x.docs));
+    $('#u-dept-body').innerHTML = drows.map((x) => `<tr><td><b>${esc(x.name)}</b><div class="muted small">${esc(state.db.departments.find((d) => d.name === x.name)?.full_name || '')}</div></td>
+      <td class="num">${fmtNum(x.people.size)}</td><td>${meter(x.docs, dmax, 'ใบ')}</td><td class="num">${x.value ? fmtMoney(x.value) : '-'}</td></tr>`).join('') ||
+      '<tr><td colspan="4" class="empty">ยังไม่มีใบเบิกในช่วงนี้</td></tr>';
+  };
+  const meter = (n, max, unit) => `<div class="u-meter"><span class="u-meter-bar"><i style="width:${(n / max) * 100}%"></i></span><span class="u-meter-n">${fmtNum(n)} ${unit}</span></div>`;
+  const drawPeople = () => {
+    const q = $('#u-q').value.trim().toLowerCase();
+    const max = Math.max(1, ...people.map((p) => p.docs));
+    const rows = people.map((p, i) => ({ ...p, rank: i + 1 })).filter((p) => !q || (p.name + ' ' + [...p.depts.keys()].join(' ')).toLowerCase().includes(q));
+    $('#u-body').innerHTML = rows.slice(0, 300).map((p) => `<tr class="clickable" data-person="${esc(p.name)}">
+      <td class="num muted">${p.rank}</td><td><b>${esc(p.name)}</b></td>
+      <td>${[...p.depts.keys()].map(esc).join(', ')}</td>
+      <td>${meter(p.docs, max, 'ใบ')}</td><td class="num">${fmtNum(p.lines)}</td><td class="num">${p.value ? fmtMoney(p.value) : '-'}</td>
+      <td>${fmtDateTime(p.last)}</td></tr>`).join('') || `<tr><td colspan="7" class="empty">${q ? 'ไม่พบผู้ใช้' : 'ยังไม่มีใบเบิกในช่วงนี้'}</td></tr>`;
+  };
+  // แตะชื่อ → ดูใบเบิกของคนนั้นในหน้าประวัติเบิก
+  $('#u-body').addEventListener('click', (e) => {
+    const tr = e.target.closest('[data-person]');
+    if (tr) location.hash = `#/requests?q=${encodeURIComponent(tr.dataset.person)}`;
+  });
+  $('#u-q').addEventListener('input', drawPeople);
+  $('#u-range').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b) { range = b.dataset.v; draw(); } });
+  $('#u-dept').value = dept;
+  $('#u-dept').addEventListener('change', (e) => { dept = e.target.value; draw(); });
+  $('#u-export').addEventListener('click', () => downloadCsv(`users-${range}${dept ? '-' + dept : ''}`,
+    ['ผู้เบิก', 'แผนก', 'ใบเบิก', 'รายการ', 'มูลค่า (บาท)', 'ใช้ล่าสุด'],
+    people.map((p) => [p.name, [...p.depts.keys()].join(', '), p.docs, p.lines, round2(p.value), p.last])));
+  bindChartTips(page);
+  draw();
+}
+// ป้ายข้อมูลเมื่อชี้/แตะแท่งกราฟหรือช่องตาราง ([data-tip])
+function bindChartTips(root) {
+  const tip = document.createElement('div');
+  tip.className = 'chart-tip';
+  tip.hidden = true;
+  root.append(tip);
+  const show = (e) => {
+    const t = e.target.closest('[data-tip]');
+    if (!t || !root.contains(t)) { tip.hidden = true; return; }
+    tip.textContent = t.dataset.tip;
+    tip.hidden = false;
+    const r = t.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    tip.style.left = `${Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2))}px`;
+    tip.style.top = `${Math.max(8, r.top - tip.offsetHeight - 8)}px`;
+  };
+  root.addEventListener('pointerover', show);
+  root.addEventListener('pointerdown', show);
+  root.addEventListener('pointerleave', () => { tip.hidden = true; });
+}
+window.addEventListener('scroll', () => { document.querySelectorAll('.chart-tip').forEach((t) => { t.hidden = true; }); }, { passive: true });
 
 // ===================== Movements =====================
 function renderMovements(page) {
@@ -3760,10 +3990,11 @@ function renderSettings(page) {
       <div class="card-head"><h3>${title}</h3></div>
       <form class="toolbar" data-add="${table}" style="padding:4px 24px 12px">
         <input name="name" placeholder="${isDept(table) ? 'ชื่อย่อ เช่น ICU' : MASTER_UI[table]?.placeholder || 'เพิ่มใหม่...'}" required style="flex:1;min-width:120px">
-        ${isDept(table) ? '<input name="full_name" placeholder="ชื่อเต็ม (ถ้ามี)" style="flex:2;min-width:160px">' : ''}
+        ${isDept(table) ? '<input name="full_name" placeholder="ชื่อเต็ม (ถ้ามี)" style="flex:2;min-width:160px"><input name="head_name" placeholder="ชื่อหัวหน้าแผนก (ถ้ามี)" lang="th" style="flex:2;min-width:160px">' : ''}
         <button class="btn primary">เพิ่ม</button></form>
-      <div class="table-wrap"><table><tbody>${(state.db[table] || []).map((x) => `<tr><td>${esc(x.name)}${x.full_name ? `<div class="muted small">${esc(x.full_name)}</div>` : ''}</td>
-        <td class="num"><button class="link" data-remove-${table}="${esc(x.name)}">ลบ</button></td></tr>`).join('') ||
+      <div class="table-wrap"><table><tbody>${(state.db[table] || []).map((x) => `<tr><td>${esc(x.name)}${x.full_name ? `<div class="muted small">${esc(x.full_name)}</div>` : ''}
+          ${isDept(table) ? `<div class="dept-head${x.head_name ? '' : ' none'}">หัวหน้า: ${x.head_name ? esc(x.head_name) : 'ยังไม่ได้ตั้ง'}</div>` : ''}</td>
+        <td class="num">${isDept(table) ? `<button class="link" data-edit-dept="${esc(x.name)}">แก้ไข</button> · ` : ''}<button class="link" data-remove-${table}="${esc(x.name)}">ลบ</button></td></tr>`).join('') ||
         '<tr><td class="empty">ยังไม่มีข้อมูล</td></tr>'}</tbody></table></div>
     </section>`;
   page.insertAdjacentHTML('beforeend', `
@@ -3782,7 +4013,9 @@ function renderSettings(page) {
     e.preventDefault();
     if (MASTER_UI[f.dataset.add] && state.oldServer) throw new Error(OLD_SERVER_MSG);
     const name = f.name.value.trim();
-    await store.act('addMaster', { table: f.dataset.add, name, full_name: f.full_name?.value }, { done: () => ['เพิ่มเรียบร้อย', name] });
+    const head = f.head_name?.value.trim().replace(/\s+/g, ' ') || '';
+    if (head && !isThaiName(head)) { flag(f.head_name); throw new Error('ชื่อหัวหน้าแผนกต้องเป็นภาษาไทย'); }
+    await store.act('addMaster', { table: f.dataset.add, name, full_name: f.full_name?.value, head_name: head }, { done: () => ['เพิ่มเรียบร้อย', name] });
     refresh();
   })));
   for (const table of ['departments', 'categories', 'units', 'locations', 'suppliers']) {
@@ -3799,6 +4032,7 @@ function renderSettings(page) {
       });
     }));
   }
+  $$('[data-edit-dept]').forEach((b) => b.addEventListener('click', () => editDepartment(b.dataset.editDept)));
   $('#reset-demo')?.addEventListener('click', () => {
     if (!confirm('ล้างข้อมูลทดลองทั้งหมด?')) return;
     try { localStorage.removeItem(DEMO_KEY); } catch { /* ignore */ }
@@ -3806,6 +4040,31 @@ function renderSettings(page) {
     toast('รีเซ็ตข้อมูลแล้ว');
     refresh();
   });
+}
+
+// แก้ข้อมูลแผนก (เจ้าหน้าที่): ชื่อเต็ม + ชื่อหัวหน้าแผนก (ใส่ในใบเบิกใหม่ของแผนกนี้อัตโนมัติ)
+function editDepartment(name) {
+  const d = state.db.departments.find((x) => x.name === name);
+  if (!d) return;
+  const body = openModal(`แผนก ${name}`, `
+    <form id="dp-form" class="fields">
+      <label class="field full">ชื่อเต็ม <span class="hint">(ถ้ามี)</span><input name="full_name" value="${esc(d.full_name)}" placeholder="เช่น งานการพยาบาลผู้ป่วยหนัก"></label>
+      <label class="field full">ชื่อ-นามสกุลหัวหน้าแผนก <span class="hint">(ภาษาไทย)</span>
+        <input name="head_name" lang="th" value="${esc(d.head_name)}" placeholder="เช่น นางสาวสมหญิง รักดี"></label>
+      <p class="muted small full">ใบเบิกใหม่ของแผนกนี้จะได้ชื่อหัวหน้าแผนกอัตโนมัติ (ผู้เบิกไม่ต้องกรอก) และพิมพ์เป็น "ผู้เบิก" ในใบเบิก
+        · ใบเบิกที่บันทึกไปแล้วคงชื่อเดิม (แก้ได้ที่ "แก้ไขใบเบิก") · เว้นว่าง = ใบเบิกใช้ชื่อผู้เบิกเป็นผู้เบิก</p>
+      <div class="actions full"><button type="button" class="btn" data-close>ยกเลิก</button><span class="spacer"></span><button class="btn primary lg">บันทึก</button></div>
+    </form>`);
+  const form = $('#dp-form', body);
+  $('[data-close]', body).addEventListener('click', closeModal);
+  form.addEventListener('submit', safe(async (e) => {
+    e.preventDefault();
+    const head = form.head_name.value.trim() ? checkThai(form, 'head_name', 'ชื่อหัวหน้าแผนก') : '';
+    await store.act('saveDepartment', { name, full_name: form.full_name.value.trim(), head_name: head },
+      { busy: ['กำลังบันทึกแผนก', 'กำลังบันทึกลง Google Sheet…'], done: () => ['บันทึกแผนกเรียบร้อย', head ? `${name} · หัวหน้า ${head}` : name] });
+    closeModal();
+    refresh();
+  }));
 }
 
 // ===================== หน้าวิธีใช้งาน =====================

@@ -24,7 +24,8 @@ var BorrowCore = (function () {
     // รับเข้า: บริษัทผู้จำหน่าย วันหมดอายุ (YYYY-MM-DD) และเลขใบส่งของ ของล็อตนั้น
     // price = ราคาต่อหน่วยของล็อตที่รับเข้า (บาท) ใช้สรุปมูลค่ารับเข้า
     movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'request_no', 'note', 'supplier', 'expiry_date', 'delivery_no', 'price'],
-    departments: ['name', 'full_name'],
+    // head_name = ชื่อหัวหน้าแผนก (เจ้าหน้าที่ตั้งในหน้าตั้งค่า) ระบบใส่ให้ใบเบิกใหม่ของแผนกนั้นอัตโนมัติ
+    departments: ['name', 'full_name', 'head_name'],
     categories: ['name'],
     // บริษัทผู้จำหน่าย: ชื่อ ผู้ติดต่อ เบอร์โทร อีเมล หมายเหตุ
     suppliers: ['name', 'contact', 'phone', 'email', 'note'],
@@ -248,7 +249,7 @@ var BorrowCore = (function () {
   }
 
   var MASTERS = { departments: 1, categories: 1, suppliers: 1, units: 1, locations: 1 };
-  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest', 'addBudget', 'setBudgets', 'removeBudget', 'receiveBatch', 'editReceipt', 'setPacks', 'convertToPieces', 'markReceived', 'mergeRequests'];
+  var ADMIN_ACTIONS = ['checkPin', 'saveItem', 'stock', 'addMaster', 'removeMaster', 'deleteRequest', 'saveSupplier', 'setStock', 'editRequest', 'addBudget', 'setBudgets', 'removeBudget', 'receiveBatch', 'editReceipt', 'setPacks', 'convertToPieces', 'markReceived', 'mergeRequests', 'saveDepartment'];
 
   // ข้อมูลล็อตที่รับเข้า (ไม่บังคับ): บริษัท วันหมดอายุ เลขใบส่งของ
   function lot(p) {
@@ -307,9 +308,10 @@ var BorrowCore = (function () {
     // ส่งใบเบิก: ตัดสต็อกทันที ไม่ต้องรออนุมัติ เบิกได้แม้ของหมด (ยอดติดลบ)
     createRequest: function (db, p, ctx) {
       var name = borrowerName(p);
-      var head = headName(p, p.first_name !== undefined);
       var dept = req(p.department, 'แผนก');
-      if (!find(db.departments, function (d) { return d.name === dept; })) fail('กรุณาเลือกแผนกจากรายการ');
+      var deptRow = find(db.departments, function (d) { return d.name === dept; }) || fail('กรุณาเลือกแผนกจากรายการ');
+      // ชื่อหัวหน้าแผนก: ระบบใส่ให้จากหน้าตั้งค่าแผนก (ผู้เบิกไม่ต้องกรอก) · ยังไม่ได้ตั้ง = ใช้ชื่อที่ส่งมา (เว็บเวอร์ชันก่อน) หรือว่าง
+      var head = deptRow.head_name || headName(p, false);
       if (!p.items || !p.items.length) fail('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
       var merged = {};
       p.items.forEach(function (l) {
@@ -523,9 +525,9 @@ var BorrowCore = (function () {
     },
 
     // รวมใบเบิก (เจ้าหน้าที่): ย้ายรายการของใบ ids มารวมในใบหลัก id (คงเลขที่และวันที่ของใบหลัก) แล้วลบใบเดิมออก
-    // สต็อกไม่เปลี่ยน (ตัดไปแล้วตอนเบิก) · ประวัติสต็อกของใบเดิมเปลี่ยนเป็นเลขที่ใบหลัก (หมายเหตุบอกเลขเดิม)
+    // ประวัติสต็อกของใบเดิมเปลี่ยนเป็นเลขที่ใบหลัก (หมายเหตุบอกเลขเดิม) · พัสดุซ้ำหลายใบใช้จำนวนจากใบเดียว ส่วนที่เหลือคืนเข้าสต็อก
     // เลขที่ของใบเดิมว่างลง (เก็บไว้ใน merged_from) ใบเบิกใหม่ได้เลขเหล่านี้ก่อนรันเลขถัดไป
-    // รวมได้เฉพาะแผนกเดียวกันและปีงบประมาณเดียวกัน (งบแผนกไม่เปลี่ยน) · พัสดุเดียวกันรวมจำนวน ราคาเฉลี่ยตามจำนวน
+    // รวมได้เฉพาะแผนกเดียวกันและปีงบประมาณเดียวกัน
     mergeRequests: function (db, p, ctx) {
       var r = byId(db.requests, p.id) || fail('ไม่พบใบเบิกหลัก (อาจถูกลบไปแล้ว)');
       var seen = {};
@@ -537,29 +539,41 @@ var BorrowCore = (function () {
         if (x.department !== r.department) fail('รวมได้เฉพาะใบเบิกของแผนกเดียวกัน (' + x.request_no + ' เป็นของแผนก ' + x.department + ')');
         if (fiscalYear(x.created_at) !== fiscalYear(r.created_at)) fail('รวมได้เฉพาะใบเบิกในปีงบประมาณเดียวกัน (' + x.request_no + ')');
       });
-      var mine = {};
-      lines(db, r.id).forEach(function (l) { mine[l.item_id] = l; });
+      // พัสดุแต่ละรายการ: ใบไหนมีบ้าง (ใบหลักก่อน แล้วตามลำดับที่เลือก)
+      var have = {}, order = [];
+      [r].concat(src).forEach(function (x) {
+        lines(db, x.id).forEach(function (l) {
+          if (!have[l.item_id]) { have[l.item_id] = []; order.push(l.item_id); }
+          have[l.item_id].push({ req: x, line: l });
+        });
+      });
       var gone = {}, nos = splitNos(r.merged_from), map = {};
       src.forEach(function (x) {
         gone[x.id] = true;
         map[x.request_no] = true;
         nos = nos.concat([x.request_no], splitNos(x.merged_from));
-        lines(db, x.id).forEach(function (l) {
-          var t = mine[l.item_id];
-          if (!t) { mine[l.item_id] = { request_id: r.id, item_id: l.item_id, qty: l.qty, price: l.price }; db.request_items.push(mine[l.item_id]); return; }
-          var value = t.qty * (t.price || 0) + l.qty * (l.price || 0);
-          t.qty += l.qty;
-          t.price = t.price === l.price ? t.price : Math.round(value / t.qty * 100) / 100;
-        });
         if (!r.head_name && x.head_name) r.head_name = x.head_name;
       });
-      db.request_items = db.request_items.filter(function (l) { return !gone[l.request_id]; });
-      db.requests = db.requests.filter(function (x) { return !gone[x.id]; });
       db.movements.forEach(function (m) {
         if (!map[m.request_no]) return;
         m.note = (m.note ? m.note + ' · ' : '') + 'รวมเข้าใบ ' + r.request_no + ' (เดิม ' + m.request_no + ')';
         m.request_no = r.request_no;
       });
+      // พัสดุซ้ำหลายใบ: ใช้จำนวนจากใบเดียว (keep = { item_id: id ใบเบิกที่เลือก } ไม่ระบุ = ใบหลัก/ใบแรกที่มี)
+      // จำนวนในใบอื่นของพัสดุนั้นไม่นับ คืนเข้าสต็อก (บันทึกในประวัติสต็อก)
+      var keep = p.keep || {}, out = [];
+      order.forEach(function (id) {
+        var list = have[id];
+        var pick = find(list, function (c) { return c.req.id === Number(keep[id]); }) || list[0];
+        out.push({ request_id: r.id, item_id: id, qty: pick.line.qty, price: pick.line.price });
+        list.forEach(function (c) {
+          if (c === pick || !byId(db.items, id)) return;
+          moveStock(db, ctx, { item_id: id, type: 'cancel', delta: c.line.qty, request_no: r.request_no,
+            note: 'รวมใบเบิก ' + r.request_no + ': พัสดุซ้ำ ใช้จำนวนจากใบ ' + pick.req.request_no + ' คืนจำนวนจากใบ ' + c.req.request_no });
+        });
+      });
+      db.request_items = db.request_items.filter(function (l) { return !gone[l.request_id] && l.request_id !== r.id; }).concat(out);
+      db.requests = db.requests.filter(function (x) { return !gone[x.id]; });
       var notes = [r.note].concat(src.map(function (x) { return x.note; })).filter(Boolean);
       r.note = notes.filter(function (n, i) { return notes.indexOf(n) === i; }).join(' / ');
       var all = [r].concat(src);
@@ -587,8 +601,16 @@ var BorrowCore = (function () {
       var key = masterTable(p.table);
       var name = req(p.name, 'ชื่อ');
       if (find(db[key], function (r) { return r.name === name; })) fail('มีชื่อนี้อยู่แล้ว');
-      db[key].push(key === 'departments' ? { name: name, full_name: str(p.full_name) } : { name: name });
+      db[key].push(key === 'departments' ? { name: name, full_name: str(p.full_name), head_name: headName(p, false) } : { name: name });
       return name;
+    },
+
+    // แก้ข้อมูลแผนก (เจ้าหน้าที่): ชื่อเต็ม และชื่อหัวหน้าแผนก (ว่าง = ยังไม่ตั้ง) · ใบเบิกเดิมคงชื่อหัวหน้าตอนที่เบิก
+    saveDepartment: function (db, p) {
+      var d = find(db.departments, function (x) { return x.name === str(p.name); }) || fail('ไม่พบแผนกนี้');
+      if (p.full_name !== undefined) d.full_name = str(p.full_name);
+      if (p.head_name !== undefined) d.head_name = headName(p, false);
+      return d.name;
     },
 
     // แก้ยอดคงเหลือหลายรายการพร้อมกัน: items = [{ item_id, qty }] (qty = ยอดใหม่ ติดลบได้) บันทึกเป็น "ปรับปรุงยอด"
