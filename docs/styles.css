@@ -2091,3 +2091,46 @@ button.shortcut { border: 0; font: inherit; text-align: left; cursor: pointer; w
 #r-rcv button { white-space: nowrap; }
 @media (pointer: coarse) { .rcv-check { width: 40px; height: 40px; } }
 @media (prefers-reduced-motion: reduce) { .rcv-check, .rcv-check svg { transition: none; } }
+
+/* ============ หัวหน้าแผนก (ระบบใส่ให้) / รวมใบเบิก: พัสดุซ้ำ ============ */
+.head-auto { margin: -2px 0 0; padding: 10px 14px; border-radius: var(--r-md); background: var(--accent-soft); font-size: 15px; line-height: 1.45; display: flex; flex-direction: column; gap: 2px; }
+.head-auto b { font-weight: 700; }
+.dept-head { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.dept-head.none { color: var(--orange); }
+.mg-dup { margin: 4px 0 12px; padding: 14px 16px; border-radius: var(--r-md); background: var(--orange-soft); }
+.mg-dup h4 { font-size: 16px; margin: 0 0 2px; }
+.mg-dup p { margin: 0 0 8px; }
+.mg-dup fieldset { border: 0; margin: 0; padding: 8px 0; border-top: 1px solid var(--separator); display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; }
+.mg-dup legend { float: left; width: 100%; padding: 0; font-weight: 600; font-size: 15px; }
+.mg-opt { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 15px; }
+.mg-opt input { width: 18px; height: 18px; flex: none; accent-color: var(--accent); -webkit-appearance: radio; appearance: auto; padding: 0; margin: 0; border: 0; background: none; box-shadow: none; }
+
+/* ============ สถิติผู้ใช้งาน ============ */
+.uc-wrap { padding: 8px 24px 22px; }
+.uc-cols { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; height: 190px; padding-top: 22px; border-bottom: 1px solid var(--fill-strong); margin-bottom: 26px; }
+.uc-max { position: absolute; top: 0; left: 0; right: 0; font-size: 12px; color: var(--text-3); border-bottom: 1px dashed var(--separator); line-height: 20px; font-variant-numeric: tabular-nums; }
+.uc-col { position: relative; display: flex; align-items: flex-end; justify-content: center; height: 100%; cursor: default; }
+.uc-col:hover .uc-bar { background: var(--accent-hover, var(--accent)); }
+.uc-bar { display: block; width: min(70%, 28px); background: var(--accent); border-radius: 4px 4px 0 0; transition: height .4s var(--ease, ease); }
+.uc-x { position: absolute; top: calc(100% + 6px); font-size: 11px; color: var(--text-3); white-space: nowrap; }
+@media (max-width: 600px) { .uc-x { font-size: 10px; } .uc-col:nth-child(odd) .uc-x { visibility: hidden; } }
+.uh { display: grid; grid-template-columns: 30px repeat(24, minmax(0, 1fr)); gap: 2px; align-items: center; }
+.uh-h { font-size: 11px; color: var(--text-3); text-align: left; }
+.uh-d { font-size: 12px; color: var(--text-2); }
+.uh-c { display: block; aspect-ratio: 1; min-height: 10px; border-radius: 3px; background: var(--fill); }
+.uh-c.s1 { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); }
+.uh-c.s2 { background: color-mix(in srgb, var(--accent) 36%, var(--surface)); }
+.uh-c.s3 { background: color-mix(in srgb, var(--accent) 56%, var(--surface)); }
+.uh-c.s4 { background: color-mix(in srgb, var(--accent) 78%, var(--surface)); }
+.uh-c.s5 { background: var(--accent); }
+.uh-legend { display: flex; align-items: center; gap: 4px; justify-content: flex-end; margin-top: 10px; font-size: 12px; color: var(--text-3); }
+.uh-legend .uh-c { width: 14px; min-height: 14px; }
+.uh-legend span:first-child { margin-right: 4px; } .uh-legend span:last-child { margin-left: 4px; }
+.u-search { max-width: 260px; }
+.u-meter { display: flex; align-items: center; gap: 10px; min-width: 150px; }
+.u-meter-bar { flex: 1; height: 8px; border-radius: 4px; background: var(--fill); overflow: hidden; }
+.u-meter-bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.u-meter-n { min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; }
+.chart-tip { position: fixed; z-index: 60; pointer-events: none; padding: 6px 10px; border-radius: 8px; background: var(--text); color: var(--surface); font-size: 13px; white-space: nowrap; box-shadow: var(--shadow-lg); }
+.u-table { min-width: 640px; }
+.u-table td b { white-space: nowrap; }
