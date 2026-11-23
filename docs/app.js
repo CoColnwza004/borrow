@@ -246,7 +246,7 @@ function requestView(r) {
     item_summary: lines.map((l) => `${l.name} ×${l.qty}${l.pcs ? ` (${l.pcs})` : ''}`).join(', '),
     department_full: deptFull(r.department),
     // ผู้เบิกในใบเบิก = หัวหน้าแผนก → ตำแหน่ง "หัวหน้า..." ของแผนกนั้นเสมอ (ใบเก่าที่ไม่มีหัวหน้าไม่มีตำแหน่ง)
-    head_title: r.head_name ? headTitle(r.department) : '',
+    head_title: r.head_name ? r.head_position || headTitle(r.department) : '',
   };
 }
 // จำผลไว้จนกว่าข้อมูลจะเปลี่ยน (หน้า ประวัติเบิก / ภาพรวม เรียกซ้ำทุกครั้งที่พิมพ์ค้นหา)
@@ -373,9 +373,49 @@ function checkThai(form, name, label) {
   const inp = form[name];
   const v = inp.value.trim().replace(/\s+/g, ' ');
   if (!v) { flag(inp); throw new Error(`กรุณากรอก${label}`); }
-  if (!isThaiName(v)) { flag(inp); throw new Error(`${label}ต้องเป็นภาษาไทย (ชื่อจริง ไม่ใช่ชื่อเล่น/ภาษาอังกฤษ)`); }
+  if (!isThaiName(v)) {
+    flag(inp);
+    showThaiState(inp);
+    const en = /[A-Za-z]/.test(v);
+    confirmBox({
+      title: en ? 'ส่งไม่ได้ — มีภาษาอังกฤษในช่องชื่อ' : 'ส่งไม่ได้ — ชื่อต้องเป็นภาษาไทย',
+      tone: 'warn', icon: TOAST_IC.err, ok: 'กลับไปแก้ไข',
+      html: `<p><b>${esc(label)}</b>: <span class="thai-bad-val">${esc(v)}</span></p>
+        <p class="muted">${en ? 'พบตัวอักษรภาษาอังกฤษ ' : ''}กรุณาเปลี่ยนแป้นพิมพ์เป็น<b>ภาษาไทย</b> แล้วกรอกชื่อจริง-นามสกุลจริงเป็นภาษาไทย ระบบจึงจะส่งได้</p>`,
+    });
+    setTimeout(() => inp.focus(), 250);
+    const e = new Error(`${label}ต้องเป็นภาษาไทย`);
+    e.shown = true;
+    throw e;
+  }
   return v;
 }
+// ตรวจทันทีที่พิมพ์ ([data-thai] = ช่องชื่อภาษาไทย): มีภาษาอังกฤษ/ตัวเลข → ขอบแดง + ข้อความเตือนใต้ช่อง และปุ่มส่งขึ้นว่าส่งไม่ได้
+function thaiProblem(v) {
+  v = String(v || '').trim();
+  if (!v) return '';
+  if (/[A-Za-z]/.test(v)) return 'มีตัวอักษรภาษาอังกฤษ — พิมพ์ได้เฉพาะภาษาไทย ไม่สามารถส่งได้';
+  if (!/^[\u0E00-\u0E7F .\-()]+$/.test(v)) return 'มีตัวเลขหรือสัญลักษณ์ — พิมพ์ได้เฉพาะตัวอักษรภาษาไทย ไม่สามารถส่งได้';
+  return '';
+}
+function showThaiState(inp) {
+  const msg = thaiProblem(inp.value);
+  const box = inp.closest('.field');
+  inp.classList.toggle('thai-bad', !!msg);
+  if (box) {
+    box.classList.toggle('thai-bad', !!msg);
+    let err = box.querySelector('.field-err');
+    if (msg && !err) { err = document.createElement('span'); err.className = 'field-err'; err.setAttribute('role', 'alert'); box.append(err); }
+    if (err) { if (msg) err.textContent = `⚠️ ${msg}`; else err.remove(); }
+  }
+  const form = inp.form;
+  if (!form) return;
+  const bad = [...form.querySelectorAll('[data-thai]')].some((x) => thaiProblem(x.value));
+  form.classList.toggle('thai-blocked', bad);
+  const note = form.querySelector('.thai-block-note');
+  if (note) note.hidden = !bad;
+}
+document.addEventListener('input', (e) => { if (e.target.matches?.('[data-thai]')) showThaiState(e.target); });
 // แยกชื่อเต็มเป็น ชื่อ / นามสกุล (ใบเบิกเก่าเก็บชื่อช่องเดียว)
 function splitName(full) {
   const s = String(full || '').trim().replace(/\s+/g, ' ');
@@ -389,28 +429,38 @@ function headTitle(dept) {
   if (/^(กลุ่มงาน|งาน|ฝ่าย|หน่วย|แผนก|ศูนย์|ห้อง|หอผู้ป่วย|ตึก|กลุ่ม)/.test(full)) return 'หัวหน้า' + full;
   return `หัวหน้าแผนก ${full || dept}`;
 }
+// ตำแหน่งที่พบบ่อย (ตัวเลือกในช่องตำแหน่ง พิมพ์เองได้)
+const POSITIONS = ['พยาบาลวิชาชีพปฏิบัติการ', 'พยาบาลวิชาชีพชำนาญการ', 'พยาบาลวิชาชีพชำนาญการพิเศษ', 'พยาบาลวิชาชีพเชี่ยวชาญ',
+  'นายแพทย์ชำนาญการ', 'นายแพทย์ชำนาญการพิเศษ', 'ทันตแพทย์ชำนาญการ', 'เภสัชกรชำนาญการ', 'นักเทคนิคการแพทย์ชำนาญการ',
+  'นักรังสีการแพทย์ชำนาญการ', 'นักกายภาพบำบัดชำนาญการ', 'นักวิชาการสาธารณสุขชำนาญการ', 'เจ้าพนักงานธุรการชำนาญงาน'];
+const positionList = () => `<datalist id="pos-list">${[...new Set([...POSITIONS, ...state.db.departments.map((d) => d.head_position).filter(Boolean)])]
+  .map((p) => `<option value="${esc(p)}">`).join('')}</datalist>`;
+// ตำแหน่งของหัวหน้าแผนกที่ตั้งไว้ (ไม่ได้ตั้ง = หัวหน้า + ชื่อแผนก)
+const deptPosition = (name) => state.db.departments.find((d) => d.name === name)?.head_position || headTitle(name);
 // ชื่อหัวหน้าแผนกที่เจ้าหน้าที่ตั้งไว้ (หน้าตั้งค่า → แผนก)
 const deptHead = (name) => state.db.departments.find((d) => d.name === name)?.head_name || '';
 // แถบแสดงชื่อหัวหน้าแผนกในหน้าเบิก (ระบบใส่ให้อัตโนมัติ ผู้เบิกไม่ต้องกรอก)
 function headNote(dept) {
   const h = deptHead(dept);
   if (!dept) return '<span class="muted">เลือกแผนกแล้ว ระบบจะใส่ชื่อหัวหน้าแผนกให้อัตโนมัติ</span>';
-  return h ? `<span>หัวหน้าแผนก: <b>${esc(h)}</b> <span class="muted small">(${esc(headTitle(dept))})</span></span><span class="muted small">ใบเบิกที่พิมพ์ใส่ชื่อนี้เป็น "ผู้เบิก" และชื่อคุณเป็น "ผู้รับพัสดุ"</span>`
+  return h ? `<span>หัวหน้าแผนก: <b>${esc(h)}</b> <span class="muted small">(${esc(deptPosition(dept))})</span></span><span class="muted small">ใบเบิกที่พิมพ์ใส่ชื่อนี้เป็น "ผู้เบิก" และชื่อคุณเป็น "ผู้รับพัสดุ"</span>`
     : '<span class="muted">แผนกนี้ยังไม่ได้ตั้งชื่อหัวหน้าแผนก (ใบเบิกจะใช้ชื่อคุณเป็นผู้เบิก)</span>';
 }
 // ช่องชื่อผู้เบิก (ชื่อ / นามสกุล แยกกัน) + แผนก · head = null: หน้าเบิก (หัวหน้าแผนกระบบใส่ให้) · ข้อความ: หน้าแก้ไขใบเบิก (เจ้าหน้าที่แก้ได้)
-function nameFields(first, last, head, dept) {
+function nameFields(first, last, head, dept, position = '') {
   if (head === null) {
     return nameFieldsBase(first, last, dept) + `<p class="head-auto full" id="rf-head">${headNote(dept)}</p>`;
   }
   return nameFieldsBase(first, last, dept) + `<label class="field">ชื่อ-นามสกุลหัวหน้าแผนก <span class="hint">(ผู้เบิกในใบเบิก)</span>
-      <input name="head_name" lang="th" placeholder="เช่น นางสาวสมหญิง รักดี" value="${esc(head)}"></label>`;
+      <input name="head_name" lang="th" data-thai placeholder="เช่น นางสาวสมหญิง รักดี" value="${esc(head)}"></label>
+    <label class="field">ตำแหน่งหัวหน้าแผนก <span class="hint">(ในวงเล็บใต้ชื่อ)</span>
+      <input name="head_position" list="pos-list" placeholder="เช่น พยาบาลวิชาชีพชำนาญการ" value="${esc(position)}"></label>${positionList()}`;
 }
 function nameFieldsBase(first, last, dept) {
   return `<label class="field">ชื่อจริง <span class="req">*</span>
-      <input name="first_name" required autocomplete="given-name" lang="th" placeholder="เช่น สมชาย" value="${esc(first)}"></label>
+      <input name="first_name" required autocomplete="given-name" lang="th" data-thai placeholder="เช่น สมชาย" value="${esc(first)}"></label>
     <label class="field">นามสกุล <span class="req">*</span>
-      <input name="last_name" required autocomplete="family-name" lang="th" placeholder="เช่น ใจดี" value="${esc(last)}"></label>
+      <input name="last_name" required autocomplete="family-name" lang="th" data-thai placeholder="เช่น ใจดี" value="${esc(last)}"></label>
     <p class="name-warn full">⚠️ กรอก<b>ชื่อจริง-นามสกุลจริง เป็นภาษาไทย</b>เท่านั้น (ไม่ใช้ชื่อเล่น / ภาษาอังกฤษ)</p>
     <label class="field">แผนก <span class="req">*</span>
       <select name="department" required>${deptOptions(dept)}</select></label>`;
@@ -1113,6 +1163,7 @@ function renderRequestForm(page) {
         <div class="slip-items" id="rf-slip" aria-live="polite"></div>
         <div class="checkout">
           <div class="sum"><strong id="rf-count"></strong><b class="sum-money" id="rf-money" hidden></b><span id="rf-detail"></span></div>
+          <p class="thai-block-note" hidden>⚠️ ชื่อ-นามสกุลมีภาษาอังกฤษ — แก้เป็นภาษาไทยก่อนจึงจะส่งได้</p>
           <button class="btn primary lg" id="rf-submit"></button>
         </div>
       </aside>
@@ -2415,7 +2466,8 @@ function editRequestForm(r) {
   const lines = new Map(r.items.map((l) => [l.item_id, { qty: l.qty, price: l.price }]));
   const body = openModal(`แก้ไขใบเบิก ${r.request_no}`, `
     <form id="er-form" class="fields">
-      ${nameFields(...splitName(r.borrower_name), r.head_name || deptHead(r.department), r.department)}
+      ${nameFields(...splitName(r.borrower_name), r.head_name || deptHead(r.department), r.department,
+        r.head_name ? r.head_position : state.db.departments.find((d) => d.name === r.department)?.head_position || '')}
       <label class="field full">หมายเหตุ<input name="note" value="${esc(r.note)}"></label>
       <div class="full">
         <h4 class="er-h">รายการในใบเบิก</h4>
@@ -2498,7 +2550,7 @@ function editRequestForm(r) {
     data.head_name = form.head_name.value.trim() ? checkThai(form, 'head_name', 'ชื่อหัวหน้าแผนก') : '';
     if (!lines.size) throw new Error('ใบเบิกต้องมีพัสดุอย่างน้อย 1 รายการ (ถ้าต้องการยกเลิกทั้งใบ ให้ลบใบเบิก)');
     const id = await store.act('editRequest', {
-      id: r.id, borrower_name: `${data.first_name} ${data.last_name}`, first_name: data.first_name, last_name: data.last_name, head_name: data.head_name,
+      id: r.id, borrower_name: `${data.first_name} ${data.last_name}`, first_name: data.first_name, last_name: data.last_name, head_name: data.head_name, head_position: (data.head_position || '').trim(),
       department: data.department, note: data.note,
       items: [...lines].map(([item_id, l]) => ({ item_id, qty: l.qty })),
     }, { busy: ['กำลังบันทึกการแก้ไข', 'กำลังปรับสต็อกและบันทึกลง Google Sheet…'], done: false });
@@ -2543,7 +2595,7 @@ function confirmBox({ title, html = '', ok = 'ยืนยัน', cancel = 'ย
     <h3 id="confirm-t">${esc(title)}</h3>
     ${html}
     <div class="ask-actions">
-      <button type="button" class="btn lg" data-c="no">${esc(cancel)}</button>
+      ${onOk ? `<button type="button" class="btn lg" data-c="no">${esc(cancel)}</button>` : ''}
       <button type="button" class="btn ${tone === 'danger' ? 'danger' : 'primary'} lg" data-c="ok">${esc(ok)}</button>
     </div>`;
   document.body.append(d);
@@ -2552,15 +2604,16 @@ function confirmBox({ title, html = '', ok = 'ยืนยัน', cancel = 'ย
     d.classList.add('closing');
     setTimeout(() => { d.close(); d.remove(); }, 180);
   };
-  $('[data-c="no"]', d).addEventListener('click', close);
+  $('[data-c="no"]', d)?.addEventListener('click', close);
   d.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
   const okBtn = $('[data-c="ok"]', d);
   okBtn.addEventListener('click', async () => {
+    if (!onOk) { close(); return; }
     okBtn.disabled = true;
     try { await onOk(d); close(); } catch (e) { if (!e.shown) toast(e.message, true); okBtn.disabled = false; }
   });
   d.showModal();
-  $('[data-c="no"]', d).focus();
+  ($('[data-c="no"]', d) || okBtn).focus();
 }
 
 // ===================== สรุปรายงาน (เจ้าหน้าที่): รายเดือน / รายปี · ทุกแผนก / เฉพาะแผนก =====================
@@ -3999,10 +4052,11 @@ function renderSettings(page) {
       <div class="card-head"><h3>${title}</h3></div>
       <form class="toolbar" data-add="${table}" style="padding:4px 24px 12px">
         <input name="name" placeholder="${isDept(table) ? 'ชื่อย่อ เช่น ICU' : MASTER_UI[table]?.placeholder || 'เพิ่มใหม่...'}" required style="flex:1;min-width:120px">
-        ${isDept(table) ? '<input name="full_name" placeholder="ชื่อเต็ม (ถ้ามี)" style="flex:2;min-width:160px"><input name="head_name" placeholder="ชื่อหัวหน้าแผนก (ถ้ามี)" lang="th" style="flex:2;min-width:160px">' : ''}
+        ${isDept(table) ? '<input name="full_name" placeholder="ชื่อเต็ม (ถ้ามี)" style="flex:2;min-width:160px"><input name="head_name" placeholder="ชื่อหัวหน้าแผนก (ถ้ามี)" lang="th" data-thai style="flex:2;min-width:160px">' : ''}
         <button class="btn primary">เพิ่ม</button></form>
       <div class="table-wrap"><table><tbody>${(state.db[table] || []).map((x) => `<tr><td>${esc(x.name)}${x.full_name ? `<div class="muted small">${esc(x.full_name)}</div>` : ''}
-          ${isDept(table) ? `<div class="dept-head${x.head_name ? '' : ' none'}">หัวหน้า: ${x.head_name ? esc(x.head_name) : 'ยังไม่ได้ตั้ง'}</div>` : ''}</td>
+          ${isDept(table) ? `<div class="dept-head${x.head_name ? '' : ' none'}">หัวหน้า: ${x.head_name ? esc(x.head_name) : 'ยังไม่ได้ตั้ง'}</div>
+            <div class="dept-head${x.head_position ? '' : ' none'}">ตำแหน่ง: ${x.head_position ? esc(x.head_position) : 'ยังไม่ได้ตั้ง'}</div>` : ''}</td>
         <td class="num">${isDept(table) ? `<button class="link" data-edit-dept="${esc(x.name)}">แก้ไข</button> · ` : ''}<button class="link" data-remove-${table}="${esc(x.name)}">ลบ</button></td></tr>`).join('') ||
         '<tr><td class="empty">ยังไม่มีข้อมูล</td></tr>'}</tbody></table></div>
     </section>`;
@@ -4059,7 +4113,10 @@ function editDepartment(name) {
     <form id="dp-form" class="fields">
       <label class="field full">ชื่อเต็ม <span class="hint">(ถ้ามี)</span><input name="full_name" value="${esc(d.full_name)}" placeholder="เช่น งานการพยาบาลผู้ป่วยหนัก"></label>
       <label class="field full">ชื่อ-นามสกุลหัวหน้าแผนก <span class="hint">(ภาษาไทย)</span>
-        <input name="head_name" lang="th" value="${esc(d.head_name)}" placeholder="เช่น นางสาวสมหญิง รักดี"></label>
+        <input name="head_name" lang="th" data-thai value="${esc(d.head_name)}" placeholder="เช่น นางสาวสมหญิง รักดี"></label>
+      <label class="field full">ตำแหน่งของหัวหน้าแผนก <span class="hint">(พิมพ์ในวงเล็บใต้ชื่อผู้เบิก · เลือกจากรายการหรือพิมพ์เองได้)</span>
+        <input name="head_position" list="pos-list" value="${esc(d.head_position)}" placeholder="เช่น พยาบาลวิชาชีพชำนาญการ">${positionList()}</label>
+      <label class="check wrap full"><input type="checkbox" name="position_all"> ใช้ตำแหน่งนี้กับทุกแผนกที่ยังไม่ได้ตั้งตำแหน่งด้วย</label>
       <p class="muted small full">ใบเบิกใหม่ของแผนกนี้จะได้ชื่อหัวหน้าแผนกอัตโนมัติ (ผู้เบิกไม่ต้องกรอก) และพิมพ์เป็น "ผู้เบิก" ในใบเบิก
         · ใบเบิกที่บันทึกไปแล้วคงชื่อเดิม (แก้ได้ที่ "แก้ไขใบเบิก") · เว้นว่าง = ใบเบิกใช้ชื่อผู้เบิกเป็นผู้เบิก</p>
       <div class="actions full"><button type="button" class="btn" data-close>ยกเลิก</button><span class="spacer"></span><button class="btn primary lg">บันทึก</button></div>
@@ -4069,7 +4126,8 @@ function editDepartment(name) {
   form.addEventListener('submit', safe(async (e) => {
     e.preventDefault();
     const head = form.head_name.value.trim() ? checkThai(form, 'head_name', 'ชื่อหัวหน้าแผนก') : '';
-    await store.act('saveDepartment', { name, full_name: form.full_name.value.trim(), head_name: head },
+    await store.act('saveDepartment', { name, full_name: form.full_name.value.trim(), head_name: head,
+      head_position: form.head_position.value.trim(), position_all: form.position_all.checked },
       { busy: ['กำลังบันทึกแผนก', 'กำลังบันทึกลง Google Sheet…'], done: () => ['บันทึกแผนกเรียบร้อย', head ? `${name} · หัวหน้า ${head}` : name] });
     closeModal();
     refresh();
