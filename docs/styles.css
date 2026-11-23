@@ -736,6 +736,8 @@ dialog.sheet.closing::backdrop { animation: fade-out .2s var(--ease-in) forwards
 .pdf-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 24px; margin-top: 16px; }
 .pdf-sign .pdf-sign-box { gap: 6px; }
 .pdf-sign-box { text-align: center; display: flex; flex-direction: column; gap: 8px; }
+.pdf-pos { font-size: 0.92em; line-height: 1.35; }
+.pdf-sign .pdf-pos { margin-top: -4px; }
 .pdf-page tfoot th, .pdf-page tfoot td { border: 1px solid #000; }
 .pdf-total th { background: #f2f2f2; font-weight: 700; text-align: center; }
 .pdf-total td.c { font-size: 14px; }

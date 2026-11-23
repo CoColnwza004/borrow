@@ -74,14 +74,16 @@ const PdfDoc = (() => {
     const requester = r.head_name || r.borrower_name;
     const receiver = r.head_name ? r.borrower_name : '';
     const dept = esc(r.department_full || r.department);
-    const statement = `ข้าพเจ้าขอเบิกพัสดุตามรายการต่อไปนี้ เพื่อใช้ใน${dept}`;
+    const statement = `ข้าพเจ้าขอเบิกพัสดุตามรายการต่อไปนี้ เพื่อใช้ใน${/^[\u0E00-\u0E7F]/.test(dept) ? '' : ' '}${dept}`;
     // วันที่ใต้ช่องลงชื่อ = วันที่เบิก เช่น 24 / 10 / 2569 (ช่องผู้รับพัสดุเว้นว่างให้กรอกเองตอนรับของ)
     const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.created_at || '');
     const signDate = ymd ? `${Number(ymd[3])} / ${Number(ymd[2])} / ${Number(ymd[1]) + 543}` : '........ / ........ / ........';
     const blankDate = '........ / ........ / ........';
-    const sign = (role, name, date = signDate) => `<div class="pdf-sign-box">
+    // pos = ตำแหน่งในวงเล็บใต้ชื่อ (ผู้เบิก = หัวหน้าแผนก)
+    const sign = (role, name, date = signDate, pos = '') => `<div class="pdf-sign-box">
       <div>ลงชื่อ .......................................... ${role}</div>
       <div>( ${name ? esc(name) : '..........................................'} )</div>
+      ${pos ? `<div class="pdf-pos">( ${esc(pos)} )</div>` : ''}
       <div>วันที่ ${date}</div></div>`;
     return `<div class="pdf-page">
       <div class="pdf-head">
@@ -91,7 +93,7 @@ const PdfDoc = (() => {
           ${r.edited_at ? `<div class="pdf-edited">ฉบับแก้ไข ${esc(thaiDateTime(r.edited_at))} น.</div>` : ''}</div>
       </div>
       <table class="pdf-info">
-        <tr><th>ชื่อผู้เบิก</th><td>${esc(requester)}</td><th>แผนก</th><td>${dept}</td></tr>
+        <tr><th>ชื่อผู้เบิก</th><td>${esc(requester)}${r.head_title ? `<div class="pdf-pos">( ${esc(r.head_title)} )</div>` : ''}</td><th>แผนก</th><td>${dept}</td></tr>
         <tr><th>วันเวลาที่เบิก</th><td colspan="3">${esc(thaiDateTime(r.created_at))} น.</td></tr>
         ${r.note || r.purpose ? `<tr><th>หมายเหตุ</th><td colspan="3">${esc([r.purpose, r.note].filter(Boolean).join(' · '))}</td></tr>` : ''}
       </table>
@@ -102,7 +104,7 @@ const PdfDoc = (() => {
         <tbody>${rows.join('')}</tbody>
         <tfoot><tr class="pdf-total"><td colspan="5" class="c">( ${bahtText(total)} )</td><th>รวมเป็นเงิน</th><td class="r"><b>${money(total)}</b></td></tr></tfoot>
       </table>
-      <div class="pdf-sign">${sign('ผู้เบิก', requester)}${sign('ผู้อนุมัติ', staff)}${sign('เจ้าหน้าที่พัสดุ', staff)}${sign('ผู้รับพัสดุ', receiver, blankDate)}</div>
+      <div class="pdf-sign">${sign('ผู้เบิก', requester, signDate, r.head_title)}${sign('ผู้อนุมัติ', staff)}${sign('เจ้าหน้าที่พัสดุ', staff)}${sign('ผู้รับพัสดุ', receiver, blankDate)}</div>
       <div class="pdf-foot">ออกโดยระบบเบิกพัสดุ · บันทึกเมื่อ ${esc(thaiDateTime(r.created_at))}${r.edited_at ? ` · แก้ไขล่าสุด ${esc(thaiDateTime(r.edited_at))}` : ''}</div>
     </div>`;
   }

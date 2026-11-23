@@ -245,6 +245,8 @@ function requestView(r) {
     total: round2(lines.reduce((s, l) => s + l.value, 0)),
     item_summary: lines.map((l) => `${l.name} ×${l.qty}${l.pcs ? ` (${l.pcs})` : ''}`).join(', '),
     department_full: deptFull(r.department),
+    // ผู้เบิกในใบเบิก = หัวหน้าแผนก → ตำแหน่ง "หัวหน้า..." ของแผนกนั้นเสมอ (ใบเก่าที่ไม่มีหัวหน้าไม่มีตำแหน่ง)
+    head_title: r.head_name ? headTitle(r.department) : '',
   };
 }
 // จำผลไว้จนกว่าข้อมูลจะเปลี่ยน (หน้า ประวัติเบิก / ภาพรวม เรียกซ้ำทุกครั้งที่พิมพ์ค้นหา)
@@ -380,13 +382,20 @@ function splitName(full) {
   const i = s.indexOf(' ');
   return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i + 1)];
 }
+// ตำแหน่งของผู้เบิก (หัวหน้าแผนก) จากชื่อเต็มของแผนก เช่น งานการพยาบาลผู้ป่วยหนัก → หัวหน้างานการพยาบาลผู้ป่วยหนัก
+// ชื่อเต็มไม่ได้ขึ้นต้นด้วย งาน/กลุ่มงาน/ฝ่าย ฯลฯ หรือไม่มีชื่อเต็ม → หัวหน้าแผนก + ชื่อ เช่น หัวหน้าแผนก X-ray
+function headTitle(dept) {
+  const full = (state.db.departments.find((d) => d.name === dept)?.full_name || '').trim();
+  if (/^(กลุ่มงาน|งาน|ฝ่าย|หน่วย|แผนก|ศูนย์|ห้อง|หอผู้ป่วย|ตึก|กลุ่ม)/.test(full)) return 'หัวหน้า' + full;
+  return `หัวหน้าแผนก ${full || dept}`;
+}
 // ชื่อหัวหน้าแผนกที่เจ้าหน้าที่ตั้งไว้ (หน้าตั้งค่า → แผนก)
 const deptHead = (name) => state.db.departments.find((d) => d.name === name)?.head_name || '';
 // แถบแสดงชื่อหัวหน้าแผนกในหน้าเบิก (ระบบใส่ให้อัตโนมัติ ผู้เบิกไม่ต้องกรอก)
 function headNote(dept) {
   const h = deptHead(dept);
   if (!dept) return '<span class="muted">เลือกแผนกแล้ว ระบบจะใส่ชื่อหัวหน้าแผนกให้อัตโนมัติ</span>';
-  return h ? `<span>หัวหน้าแผนก: <b>${esc(h)}</b></span><span class="muted small">ใบเบิกที่พิมพ์ใส่ชื่อนี้เป็น "ผู้เบิก" และชื่อคุณเป็น "ผู้รับพัสดุ"</span>`
+  return h ? `<span>หัวหน้าแผนก: <b>${esc(h)}</b> <span class="muted small">(${esc(headTitle(dept))})</span></span><span class="muted small">ใบเบิกที่พิมพ์ใส่ชื่อนี้เป็น "ผู้เบิก" และชื่อคุณเป็น "ผู้รับพัสดุ"</span>`
     : '<span class="muted">แผนกนี้ยังไม่ได้ตั้งชื่อหัวหน้าแผนก (ใบเบิกจะใช้ชื่อคุณเป็นผู้เบิก)</span>';
 }
 // ช่องชื่อผู้เบิก (ชื่อ / นามสกุล แยกกัน) + แผนก · head = null: หน้าเบิก (หัวหน้าแผนกระบบใส่ให้) · ข้อความ: หน้าแก้ไขใบเบิก (เจ้าหน้าที่แก้ได้)
@@ -2291,7 +2300,7 @@ function showRequest(id) {
   const body = openModal(`ใบเบิก ${r.request_no}`, `
     <dl class="info">
       <dt>ผู้เบิก</dt><dd>${esc(r.borrower_name)} ${r.phone ? `(โทร ${esc(r.phone)})` : ''}</dd>
-      ${r.head_name ? `<dt>หัวหน้าแผนก</dt><dd>${esc(r.head_name)} <span class="muted small">(พิมพ์เป็นผู้เบิกในใบเบิก)</span></dd>` : ''}
+      ${r.head_name ? `<dt>หัวหน้าแผนก</dt><dd>${esc(r.head_name)} <span class="muted small">(${esc(r.head_title)}) · พิมพ์เป็นผู้เบิกในใบเบิก</span></dd>` : ''}
       <dt>แผนก</dt><dd>${esc(r.department_full)}</dd>
       ${r.merged_from ? `<dt>รวมจากใบเดิม</dt><dd>${esc(r.merged_from)} <span class="muted small">(เลขเดิมของใบที่ถูกรวม · ระบบนำเลขเหล่านี้ไปใช้กับใบเบิกใหม่)</span></dd>` : ''}
       <dt>วันเวลาที่เบิก</dt><dd>${fmtDateTime(r.created_at)}</dd>
