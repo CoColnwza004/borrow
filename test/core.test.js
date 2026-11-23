@@ -1538,3 +1538,29 @@ test('core: merge with a duplicate item keeps the quantity of the chosen slip', 
   assert.equal(db.requests.length, 1);
   assert.match(r.merged_from, /^WD\d\d-001$/);
 });
+
+test('core: department head position is set by staff and saved on each slip', () => {
+  const db = Core.seed(new Date(), FIXTURE);
+  const paper = db.items.find((i) => i.code === 'OF-001');
+  const w = { first_name: 'สมชาย', last_name: 'ใจดี', department: 'ICU', items: [{ item_id: paper.id, qty: 1 }] };
+  Core.run(db, 'saveDepartment', { name: 'ICU', head_name: 'นางสาวสมหญิง รักดี', head_position: ' พยาบาลวิชาชีพ  ชำนาญการพิเศษ ' }, admin);
+  assert.equal(db.departments.find((d) => d.name === 'ICU').head_position, 'พยาบาลวิชาชีพ ชำนาญการพิเศษ');
+  // ใช้กับทุกแผนกที่ยังไม่ได้ตั้ง (แผนกที่ตั้งแล้วไม่เปลี่ยน)
+  Core.run(db, 'saveDepartment', { name: 'ICU', head_position: 'พยาบาลวิชาชีพชำนาญการพิเศษ', position_all: true }, admin);
+  assert.deepEqual(db.departments.map((d) => d.head_position), ['พยาบาลวิชาชีพชำนาญการพิเศษ', 'พยาบาลวิชาชีพชำนาญการพิเศษ']);
+  Core.run(db, 'saveDepartment', { name: 'งานธุรการ', head_position: 'เจ้าพนักงานธุรการชำนาญงาน' }, admin);
+  Core.run(db, 'saveDepartment', { name: 'ICU', head_position: 'พยาบาลวิชาชีพชำนาญการ', position_all: true }, admin);
+  assert.equal(db.departments.find((d) => d.name === 'งานธุรการ').head_position, 'เจ้าพนักงานธุรการชำนาญงาน');
+  const id = Core.run(db, 'createRequest', w, user);
+  const r = db.requests.find((x) => x.id === id);
+  assert.deepEqual([r.head_name, r.head_position], ['นางสาวสมหญิง รักดี', 'พยาบาลวิชาชีพชำนาญการ']);
+  // เปลี่ยนตำแหน่งภายหลัง: ใบเดิมคงเดิม · แก้ในใบได้
+  Core.run(db, 'saveDepartment', { name: 'ICU', head_position: 'พยาบาลวิชาชีพเชี่ยวชาญ' }, admin);
+  assert.equal(r.head_position, 'พยาบาลวิชาชีพชำนาญการ');
+  Core.run(db, 'editRequest', { id, borrower_name: 'สมชาย ใจดี', department: 'ICU', head_position: 'พยาบาลวิชาชีพเชี่ยวชาญ', items: w.items }, admin);
+  assert.equal(r.head_position, 'พยาบาลวิชาชีพเชี่ยวชาญ');
+  // แผนกที่ยังไม่มีชื่อหัวหน้า: ไม่มีตำแหน่ง
+  const other = Core.run(db, 'createRequest', { ...w, department: 'งานธุรการ' }, user);
+  assert.equal(db.requests.find((x) => x.id === other).head_position, '');
+  assert.ok(Core.sheetData(db).departments.header.includes('head_position'));
+});

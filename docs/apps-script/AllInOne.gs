@@ -639,14 +639,16 @@ var BorrowCore = (function () {
     // received_at = เจ้าหน้าที่ติ๊กว่าผู้เบิกรับของ/เซ็นเอกสารแล้วเมื่อ (ว่าง = ยังไม่รับ)
     // head_name = ชื่อหัวหน้าแผนก (พิมพ์เป็น "ผู้เบิก" ในใบเบิก PDF ส่วน borrower_name = คนที่มาเบิก/รับของ)
     // merged_from = เลขที่ใบเบิกเดิมที่ถูกรวมเข้าใบนี้ (คั่นด้วย , ) เลขเหล่านี้ว่างแล้ว ใบเบิกใหม่ได้เลขนี้ก่อนเลขถัดไป
-    requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'status', 'created_at', 'note', 'edited_at', 'received_at', 'head_name', 'merged_from'],
+    // head_position = ตำแหน่งของหัวหน้าแผนก ณ วันที่เบิก (เปลี่ยนตำแหน่งในหน้าตั้งค่าภายหลัง ใบเดิมไม่เปลี่ยน)
+    requests: ['id', 'request_no', 'borrower_name', 'phone', 'department', 'purpose', 'status', 'created_at', 'note', 'edited_at', 'received_at', 'head_name', 'merged_from', 'head_position'],
     // price = ราคาต่อหน่วย ณ วันที่เบิก (ราคาพัสดุเปลี่ยนภายหลัง ใบเบิกเดิมไม่เปลี่ยน)
     request_items: ['request_id', 'item_id', 'qty', 'price'],
     // รับเข้า: บริษัทผู้จำหน่าย วันหมดอายุ (YYYY-MM-DD) และเลขใบส่งของ ของล็อตนั้น
     // price = ราคาต่อหน่วยของล็อตที่รับเข้า (บาท) ใช้สรุปมูลค่ารับเข้า
     movements: ['id', 'created_at', 'item_id', 'type', 'qty', 'available_after', 'request_no', 'note', 'supplier', 'expiry_date', 'delivery_no', 'price'],
     // head_name = ชื่อหัวหน้าแผนก (เจ้าหน้าที่ตั้งในหน้าตั้งค่า) ระบบใส่ให้ใบเบิกใหม่ของแผนกนั้นอัตโนมัติ
-    departments: ['name', 'full_name', 'head_name'],
+    // head_position = ตำแหน่งของหัวหน้าแผนก เช่น พยาบาลวิชาชีพชำนาญการ (พิมพ์ในวงเล็บใต้ชื่อผู้เบิก)
+    departments: ['name', 'full_name', 'head_name', 'head_position'],
     categories: ['name'],
     // บริษัทผู้จำหน่าย: ชื่อ ผู้ติดต่อ เบอร์โทร อีเมล หมายเหตุ
     suppliers: ['name', 'contact', 'phone', 'email', 'note'],
@@ -933,6 +935,7 @@ var BorrowCore = (function () {
       var deptRow = find(db.departments, function (d) { return d.name === dept; }) || fail('กรุณาเลือกแผนกจากรายการ');
       // ชื่อหัวหน้าแผนก: ระบบใส่ให้จากหน้าตั้งค่าแผนก (ผู้เบิกไม่ต้องกรอก) · ยังไม่ได้ตั้ง = ใช้ชื่อที่ส่งมา (เว็บเวอร์ชันก่อน) หรือว่าง
       var head = deptRow.head_name || headName(p, false);
+      var position = deptRow.head_name ? str(deptRow.head_position) : '';
       if (!p.items || !p.items.length) fail('กรุณาเลือกพัสดุอย่างน้อย 1 รายการ');
       var merged = {};
       p.items.forEach(function (l) {
@@ -946,7 +949,7 @@ var BorrowCore = (function () {
       var r = {
         id: nextId(db.requests), request_no: nextRequestNo(db, ctx.now), borrower_name: name, phone: str(p.phone),
         department: dept, purpose: str(p.purpose), status: 'issued', created_at: stamp(ctx.now), note: str(p.note), edited_at: '', received_at: '',
-        head_name: head, merged_from: '',
+        head_name: head, merged_from: '', head_position: position,
       };
       db.requests.push(r);
       Object.keys(merged).forEach(function (id) {
@@ -1108,6 +1111,7 @@ var BorrowCore = (function () {
       var r = byId(db.requests, p.id) || fail('ไม่พบใบเบิกนี้ (อาจถูกลบไปแล้ว)');
       var name = borrowerName(p);
       var head = p.head_name === undefined ? r.head_name : headName(p, false);
+      var position = p.head_position === undefined ? r.head_position : str(p.head_position);
       var dept = req(p.department, 'แผนก');
       if (dept !== r.department && !find(db.departments, function (d) { return d.name === dept; })) fail('กรุณาเลือกแผนกจากรายการ');
       if (!p.items || !p.items.length) fail('ใบเบิกต้องมีพัสดุอย่างน้อย 1 รายการ (ถ้าต้องการยกเลิกทั้งใบ ให้ลบใบเบิก)');
@@ -1139,6 +1143,7 @@ var BorrowCore = (function () {
       });
       r.borrower_name = name;
       r.head_name = head;
+      r.head_position = head ? position : '';
       r.department = dept;
       r.note = str(p.note);
       r.edited_at = stamp(ctx.now);
@@ -1173,7 +1178,7 @@ var BorrowCore = (function () {
         gone[x.id] = true;
         map[x.request_no] = true;
         nos = nos.concat([x.request_no], splitNos(x.merged_from));
-        if (!r.head_name && x.head_name) r.head_name = x.head_name;
+        if (!r.head_name && x.head_name) { r.head_name = x.head_name; r.head_position = x.head_position; }
       });
       db.movements.forEach(function (m) {
         if (!map[m.request_no]) return;
@@ -1222,15 +1227,20 @@ var BorrowCore = (function () {
       var key = masterTable(p.table);
       var name = req(p.name, 'ชื่อ');
       if (find(db[key], function (r) { return r.name === name; })) fail('มีชื่อนี้อยู่แล้ว');
-      db[key].push(key === 'departments' ? { name: name, full_name: str(p.full_name), head_name: headName(p, false) } : { name: name });
+      db[key].push(key === 'departments' ? { name: name, full_name: str(p.full_name), head_name: headName(p, false), head_position: str(p.head_position) } : { name: name });
       return name;
     },
 
-    // แก้ข้อมูลแผนก (เจ้าหน้าที่): ชื่อเต็ม และชื่อหัวหน้าแผนก (ว่าง = ยังไม่ตั้ง) · ใบเบิกเดิมคงชื่อหัวหน้าตอนที่เบิก
+    // แก้ข้อมูลแผนก (เจ้าหน้าที่): ชื่อเต็ม ชื่อหัวหน้าแผนก (ว่าง = ยังไม่ตั้ง) และตำแหน่งของหัวหน้า · ใบเบิกเดิมคงชื่อ/ตำแหน่งตอนที่เบิก
+    // position_all = ใช้ตำแหน่งนี้กับทุกแผนกที่ยังไม่ได้ตั้งตำแหน่งด้วย
     saveDepartment: function (db, p) {
       var d = find(db.departments, function (x) { return x.name === str(p.name); }) || fail('ไม่พบแผนกนี้');
       if (p.full_name !== undefined) d.full_name = str(p.full_name);
       if (p.head_name !== undefined) d.head_name = headName(p, false);
+      if (p.head_position !== undefined) {
+        d.head_position = str(p.head_position).replace(/\s+/g, ' ');
+        if (p.position_all && d.head_position) db.departments.forEach(function (x) { if (!str(x.head_position)) x.head_position = d.head_position; });
+      }
       return d.name;
     },
 

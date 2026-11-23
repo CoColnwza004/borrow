@@ -2136,3 +2136,14 @@ button.shortcut { border: 0; font: inherit; text-align: left; cursor: pointer; w
 .chart-tip { position: fixed; z-index: 60; pointer-events: none; padding: 6px 10px; border-radius: 8px; background: var(--text); color: var(--surface); font-size: 13px; white-space: nowrap; box-shadow: var(--shadow-lg); }
 .u-table { min-width: 640px; }
 .u-table td b { white-space: nowrap; }
+
+/* ============ ช่องชื่อภาษาไทย: พิมพ์ภาษาอังกฤษ → เตือนทันที ส่งไม่ได้ ============ */
+.field.thai-bad > input, input.thai-bad { border-color: var(--red); box-shadow: 0 0 0 4px var(--red-soft); }
+.field-err { flex: 1 0 100%; font-size: 13.5px; font-weight: 600; color: var(--red); line-height: 1.4; }
+.thai-block-note { margin: 0; padding: 8px 12px; border-radius: var(--r-md); background: var(--red-soft); color: var(--red); font-size: 14px; font-weight: 600; flex-basis: 100%; }
+form.thai-blocked #rf-submit, form.thai-blocked #er-save { opacity: .45; }
+.thai-bad-val { color: var(--red); font-weight: 600; }
+/* แถบเตือนอยู่เหนือแถบปุ่มส่ง (มือถือ: แถบลอยล่างจอ) · จอกว้าง: อยู่ในใบเบิกด้านขวา */
+.checkout .thai-block-note { position: absolute; left: 12px; right: 12px; bottom: calc(100% + 8px); text-align: center; background: var(--surface); border: 1px solid var(--red); box-shadow: var(--shadow-lg); }
+@media (min-width: 1000px) { .slip .checkout .thai-block-note { position: static; box-shadow: none; } }
+.ask-actions > .btn:only-child { grid-column: 1 / -1; flex: 1; width: 100%; }
